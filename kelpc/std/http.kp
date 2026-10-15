@@ -472,7 +472,7 @@ fun default_port_for(scheme: &str) => u16 {
 
 /// Whether `u` is an `https` URL, the one place that question is asked as a
 /// named call instead of a `str.eq` scattered at each site that needs it.
-fun url_is_https(u: Url) => bool = str.eq(u.scheme.as_str(), "https")
+fun url_is_https(u: Url) => bool = str.eq(u.scheme, "https")
 
 /// Parses an absolute `http://` or `https://` URL. Panics: if there is no
 /// scheme, no host, or the scheme is anything else.
@@ -486,7 +486,7 @@ fun parse_url(s: &str) => Url {
         message = "http.parse_url: URL must start with 'http://' or 'https://' (no scheme found)",
     )
     val scheme = str.prefix(s, sep)
-    if !str.eq(scheme.as_str(), "http") && !str.eq(scheme.as_str(), "https") {
+    if !str.eq(scheme, "http") && !str.eq(scheme, "https") {
         panic("http.parse_url: only 'http' and 'https' are supported")
     }
     val rest = str.substring(s, sep + 3)
@@ -565,7 +565,7 @@ fun name_eq(a: &str, b: &str) => bool {
     }
     val la = str.to_lower(a)
     val lb = str.to_lower(b)
-    return str.eq(la.as_str(), lb.as_str())
+    return str.eq(la, lb.as_str())
 }
 
 /// An empty header list.
@@ -579,7 +579,7 @@ fun Response.has_header(name: &str) => bool {
     var i: usize = 0
     while i < headers.len() {
         val h = headers.get(i)
-        if name_eq(h.name.as_str(), name) {
+        if name_eq(h.name, name) {
             return true
         }
         i = i + 1
@@ -603,7 +603,7 @@ fun Response.header(name: &str) => String {
     var i: usize = 0
     while i < headers.len() {
         val h = headers.get(i)
-        if name_eq(h.name.as_str(), name) {
+        if name_eq(h.name, name) {
             return String.from_str(h.value.as_str())
         }
         i = i + 1
@@ -665,16 +665,16 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize) => 
     var out = String.with_capacity(256)
     out.push_str(method)
     out.push_str(" ")
-    out.push_str(u.path.as_str())
+    out.push_str(u.path)
     out.push_str(" HTTP/1.1\r\nHost: ")
-    out.push_str(u.host.as_str())
-    if u.port != default_port_for(u.scheme.as_str()) {
+    out.push_str(u.host)
+    if u.port != default_port_for(u.scheme) {
         out.push_str(":")
         // A formatted number is an owned temporary, so its `&str` view has to
         // be bound before it can be used: `fmt.uint(n).as_str()` taken as an
         // argument is the "temporary would be freed" error.
         val port_text = fmt.uint(u.port.to_u64())
-        out.push_str(port_text.as_str())
+        out.push_str(port_text)
     }
     out.push_str("\r\n")
     var i: usize = 0
@@ -688,7 +688,7 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize) => 
     if body_len > 0 {
         out.push_str("Content-Length: ")
         val len_text = fmt.uint(body_len.to_u64())
-        out.push_str(len_text.as_str())
+        out.push_str(len_text)
         out.push_str("\r\n")
     }
     out.push_str("\r\n")
@@ -920,7 +920,7 @@ fun mut Cursor.try_read_chunked() => result.Result<Bytes, HttpErr> {
     var going = true
     while going {
         val size_text = self.try_read_line()?
-        val size = parse_hex_try(size_text.as_str())?
+        val size = parse_hex_try(size_text)?
         if size == 0 {
             going = false
         } else {
@@ -932,7 +932,7 @@ fun mut Cursor.try_read_chunked() => result.Result<Bytes, HttpErr> {
     var trailing = true
     while trailing {
         val line = self.try_read_line()?
-        if str.is_empty(line.as_str()) {
+        if str.is_empty(line) {
             trailing = false
         }
     }
@@ -998,7 +998,7 @@ fun parse_status_line_try(line: &str) => result.Result<i32, HttpErr> {
         val sp2 = str.index_of(rest, " ")
         if let Some(at) = sp2 {
             val code_text = str.prefix(rest, at)
-            return status_code_try(code_text.as_str())
+            return status_code_try(code_text)
         }
         return status_code_try(rest)
     }
@@ -1140,14 +1140,14 @@ fun content_length_of(hs: List<Header>) => i64 {
 /// Whether the headers announce a chunked body.
 fun is_chunked(hs: List<Header>) => bool {
     val raw = header_value(hs, "transfer-encoding")
-    val text = str.to_lower(raw.as_str())
+    val text = str.to_lower(raw)
     return str.contains(text.as_str(), "chunked")
 }
 
 /// Whether the headers ask to close the connection.
 fun wants_close(hs: List<Header>) => bool {
     val raw = header_value(hs, "connection")
-    val text = str.to_lower(raw.as_str())
+    val text = str.to_lower(raw)
     return str.contains(text.as_str(), "close")
 }
 
@@ -1180,7 +1180,7 @@ fun read_response_try(c: Conn) => result.Result<Response, HttpErr> {
     var hs: List<Header> = List.empty()
     {
         val head_only = head_text(buf, end)
-        val lines = str.split(head_only.as_str(), "\r\n")
+        val lines = str.split(head_only, "\r\n")
         status = parse_status_line_try(lines.get(0).as_str())?
         hs = parse_headers(lines)
     }
@@ -1263,12 +1263,12 @@ fun absolute_url(base: Url, loc: &str) => String {
         return String.from_str(loc)
     }
     var out = String.with_capacity(64)
-    out.push_str(base.scheme.as_str())
+    out.push_str(base.scheme)
     out.push_str("://")
-    out.push_str(base.host.as_str())
+    out.push_str(base.host)
     out.push_str(":")
     val port_text = fmt.uint(base.port.to_u64())
-    out.push_str(port_text.as_str())
+    out.push_str(port_text)
     if str.starts_with(loc, "/") {
         out.push_str(loc)
     } else {
@@ -1306,7 +1306,7 @@ fun follow_url_try(client: Client, base: Url, resp: Response, hops: i32) => resu
         return result.Result.Ok(value = String.empty())
     }
     val loc = resp.header("location")
-    if str.is_empty(loc.as_str()) {
+    if str.is_empty(loc) {
         return result.Result.Ok(value = String.empty())
     }
     if hops <= 0 {
@@ -1379,7 +1379,7 @@ fun send_fresh_try(
     hops: i32,
 ) => result.Result<Response, HttpErr> {
     val u = parse_url(url_text.as_str())
-    val s = connect_configured_try(u.host.as_str(), u.port, client.timeout_ms, url_is_https(u))?
+    val s = connect_configured_try(u.host, u.port, client.timeout_ms, url_is_https(u))?
     val got = one_exchange_try(s, method.as_str(), u, headers, body)
     conn_close(s)
     val resp = got?
@@ -1387,7 +1387,7 @@ fun send_fresh_try(
     // `resp` is an owned local here and a returned borrow cannot leave. With no
     // function values in v1, that tail is written at each call site.
     val next = follow_url_try(client, u, resp, hops)?
-    if str.is_empty(next.as_str()) {
+    if str.is_empty(next) {
         return result.Result.Ok(value = resp)
     }
     if keep_body_on(resp.status) {
@@ -1403,7 +1403,7 @@ fun send_fresh_try(
 ///
 /// Panics: as `one_exchange`, plus a malformed URL.
 fun exchange(c: Conn, req: Request) => Response {
-    val u = parse_url(req.url.as_str())
+    val u = parse_url(req.url)
     return one_exchange(c, req.method.as_str(), u, req.headers, req.body)
 }
 
@@ -1411,7 +1411,7 @@ fun exchange(c: Conn, req: Request) => Response {
 ///
 /// Panics: on a malformed URL.
 fun exchange_try(c: Conn, req: Request) => result.Result<Response, HttpErr> {
-    val u = parse_url(req.url.as_str())
+    val u = parse_url(req.url)
     return one_exchange_try(c, req.method.as_str(), u, req.headers, req.body)
 }
 
@@ -1480,7 +1480,7 @@ fun mut Pool.warm(use_tls: bool) {
         i = idle.len()
     }
     while i < cap {
-        val c = connect_configured(h.as_str(), p, t, false)
+        val c = connect_configured(h, p, t, false)
         idle.push(c.fd)
         idle_since.push(net.mono_ms())
         i = i + 1
@@ -1525,7 +1525,7 @@ fun mut Pool.try_checkout(use_tls: bool) => result.Result<Lease, HttpErr> {
     val h = host.clone()
     val p = port
     val t = timeout_ms
-    val c = connect_configured_try(h.as_str(), p, t, use_tls)?
+    val c = connect_configured_try(h, p, t, use_tls)?
     return result.Result.Ok(value = Lease(fd = c.fd, tls_handle = c.tls_handle, reused = false))
 }
 
@@ -1616,7 +1616,7 @@ fun pool_matches(p: Pool, u: Url) => bool {
     if p.size == 0 {
         return false
     }
-    return str.eq(p.host.as_str(), u.host.as_str()) && p.port == u.port
+    return str.eq(p.host, u.host.as_str()) && p.port == u.port
 }
 
 /// Sends a request, reusing an idle connection when one is free.
@@ -1689,7 +1689,7 @@ fun pooled_hop_try(
         val resp = got?
         p.release(lease, resp.reusable)
         val next = follow_url_try(client, u, resp, hops)?
-        if str.is_empty(next.as_str()) {
+        if str.is_empty(next) {
             return result.Result.Ok(value = resp)
         }
         if keep_body_on(resp.status) {
@@ -1705,12 +1705,12 @@ fun pooled_hop_try(
             hops - 1,
         )
     }
-    val s = connect_configured_try(u.host.as_str(), u.port, client.timeout_ms, url_is_https(u))?
+    val s = connect_configured_try(u.host, u.port, client.timeout_ms, url_is_https(u))?
     val got = one_exchange_try(s, method.as_str(), u, headers, body)
     conn_close(s)
     val resp = got?
     val next = follow_url_try(client, u, resp, hops)?
-    if str.is_empty(next.as_str()) {
+    if str.is_empty(next) {
         return result.Result.Ok(value = resp)
     }
     if keep_body_on(resp.status) {
@@ -1772,9 +1772,9 @@ fun Client.try_send_tls(req: Request, opts: &tls.TlsClientOptions) => result.Res
 /// Opens a connection for `u`.
 fun dial_for(u: Url, timeout_ms: u64, opts: &tls.TlsClientOptions) => result.Result<Conn, HttpErr> {
     if url_is_https(u) {
-        return connect_tls_try(u.host.as_str(), u.port, timeout_ms, opts)
+        return connect_tls_try(u.host, u.port, timeout_ms, opts)
     }
-    return connect_configured_try(u.host.as_str(), u.port, timeout_ms, false)
+    return connect_configured_try(u.host, u.port, timeout_ms, false)
 }
 
 /// Sends a request over TLS, returning the error.
@@ -1793,7 +1793,7 @@ fun send_tls_try(
     conn_close(s)
     val resp = got?
     val next = follow_url_try(client, u, resp, hops)?
-    if str.is_empty(next.as_str()) {
+    if str.is_empty(next) {
         return result.Result.Ok(value = resp)
     }
     if keep_body_on(resp.status) {
@@ -1909,23 +1909,23 @@ fun multipart(boundary: &str) => Multipart {
 /// which is what browsers send, so a name cannot end the parameter or the line.
 fun multipart_quote(s: &str) => String {
     val a = str.replace(s, "%", "%25")
-    val b = str.replace(a.as_str(), "\"", "%22")
-    val c = str.replace(b.as_str(), "\r", "%0D")
-    return str.replace(c.as_str(), "\n", "%0A")
+    val b = str.replace(a, "\"", "%22")
+    val c = str.replace(b, "\r", "%0D")
+    return str.replace(c, "\n", "%0A")
 }
 
 /// The opening of a part: the delimiter line and the `Content-Disposition`.
 fun mut Multipart.begin_part(name: &str, filename: option.Option<String>) {
     var head = String.from_str("--")
-    head.push_str(boundary.as_str())
+    head.push_str(boundary)
     head.push_str("\r\nContent-Disposition: form-data; name=\"")
     val qn = multipart_quote(name)
-    head.push_str(qn.as_str())
+    head.push_str(qn)
     head.push_str("\"")
     if let Some(f) = filename {
         head.push_str("; filename=\"")
         val qf = multipart_quote(f.as_str())
-        head.push_str(qf.as_str())
+        head.push_str(qf)
         head.push_str("\"")
     }
     head.push_str("\r\n")
@@ -1955,7 +1955,7 @@ fun mut Multipart.add_file(name: &str, filename: &str, content_type: &str, data:
 /// The `Content-Type` header value for this body.
 fun Multipart.content_type() => String {
     var ct = String.from_str("multipart/form-data; boundary=")
-    ct.push_str(boundary.as_str())
+    ct.push_str(boundary)
     return ct
 }
 
@@ -1963,7 +1963,7 @@ fun Multipart.content_type() => String {
 /// after the last part.
 fun mut Multipart.finish() => Bytes {
     var tail = String.from_str("--")
-    tail.push_str(boundary.as_str())
+    tail.push_str(boundary)
     tail.push_str("--\r\n")
     out.append(Bytes.from_str(tail.as_str()))
     return out.clone()
@@ -2125,7 +2125,7 @@ fun srv_decode_path(raw: &str) => String {
 /// The value of the first query parameter called `name`, percent-decoded, or
 /// `None`. `?a` is `Some("")` for `a`; names are compared after decoding.
 fun ServerRequest.query_param(name: &str) => option.Option<String> {
-    val pairs = str.split(query.as_str(), "&")
+    val pairs = str.split(query, "&")
     var i: usize = 0
     while i < pairs.len() {
         val pair = pairs.get(i).as_str()
@@ -2139,9 +2139,9 @@ fun ServerRequest.query_param(name: &str) => option.Option<String> {
             } else {
                 key = String.from_str(pair)
             }
-            val decoded = srv_decode_form(key.as_str())
-            if str.eq(decoded.as_str(), name) {
-                return option.Option.Some(value = srv_decode_form(val_text.as_str()))
+            val decoded = srv_decode_form(key)
+            if str.eq(decoded, name) {
+                return option.Option.Some(value = srv_decode_form(val_text))
             }
         }
         i = i + 1
@@ -2152,7 +2152,7 @@ fun ServerRequest.query_param(name: &str) => option.Option<String> {
 /// The non-empty `/`-separated pieces of the path, each percent-decoded, so
 /// `/users/42/` is `["users", "42"]` and `/a%2Fb` is one segment `a/b`.
 fun ServerRequest.path_segments() => List<String> {
-    val raw = str.split(path.as_str(), "/")
+    val raw = str.split(path, "/")
     var out: List<String> = List.empty()
     var i: usize = 0
     while i < raw.len() {
@@ -2650,11 +2650,11 @@ fun srv_connection_has(hs: List<Header>, token: &str) => bool {
     while i < hs.len() {
         if name_eq(hs.get(i).name.as_str(), "connection") {
             val low = str.to_lower(hs.get(i).value.as_str())
-            val parts = str.split(low.as_str(), ",")
+            val parts = str.split(low, ",")
             var j: usize = 0
             while j < parts.len() {
                 val part = str.trim(parts.get(j).as_str())
-                if str.eq(part.as_str(), token) {
+                if str.eq(part, token) {
                     return true
                 }
                 j = j + 1
@@ -2706,8 +2706,8 @@ fun srv_content_length(hs: List<Header>) => result.Result<i64, HttpErr> {
 /// The first value of a header, trimmed and lower-cased.
 fun srv_header_token(hs: List<Header>, name: &str) => String {
     val raw = header_value(hs, name)
-    val trimmed = str.trim(raw.as_str())
-    return str.to_lower(trimmed.as_str())
+    val trimmed = str.trim(raw)
+    return str.to_lower(trimmed)
 }
 
 /// Whether a method must carry a body length.
@@ -2808,7 +2808,7 @@ fun mut ServerConn.read_chunked(limits: &Limits, deadline: i64) => result.Result
     var going = true
     while going {
         val size_line = self.take_line(deadline, 1024, 400)?
-        val size = srv_hex_size(size_line.as_str(), limits.max_body)?
+        val size = srv_hex_size(size_line, limits.max_body)?
         if size == 0 {
             going = false
         } else {
@@ -2827,10 +2827,10 @@ fun mut ServerConn.read_chunked(limits: &Limits, deadline: i64) => result.Result
     var trailing = true
     while trailing {
         val line = self.take_line(deadline, limits.max_header_bytes, 431)?
-        if str.is_empty(line.as_str()) {
+        if str.is_empty(line) {
             trailing = false
         } else {
-            trailer_bytes = trailer_bytes + str.len(line.as_str()) + 2
+            trailer_bytes = trailer_bytes + str.len(line) + 2
             if trailer_bytes > limits.max_header_bytes {
                 return srv_err(431, "the trailers are too large")
             }
@@ -2915,10 +2915,10 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
     val method = String.from_str(parts.get(0).as_str())
     val target = String.from_str(parts.get(1).as_str())
     val version = parts.get(2).as_str()
-    if !srv_is_token(method.as_str()) {
+    if !srv_is_token(method) {
         return srv_err(400, "malformed request method")
     }
-    if str.is_empty(target.as_str()) {
+    if str.is_empty(target) {
         return srv_err(400, "empty request target")
     }
     var http11 = false
@@ -2934,8 +2934,8 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
         }
         return srv_err(400, "malformed HTTP version")
     }
-    if str.byte(target.as_str(), 0) != 47 {
-        if !(str.eq(target.as_str(), "*") && str.eq(method.as_str(), "OPTIONS")) {
+    if str.byte(target, 0) != 47 {
+        if !(str.eq(target, "*") && str.eq(method, "OPTIONS")) {
             return srv_err(400, "the request target must start with /")
         }
     }
@@ -2950,7 +2950,7 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
         val colon = str.index_of(line, ":")
         if let Some(at) = colon {
             val name = str.prefix(line, at)
-            if !srv_is_token(name.as_str()) {
+            if !srv_is_token(name) {
                 return srv_err(400, "malformed header name")
             }
             val value = str.trim(str.substring(line, at + 1))
@@ -2975,7 +2975,7 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
     var chunked = false
     if te_count == 1 {
         val te = srv_header_token(hs, "transfer-encoding")
-        if !str.eq(te.as_str(), "chunked") {
+        if !str.eq(te, "chunked") {
             return srv_err(501, "unknown transfer coding")
         }
         if !http11 {
@@ -2984,7 +2984,7 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
         chunked = true
     }
     val cl = srv_content_length(hs)?
-    if !chunked && cl < 0 && srv_method_needs_length(method.as_str()) {
+    if !chunked && cl < 0 && srv_method_needs_length(method) {
         return srv_err(411, "a body needs Content-Length or chunked framing")
     }
     if !chunked && cl > limits.max_body.to_i64() {
@@ -2997,7 +2997,7 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
     // `Expect`.
     if headers_have(hs, "expect") {
         val ex = srv_header_token(hs, "expect")
-        if !str.eq(ex.as_str(), "100-continue") {
+        if !str.eq(ex, "100-continue") {
             return srv_err(417, "unsupported Expect")
         }
         if http11 && has_body && buf.len() == start {
@@ -3036,15 +3036,15 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
     if served >= limits.max_requests_per_conn {
         close_after = true
     }
-    if str.eq(method.as_str(), "HEAD") {
+    if str.eq(method, "HEAD") {
         head_only = true
     }
     var path = String.empty()
     var query = String.empty()
-    val q = str.index_of(target.as_str(), "?")
+    val q = str.index_of(target, "?")
     if let Some(at) = q {
-        path = str.prefix(target.as_str(), at)
-        query = String.from_str(str.substring(target.as_str(), at + 1))
+        path = str.prefix(target, at)
+        query = String.from_str(str.substring(target, at + 1))
     } else {
         path = String.from_str(target.as_str())
     }
@@ -3068,18 +3068,18 @@ fun ServerConn.wants_close() => bool = close_after
 
 /// Whether a header is safe to send.
 fun srv_clean_header(h: Header) => bool {
-    val n = str.len(h.name.as_str())
-    val v = str.len(h.value.as_str())
+    val n = str.len(h.name)
+    val v = str.len(h.value)
     var i: usize = 0
     while i < n {
-        if !srv_tchar(str.byte(h.name.as_str(), i)) {
+        if !srv_tchar(str.byte(h.name, i)) {
             return false
         }
         i = i + 1
     }
     var k: usize = 0
     while k < v {
-        val c = str.byte(h.value.as_str(), k)
+        val c = str.byte(h.value, k)
         if c == 13 || c == 10 || c == 0 {
             return false
         }
@@ -3098,7 +3098,7 @@ fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<usize,
     var out = String.with_capacity(256)
     out.push_str("HTTP/1.1 ")
     val code_text = fmt.int(code.to_i64())
-    out.push_str(code_text.as_str())
+    out.push_str(code_text)
     out.push_str(" ")
     val reason = srv_reason(code)
     out.push_str(reason.as_str())
@@ -3106,16 +3106,16 @@ fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<usize,
     var i: usize = 0
     while i < resp.headers.len() {
         val h = resp.headers.get(i)
-        if name_eq(h.name.as_str(), "connection") {
-            val low = str.to_lower(h.value.as_str())
-            if str.contains(low.as_str(), "close") {
+        if name_eq(h.name, "connection") {
+            val low = str.to_lower(h.value)
+            if str.contains(low, "close") {
                 close_after = true
             }
-        } elif !name_eq(h.name.as_str(), "content-length") && !name_eq(h.name.as_str(), "transfer-encoding") {
+        } elif !name_eq(h.name, "content-length") && !name_eq(h.name, "transfer-encoding") {
             if srv_clean_header(Header(name = String.from_str(h.name.as_str()), value = String.from_str(h.value.as_str()))) {
-                out.push_str(h.name.as_str())
+                out.push_str(h.name)
                 out.push_str(": ")
-                out.push_str(h.value.as_str())
+                out.push_str(h.value)
                 out.push_str("\r\n")
             }
         }
@@ -3125,7 +3125,7 @@ fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<usize,
     if !bodyless {
         out.push_str("Content-Length: ")
         val len_text = fmt.uint(resp.body.len().to_u64())
-        out.push_str(len_text.as_str())
+        out.push_str(len_text)
         out.push_str("\r\n")
     }
     if close_after {
@@ -3328,7 +3328,7 @@ fun serve_tls_on(server: &Server, config: &tls.ServerConfig, handler: fun(&Serve
                     }
                 }
                 Err(e) -> {
-                    if str.contains(e.reason.as_str(), "timed out") {
+                    if str.contains(e.reason, "timed out") {
                         going = false
                     } else {
                         thread.sleep_ms(5)

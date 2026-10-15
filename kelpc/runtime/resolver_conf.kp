@@ -134,7 +134,7 @@ fun lower(b: u8) => u8 {
 // returns one, and a borrow of a temporary is not something to rely on.
 fun push_dec(out: mut String, n: u64) {
     val text = str.from_u64(n)
-    out.push_str(text.as_str())
+    out.push_str(text)
 }
 
 // A `,`-joined list, or `-` when it is empty, so every rendered line has the
@@ -150,7 +150,7 @@ fun push_list(out: mut String, xs: &List<String>) {
             out.push(44)
         }
         val s = xs.get(i)
-        out.push_str(s.as_str())
+        out.push_str(s)
         i = i + 1
     }
 }
@@ -831,7 +831,7 @@ fun render_hosts(f: &HostsFile) => String {
     while i < f.entries.len() {
         val e = f.entries.get(i)
         out.push_str(" e=")
-        out.push_str(e.addr.as_str())
+        out.push_str(e.addr)
         out.push(124)
         var k: usize = 0
         while k < e.names.len() {

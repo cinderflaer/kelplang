@@ -18,7 +18,7 @@ fun main() {
 
     val ok = fs.try_read(text_path)
     if let Ok(data) = ok {
-        print(data.as_str())
+        print(data)
     }
 
     val missing = fs.try_read("/tmp/kelp_fs_no_such_dir/probe")
@@ -29,7 +29,7 @@ fun main() {
 
     val text = fs.try_read_text(text_path)
     if let Ok(t) = text {
-        print(t.as_str())
+        print(t)
     }
 
     val binary = fs.try_read_text(bin_path)

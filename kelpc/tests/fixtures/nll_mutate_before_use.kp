@@ -8,5 +8,5 @@ fun main() {
     names.push(String.from_str("alpha"))
     val first = names.get(0)
     names.push(String.from_str("beta"))
-    print(first.as_str())
+    print(first)
 }

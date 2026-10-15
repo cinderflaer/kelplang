@@ -8,5 +8,5 @@ impl "std/str"
 pub fun read_two() => String {
     val first = fs.read_text("__KELP_SCRATCH__/kelp_caps_star/first.txt")
     val second = fs.read_text("__KELP_SCRATCH__/kelp_caps_star_elsewhere/second.txt")
-    return str.concat(first.as_str(), second.as_str())
+    return str.concat(first, second.as_str())
 }

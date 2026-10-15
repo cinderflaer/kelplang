@@ -6,9 +6,9 @@ impl "std/str"
 
 fun main() {
     val u = ws.parse_url("wss://gateway.discord.gg/?v=10&encoding=json")
-    print("${u.host} ${u.port} ${u.path} ${str.eq(u.scheme.as_str(), "wss")}")
+    print("${u.host} ${u.port} ${u.path} ${str.eq(u.scheme, "wss")}")
     val v = ws.parse_url("wss://gateway.discord.gg:8443/x")
-    print("${v.port} ${str.eq(v.scheme.as_str(), "wss")}")
+    print("${v.port} ${str.eq(v.scheme, "wss")}")
     val w = ws.parse_url("ws://gateway.discord.gg/x")
-    print("${w.port} ${str.eq(w.scheme.as_str(), "wss")}")
+    print("${w.port} ${str.eq(w.scheme, "wss")}")
 }

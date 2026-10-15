@@ -46,7 +46,7 @@ pub fun emit_html<S, M>(init: move S, view: fun (S) => core.Node<M>) {
     val first = core.create_all(&tree)
     backend.apply(&first)
     val page = headless_backend.html(&backend)
-    print(page.as_str())
+    print(page)
 }
 
 // An application stylesheet. `gtk_init` is idempotent, so calling this before `run` is fine.

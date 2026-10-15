@@ -18,7 +18,7 @@ fun main() {
     net.send_text(c, "now")
     print(s.wait_readable(2000))
     val got = net.recv(s, 8)
-    print(got.as_str())
+    print(got)
 
     // After the peer closes its writing half the socket is readable again, and
     // the read reports end of file, a readiness a loop must not spin on.

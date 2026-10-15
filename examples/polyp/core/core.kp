@@ -309,12 +309,12 @@ fun duplicate_message(k: &Key) => String = when k {
     None -> "polyp: duplicate key among the children of one container"
     Str(s) -> {
         val head = str.concat("polyp: duplicate key '", s.as_str())
-        str.concat(head.as_str(), "' among the children of one container")
+        str.concat(head, "' among the children of one container")
     }
     Int(n) -> {
         val shown = str.from_i64(n)
         val head = str.concat("polyp: duplicate key ", shown.as_str())
-        str.concat(head.as_str(), " among the children of one container")
+        str.concat(head, " among the children of one container")
     }
 }
 

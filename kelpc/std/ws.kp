@@ -274,7 +274,7 @@ fun parse_url(s: &str) => Url {
         message = "ws.parse_url: URL must start with 'ws://' or 'wss://' (no scheme found)",
     )
     val scheme = str.prefix(s, sep)
-    if !str.eq(scheme.as_str(), DEFAULT_SCHEME) && !str.eq(scheme.as_str(), WSS_SCHEME) {
+    if !str.eq(scheme, DEFAULT_SCHEME) && !str.eq(scheme, WSS_SCHEME) {
         panic("ws.parse_url: only 'ws' and 'wss' are supported")
     }
     val rest = str.substring(s, sep + 3)
@@ -377,7 +377,7 @@ fun accept_for(key: &str) => String {
 fun with_number(prefix: &str, n: u64, suffix: &str) => String {
     val digits = fmt.uint(n)
     val middle = str.concat(prefix, digits.as_str())
-    return str.concat(middle.as_str(), suffix)
+    return str.concat(middle, suffix)
 }
 
 /// Builds the HTTP `GET` request that opens a WebSocket, through the blank line that ends the head.
@@ -396,7 +396,7 @@ fun build_head(scheme: &str, host: &str, port: u16, path: &str, key: &str) => St
         // A formatted number is an owned temporary, so its `&str` view has to
         // be bound before it can be used.
         val port_text = fmt.uint(port.to_u64())
-        out.push_str(port_text.as_str())
+        out.push_str(port_text)
     }
     out.push_str("\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ")
     out.push_str(key)
@@ -451,7 +451,7 @@ fun name_eq(a: &str, b: &str) => bool {
     }
     val la = str.to_lower(a)
     val lb = str.to_lower(b)
-    return str.eq(la.as_str(), lb.as_str())
+    return str.eq(la, lb.as_str())
 }
 
 /// Splits the header lines of a head, after the status line, into `Header` values.
@@ -508,12 +508,12 @@ fun parse_status(head: &str) => i32 {
     val sp = str.index_of(head, " ")
     if let Some(at) = sp {
         val line = str.prefix(head, at)
-        if str.starts_with(line.as_str(), "HTTP/") {
+        if str.starts_with(line, "HTTP/") {
             val rest = str.substring(head, at + 1)
             val sp2 = str.index_of(rest, " ")
             if let Some(at2) = sp2 {
                 val code_text = str.prefix(rest, at2)
-                return status_code(code_text.as_str())
+                return status_code(code_text)
             }
             return status_code(rest)
         }
@@ -640,7 +640,7 @@ fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => resul
     // fixed value, or a peer can precompute what a client will send.
     val key = rand.bytes(16)
     val key_text = encoding.base64_encode(key)
-    val expected = accept_for(key_text.as_str())
+    val expected = accept_for(key_text)
 
     val dialed = net.try_connect(host, port)
     val out = when dialed {
@@ -716,7 +716,7 @@ fun handshake(
         frag_data = Bytes.empty(),
     )
     val response = c.read_head()
-    val status = parse_status(response.as_str())
+    val status = parse_status(response)
     if status != 101 {
         val answer = with_number(
             prefix = "ws.connect: the server answered '",
@@ -725,14 +725,14 @@ fun handshake(
         )
         return result.Result.Err(error = WsErr.Handshake(status = status, reason = answer))
     }
-    val accept = header_value(split_head_headers(response.as_str()), "sec-websocket-accept")
-    if str.is_empty(accept.as_str()) {
+    val accept = header_value(split_head_headers(response), "sec-websocket-accept")
+    if str.is_empty(accept) {
         return result.Result.Err(error = WsErr.Handshake(
             status = status,
             reason = String.from_str("ws.connect: the 101 response has no Sec-WebSocket-Accept header, so it is not a WebSocket server"),
         ))
     }
-    if !str.eq(accept.as_str(), expected) {
+    if !str.eq(accept, expected) {
         return result.Result.Err(error = WsErr.Handshake(
             status = status,
             reason = String.from_str("ws.connect: Sec-WebSocket-Accept does not match the key this connection sent, so the peer did not compute it from the handshake"),
@@ -759,7 +759,7 @@ fun refusal_text(e: move WsErr) => String = when e {
 /// the text `connect` panics with cannot drift.
 fun fail_connect(e: move WsErr) => Conn {
     val reason = refusal_text(e)
-    panic(reason.as_str())
+    panic(reason)
 }
 
 /// Opens a WebSocket to `host:port` over `ws` and completes the handshake, or panics.
@@ -938,7 +938,7 @@ fun Conn.close(code: u16, reason: &str) {
             n = code.to_u64(),
             suffix = " is not a status code an endpoint may send (RFC 6455 7.4.1, 7.4.2)",
         )
-        panic(refused.as_str())
+        panic(refused)
     }
     val reason_bytes = Bytes.from_str(reason)
     if reason_bytes.len() > 123 {
@@ -1028,7 +1028,7 @@ fun mut Conn.read_frame() => Frame {
             n = opcode.to_u64(),
             suffix = " is reserved, so the peer is not speaking RFC 6455",
         )
-        panic(reserved.as_str())
+        panic(reserved)
     }
     if len > MAX_FRAME.to_u64() {
         val over = with_number(
@@ -1036,7 +1036,7 @@ fun mut Conn.read_frame() => Frame {
             n = len,
             suffix = " bytes is beyond the 1048576-byte cap this client reads",
         )
-        panic(over.as_str())
+        panic(over)
     }
     return Frame(fin = fin, opcode = opcode, data = self.read_exact(len.to_usize()))
 }

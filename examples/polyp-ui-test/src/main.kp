@@ -441,7 +441,7 @@ fun run_ppm() {
     print("ppm")
     var p = ppm_platform.new(width = 64, height = 48)
     val dir = env.get("POLYP_DUMP_DIR")
-    if str.is_empty(dir.as_str()) {
+    if str.is_empty(dir) {
         print("no-dir")
         return
     }
@@ -461,7 +461,7 @@ fun run_ppm() {
 
 fun main() {
     val mode = env.get("POLYP_UI_TEST")
-    if str.eq(mode.as_str(), "ppm") {
+    if str.eq(mode, "ppm") {
         run_ppm()
         return
     }

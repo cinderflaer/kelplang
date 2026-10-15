@@ -11,7 +11,7 @@ datac Stats(var run: i32, var bad: i32)
 
 fun push_num(out: mut String, n: usize) {
     val s = str.from_u64(n.to_u64())
-    out.push_str(s.as_str())
+    out.push_str(s)
 }
 
 fun render(pat: &str, text: &str) => String {
@@ -42,7 +42,7 @@ fun render(pat: &str, text: &str) => String {
     }
     if let Err(e) = r {
         out.push_str("error: ")
-        out.push_str(e.message.as_str())
+        out.push_str(e.message)
     }
     return out
 }
@@ -50,7 +50,7 @@ fun render(pat: &str, text: &str) => String {
 fun t(st: mut Stats, pat: &str, text: &str, expect: &str) {
     val got = render(pat, text)
     st.run += 1
-    if !str.eq(got.as_str(), expect) {
+    if !str.eq(got, expect) {
         st.bad += 1
         print("FAIL")
         print(pat)

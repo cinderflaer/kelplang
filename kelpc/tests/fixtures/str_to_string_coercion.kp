@@ -23,17 +23,17 @@ fun shout(s: String) => String {
 fun main() {
     // A `val` with a written type.
     val a: String = "a literal"
-    print(a.as_str())
+    print(a)
 
     // An assignment to an owned variable.
     var b = String.empty()
     b = "assigned"
-    print(b.as_str())
+    print(b)
 
     // A `datac` field.
     val d = Doc(title = "t", body = "b")
-    print(d.title.as_str())
-    print(d.body.as_str())
+    print(d.title)
+    print(d.body)
 
     // A container element, and a `Map` key and value.
     var xs: List<String> = List.empty()
@@ -48,7 +48,7 @@ fun main() {
     // literal branch needs no conversion written out.
     val flag = str.eq("a", "a")
     val picked: String = if flag { "then" } else { "else" }
-    print(picked.as_str())
+    print(picked)
 
     // A `when` with a written type: the expectation reaches every arm, so an
     // arm that produces a borrowed view still yields an owned value.
@@ -57,15 +57,15 @@ fun main() {
         Some(s) -> s.as_str()
         None -> "none"
     }
-    print(w.as_str())
+    print(w)
 
     // A `return` position, and a value passed to an owned parameter.
     // `.as_str()` on a *temporary* is still refused (open item 30), so the
     // returned value is bound before its view is taken.
     val title = title_of()
-    print(title.as_str())
+    print(title)
     val loud = shout("hey")
-    print(loud.as_str())
+    print(loud)
 
     // A `str` parameter is not affected: `str.len` takes the view, and the
     // conversion never fires for it, so no allocation happens here.

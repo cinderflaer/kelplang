@@ -9,7 +9,7 @@ fun sum(p: (i32, i32)) => i32 {
 
 fun take(p: move (String, i32)) => i32 {
     val (text, n) = p
-    print(text.as_str())
+    print(text)
     return n
 }
 

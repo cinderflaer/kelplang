@@ -39,12 +39,12 @@ pub fun step_line(step: i32, checksum: u64, dirty: i32) => String {
     // its own argument cannot take a value built in the same expression), so the pieces are named.
     val shown_step = str.from_i64(step.to_i64())
     val head = str.concat("step ", shown_step.as_str())
-    val bits = str.concat(head.as_str(), " checksum ")
+    val bits = str.concat(head, " checksum ")
     val shown_checksum = hex64(checksum)
-    val hex = str.concat(bits.as_str(), shown_checksum.as_str())
-    val tail = str.concat(hex.as_str(), " dirty ")
+    val hex = str.concat(bits, shown_checksum.as_str())
+    val tail = str.concat(hex, " dirty ")
     val shown_dirty = str.from_i64(dirty.to_i64())
-    return str.concat(tail.as_str(), shown_dirty.as_str())
+    return str.concat(tail, shown_dirty.as_str())
 }
 
 // One step's line, so an entry can emit the same text the driver does when it drives its own first

@@ -14,7 +14,7 @@ fun take(h: move Held) => String {
     val b = when h {
         Two(text, _) -> text
     }
-    return str.concat(a.as_str(), b.as_str())
+    return str.concat(a, b.as_str())
 }
 
 fun main() {

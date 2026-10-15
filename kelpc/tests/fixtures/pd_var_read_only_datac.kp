@@ -7,11 +7,11 @@ pd var cfg = Config(name = String.from_str(s = "api"), retries = 3)
 datac Config(val name: String, val retries: i32)
 
 fun describe(c: &Config) {
-    print(c.name.as_str())
+    print(c.name)
     print(cfg.retries)
 }
 
 fun main() {
     describe(cfg)
-    print(cfg.name.as_str())
+    print(cfg.name)
 }

@@ -283,11 +283,11 @@ fun sync(path: &str) {
 /// Panics: if the directory cannot be read.
 fun list(path: &str) => List<String> {
     val raw = list_raw(path)
-    if str.len(raw.as_str()) == 0 {
+    if str.len(raw) == 0 {
         var empty: List<String> = List.empty()
         return empty
     }
-    return str.split(raw.as_str(), "\n")
+    return str.split(raw, "\n")
 }
 
 /// The fallible twin of `list`: the entry names, or the reason the directory
@@ -298,11 +298,11 @@ fun try_list(path: &str) => result.Result<List<String>, io.IoErr> {
     if err != 0 {
         return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
     }
-    if str.len(raw.as_str()) == 0 {
+    if str.len(raw) == 0 {
         var empty: List<String> = List.empty()
         return result.Result.Ok(value = empty)
     }
-    return result.Result.Ok(value = str.split(raw.as_str(), "\n"))
+    return result.Result.Ok(value = str.split(raw, "\n"))
 }
 
 // --- MK5-S5: breadth --------------------------------------------------------
@@ -361,7 +361,7 @@ fun remove_all(target: &str) {
         var i: usize = 0
         while i < entries.len() {
             val child = path.join(target, entries.get(i).as_str())
-            remove_all(child.as_str())
+            remove_all(child)
             i = i + 1
         }
     }
@@ -385,7 +385,7 @@ must_use fun try_remove_all(target: &str) => option.Option<io.IoErr> {
             var i: usize = 0
             while i < entries.len() {
                 val child = path.join(target, entries.get(i).as_str())
-                val failed = try_remove_all(child.as_str())
+                val failed = try_remove_all(child)
                 if let Some(e) = failed {
                     return option.Option.Some(value = e)
                 }
@@ -411,7 +411,7 @@ fun walk(dir: &str) => List<String> {
     pending.push(String.from_str(dir))
     while pending.len() > 0 {
         val current = pending.pop()
-        val entries = list(current.as_str())
+        val entries = list(current)
         var i: usize = 0
         while i < entries.len() {
             // Three joins, deliberately: a borrow of a local lasts to the end
@@ -419,12 +419,12 @@ fun walk(dir: &str) => List<String> {
             // cannot then be moved into `pending`. `probe` stays put and is
             // dropped at the end of the iteration; the pushed value is a fresh
             // one.
-            val name = path.join(current.as_str(), entries.get(i).as_str())
+            val name = path.join(current, entries.get(i).as_str())
             out.push(name)
-            val probe = path.join(current.as_str(), entries.get(i).as_str())
-            val is_directory = !is_symlink(probe.as_str()) && is_dir(probe.as_str())
+            val probe = path.join(current, entries.get(i).as_str())
+            val is_directory = !is_symlink(probe) && is_dir(probe)
             if is_directory {
-                pending.push(path.join(current.as_str(), entries.get(i).as_str()))
+                pending.push(path.join(current, entries.get(i).as_str()))
             }
             i = i + 1
         }

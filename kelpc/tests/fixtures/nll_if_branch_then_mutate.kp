@@ -9,7 +9,7 @@ fun main() {
     names.push(String.from_str("alpha"))
     val first = names.get(0)
     if names.len() == 1 {
-        print(first.as_str())
+        print(first)
     }
     names.push(String.from_str("beta"))
     print(names.len())

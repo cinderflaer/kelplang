@@ -39,5 +39,5 @@ fun main() {
     print(first_over(4))
     print(count_to(2))
     val l = label(3)
-    print(l.as_str())
+    print(l)
 }

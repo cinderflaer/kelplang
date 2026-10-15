@@ -62,7 +62,7 @@ fun has_value(role: i32) => bool = role == ROLE_ENTRY || role == ROLE_CHECKBOX |
 
 fun push_int(out: mut String, n: i32) {
     val t = str.from_i64(n.to_i64())
-    out.push_str(t.as_str())
+    out.push_str(t)
 }
 
 fun add_flag(out: mut String, first: mut bool, name: str) {
@@ -81,11 +81,11 @@ fun dump_node(n: &Node, depth: i32, out: mut String) {
     }
     out.push_str(role_name(n.role))
     out.push_str(" \"")
-    out.push_str(n.name.as_str())
+    out.push_str(n.name)
     out.push_str("\"")
     if has_value(n.role) {
         out.push_str(" value=\"")
-        out.push_str(n.value.as_str())
+        out.push_str(n.value)
         out.push_str("\"")
     }
     out.push_str(" state=[")
@@ -147,7 +147,7 @@ pub fun count(tree: &Node) => i32 {
 
 // The id of the first node (depth first) with this role and name, or -1.
 pub fun find_id(tree: &Node, role: i32, name: str) => i32 {
-    if tree.role == role && str.eq(tree.name.as_str(), name) { return tree.id }
+    if tree.role == role && str.eq(tree.name, name) { return tree.id }
     for item in tree.kids {
         val r = find_id(item, role, name)
         if r >= 0 { return r }

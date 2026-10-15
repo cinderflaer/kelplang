@@ -570,7 +570,7 @@ fun find_text(kids: List<SNode>, id: i32, out: mut String) => bool {
         val n = kids.get(i)
         if n.slot == id {
             out.clear()
-            out.push_str(n.props.text.as_str())
+            out.push_str(n.props.text)
             return true
         }
         if find_text(n.kids, id, out) { return true }
@@ -732,10 +732,10 @@ fun set_props_on(n: mut SNode, props: &core.Props, focus: i32, clock: u64) => bo
     sync_chan(n.ch_oy, &old_oy, &props.anim_oy, clock)
     if !(n.kind == core.KIND_ENTRY && n.slot == focus) {
         n.props.text.clear()
-        n.props.text.push_str(props.text.as_str())
+        n.props.text.push_str(props.text)
     }
     n.props.label.clear()
-    n.props.label.push_str(props.label.as_str())
+    n.props.label.push_str(props.label)
     n.props.size = props.size
     n.props.bold = props.bold
     n.props.checked = props.checked
@@ -971,34 +971,34 @@ fun edit_entry_in(kids: mut List<SNode>, id: i32, op: i32, cp: i32, d: mut damag
             }
             // A caret always sits on a code point boundary: one left inside a sequence by a
             // programmatic text change snaps back to the start of that sequence.
-            care = utf8.snap_boundary(cur.as_str(), care.to_usize()).to_i32()
+            care = utf8.snap_boundary(cur, care.to_usize()).to_i32()
             var text_changed = false
             var caret_changed = false
             if op == OP_INSERT {
-                n.props.text = insert_char(cur.as_str(), care.to_usize(), cp)
+                n.props.text = insert_char(cur, care.to_usize(), cp)
                 care += utf8_len(scalar_of(cp))
                 text_changed = true
             } else if op == OP_BACKSPACE {
                 if care > 0 {
-                    val from = utf8.prev_boundary(cur.as_str(), care.to_usize()).to_i32()
-                    n.props.text = remove_range(cur.as_str(), from.to_usize(), care.to_usize())
+                    val from = utf8.prev_boundary(cur, care.to_usize()).to_i32()
+                    n.props.text = remove_range(cur, from.to_usize(), care.to_usize())
                     care = from
                     text_changed = true
                 }
             } else if op == OP_DELETE {
                 if care < n_bytes {
-                    val to = utf8.next_boundary(cur.as_str(), care.to_usize()).to_i32()
-                    n.props.text = remove_range(cur.as_str(), care.to_usize(), to.to_usize())
+                    val to = utf8.next_boundary(cur, care.to_usize()).to_i32()
+                    n.props.text = remove_range(cur, care.to_usize(), to.to_usize())
                     text_changed = true
                 }
             } else if op == OP_LEFT {
                 if care > 0 {
-                    care = utf8.prev_boundary(cur.as_str(), care.to_usize()).to_i32()
+                    care = utf8.prev_boundary(cur, care.to_usize()).to_i32()
                     caret_changed = true
                 }
             } else if op == OP_RIGHT {
                 if care < n_bytes {
-                    care = utf8.next_boundary(cur.as_str(), care.to_usize()).to_i32()
+                    care = utf8.next_boundary(cur, care.to_usize()).to_i32()
                     caret_changed = true
                 }
             } else if op == OP_HOME {
@@ -1043,7 +1043,7 @@ fun mut SNode.compute_measure(th: &Theme) {
         if sc < 1 || sc > font.MAX_SCALE {
             sc = th.text_scale
         }
-        measured_w = font.text_width(props.text.as_str(), sc)
+        measured_w = font.text_width(props.text, sc)
         measured_h = font.text_height(sc)
         return
     }
@@ -1057,8 +1057,8 @@ fun mut SNode.compute_measure(th: &Theme) {
     }
     if k == core.KIND_BUTTON || k == core.KIND_ENTRY {
         var sc = th.text_scale
-        val tw = font.text_width(props.label.as_str(), sc)
-        val ew = font.text_width(props.text.as_str(), sc)
+        val tw = font.text_width(props.label, sc)
+        val ew = font.text_width(props.text, sc)
         var w = tw
         if ew > w {
             w = ew
@@ -1080,7 +1080,7 @@ fun mut SNode.compute_measure(th: &Theme) {
         return
     }
     if k == core.KIND_CHECKBOX {
-        measured_w = th.box + th.gap + font.text_width(props.label.as_str(), th.text_scale)
+        measured_w = th.box + th.gap + font.text_width(props.label, th.text_scale)
         measured_h = th.box
         val th_text = font.text_height(th.text_scale)
         if th_text > measured_h {
@@ -1388,7 +1388,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
             px.add(draw.stroke_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, 1, fade(st.border, my_op, th.bg)))
         }
         val sc = text_scale_of(n, th)
-        val tw = font.text_width(n.props.label.as_str(), sc)
+        val tw = font.text_width(n.props.label, sc)
         val thh = font.text_height(sc)
         px.add(font.draw_text(f, cs, r.x + (r.w - tw) / 2, r.y + (r.h - thh) / 2, n.props.label.as_str(), sc, fade(st.fg, my_op, th.bg)))
     } else if k == core.KIND_ENTRY {
@@ -1415,7 +1415,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
             if care < 0 {
                 care = 0
             }
-            val cx = r.x + st.pad + utf8.count_before(n.props.text.as_str(), care.to_usize()) * font.ADVANCE * sc
+            val cx = r.x + st.pad + utf8.count_before(n.props.text, care.to_usize()) * font.ADVANCE * sc
             px.add(draw.vline(f, cs, cx, r.y + 2, r.h - 4, fade(th.caret, my_op, th.bg)))
         }
     } else if k == core.KIND_CHECKBOX {
@@ -2174,14 +2174,14 @@ fun a11y_build(kids: List<SNode>, i: usize, in_list: bool, focus: i32) => a11y.N
         state = state | a11y.STATE_DISABLED
     }
     if n.kind == core.KIND_TEXT {
-        name.push_str(n.props.text.as_str())
+        name.push_str(n.props.text)
     } else if n.kind == core.KIND_BUTTON {
-        name.push_str(n.props.label.as_str())
+        name.push_str(n.props.label)
         if enabled {
             actions = a11y.ACT_PRESS | a11y.ACT_FOCUS
         }
     } else if n.kind == core.KIND_CHECKBOX {
-        name.push_str(n.props.label.as_str())
+        name.push_str(n.props.label)
         if name.is_empty() {
             // Named after the label next to it.
             var j: usize = i + 1
@@ -2202,13 +2202,13 @@ fun a11y_build(kids: List<SNode>, i: usize, in_list: bool, focus: i32) => a11y.N
             actions = a11y.ACT_PRESS | a11y.ACT_FOCUS
         }
     } else if n.kind == core.KIND_ENTRY {
-        value.push_str(n.props.text.as_str())
+        value.push_str(n.props.text)
         if enabled {
             actions = a11y.ACT_FOCUS | a11y.ACT_SET_VALUE
         }
     } else if n.kind == core.KIND_PROGRESS {
         val shown = str.from_i64(eff_main(n, n.props.permille).to_i64())
-        value.push_str(shown.as_str())
+        value.push_str(shown)
     }
     var out = a11y.Node(
         id = n.uid,
@@ -2317,7 +2317,7 @@ fun SoftBackend.caret_chars_of(id: i32) => i32 {
             t = String.from_str(root.get(0).props.text.as_str())
         }
     }
-    return utf8.count_before(t.as_str(), c.to_usize())
+    return utf8.count_before(t, c.to_usize())
 }
 
 fun mut SoftBackend.reset_counts() {

@@ -15,7 +15,7 @@ fun main() {
     items.insert("b", Item(name = String.from_str("beta"), n = 2))
     val held = items.get("b")
     print(held.n)
-    print(held.name.as_str())
+    print(held.name)
 
     val b = Box.of(41)
     val add = fun(x: i32) => i32 = x + b.get()

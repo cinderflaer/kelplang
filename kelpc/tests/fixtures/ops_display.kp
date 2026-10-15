@@ -12,9 +12,9 @@ impl fmt.Display for Vec2 {
         val xs = fmt.int(x)
         val ys = fmt.int(y)
         out.push_str("(")
-        out.push_str(xs.as_str())
+        out.push_str(xs)
         out.push_str(", ")
-        out.push_str(ys.as_str())
+        out.push_str(ys)
         out.push_str(")")
         return out
     }
@@ -27,9 +27,9 @@ impl fmt.Display for Line {
         var out = String.empty()
         val at = a.to_text()
         val bt = b.to_text()
-        out.push_str(at.as_str())
+        out.push_str(at)
         out.push_str(" -> ")
-        out.push_str(bt.as_str())
+        out.push_str(bt)
         return out
     }
 }

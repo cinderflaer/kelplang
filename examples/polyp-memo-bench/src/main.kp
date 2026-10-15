@@ -90,7 +90,7 @@ fun row_deps(it: &Item) => core.Deps {
     var d = core.deps()
     d.push_int(it.id.to_i64())
     d.push_bool(it.done)
-    d.push_str(it.title.as_str())
+    d.push_str(it.title)
     return d
 }
 
@@ -133,7 +133,7 @@ fun no_subs(m: Model) => List<core.Sub<Msg>> {
 
 fun frames() => i32 {
     val v = env.get("POLYP_BENCH_QUICK")
-    if !str.is_empty(v.as_str()) { return 3 }
+    if !str.is_empty(v) { return 3 }
     return 40
 }
 

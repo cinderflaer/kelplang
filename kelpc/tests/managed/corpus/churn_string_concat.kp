@@ -11,7 +11,7 @@ fun main() {
         while i < 2000 {
             s.push_str("ab")
             val num = str.from_i64(i + round)
-            s.push_str(num.as_str())
+            s.push_str(num)
             i = i + 1
         }
         val v = s.view()

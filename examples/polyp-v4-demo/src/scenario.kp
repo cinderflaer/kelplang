@@ -43,21 +43,21 @@ pub fun step_line(step: i32, t_ms: u64, checksum: u64, dirty: i32, wants: bool, 
         w = "1"
     }
     var line: String = "step "
-    line.push_str(a.as_str())
+    line.push_str(a)
     line.push_str(" t ")
-    line.push_str(b.as_str())
+    line.push_str(b)
     line.push_str(" checksum ")
-    line.push_str(c.as_str())
+    line.push_str(c)
     line.push_str(" dirty ")
-    line.push_str(d.as_str())
+    line.push_str(d)
     line.push_str(" wants ")
     line.push_str(w)
     line.push_str(" ticks ")
-    line.push_str(e.as_str())
+    line.push_str(e)
     line.push_str(" memo ")
-    line.push_str(h.as_str())
+    line.push_str(h)
     line.push_str("/")
-    line.push_str(ms.as_str())
+    line.push_str(ms)
     return line
 }
 
@@ -115,7 +115,7 @@ fun emit_a11y(backend: mut soft_backend.SoftBackend, emit: fun (str)) {
     var line: String = ""
     var i: usize = 0
     while i < text.len() {
-        val b = str.byte(text.as_str(), i)
+        val b = str.byte(text, i)
         if b == 10 {
             emit(line.as_str())
             line = ""

@@ -47,7 +47,7 @@ fun build_url(host: str, port: u16, path: str) => String {
     url.push_str(host)
     url.push_str(":")
     val port_str = fmt.uint(port.to_u64())
-    url.push_str(port_str.as_str())
+    url.push_str(port_str)
     url.push_str(path)
     return url
 }
@@ -58,14 +58,14 @@ fun build_url(host: str, port: u16, path: str) => String {
 // handshake.
 fun fetch_all(worker: usize) => Outcome {
     val job = job_for(worker)
-    var pool = http.pool(job.host.as_str(), job.port)
+    var pool = http.pool(job.host, job.port)
     var ok: usize = 0
     var failed: usize = 0
     var bytes: u64 = 0
     var i: usize = 0
     while i < job.paths.len() {
         val path = job.paths.get(i)
-        val url = build_url(job.host.as_str(), job.port, path.as_str())
+        val url = build_url(job.host, job.port, path.as_str())
         val req = http.Request(
             method = "GET",
             url = url,
@@ -118,13 +118,13 @@ fun report(label: str, o: &Outcome) {
     msg.push_str(label)
     msg.push_str(": ")
     val ok_str = fmt.uint(o.ok.to_u64())
-    msg.push_str(ok_str.as_str())
+    msg.push_str(ok_str)
     msg.push_str(" ok, ")
     val failed_str = fmt.uint(o.failed.to_u64())
-    msg.push_str(failed_str.as_str())
+    msg.push_str(failed_str)
     msg.push_str(" failed, ")
     val bytes_str = fmt.uint(o.bytes)
-    msg.push_str(bytes_str.as_str())
+    msg.push_str(bytes_str)
     msg.push_str(" bytes")
     print(msg)
 }
@@ -198,13 +198,13 @@ fun main() {
     var summary = String.empty()
     summary.push_str("total: ")
     val total_ok_str = fmt.uint(total_ok.to_u64())
-    summary.push_str(total_ok_str.as_str())
+    summary.push_str(total_ok_str)
     summary.push_str(" ok, ")
     val total_failed_str = fmt.uint(total_failed.to_u64())
-    summary.push_str(total_failed_str.as_str())
+    summary.push_str(total_failed_str)
     summary.push_str(" failed, ")
     val total_bytes_str = fmt.uint(total_bytes)
-    summary.push_str(total_bytes_str.as_str())
+    summary.push_str(total_bytes_str)
     summary.push_str(" bytes")
     print(summary)
 

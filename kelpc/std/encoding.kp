@@ -493,8 +493,8 @@ fun dump(data: &Bytes) => String {
             out.push('\n')
         }
         val raw_offset = fmt.hex(off.to_u64())
-        val offset = fmt.pad_left(raw_offset.as_str(), 8, '0')
-        out.push_str(offset.as_str())
+        val offset = fmt.pad_left(raw_offset, 8, '0')
+        out.push_str(offset)
         out.push_str("  ")
         var i: usize = 0
         while i < 16 {

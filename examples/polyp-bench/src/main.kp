@@ -84,7 +84,7 @@ fun scenario_name(id: i32) => str {
 // run with the variable unset.
 fun quick() => bool {
     val v = env.get("POLYP_BENCH_QUICK")
-    return !str.is_empty(v.as_str())
+    return !str.is_empty(v)
 }
 
 // Frames per run for each scenario: the count the name claims, and a round number for the two that

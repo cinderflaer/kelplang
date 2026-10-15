@@ -5,7 +5,7 @@ impl "std/str"
 fun main() {
     val names = str.split("alpha,beta,gamma", ",")
     for name in names.iter() {
-        print(name.as_str())
+        print(name)
     }
     print(names.len())
 }

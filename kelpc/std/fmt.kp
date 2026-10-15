@@ -124,7 +124,7 @@ fun group_digits(text: &str) => String {
 fun human_size(bytes: u64) => String {
     if bytes < 1024 {
         val text = str.from_u64(bytes)
-        return str.concat(text.as_str(), " B")
+        return str.concat(text, " B")
     }
     if bytes < 1048576 {
         return human_scale(bytes = bytes, div = 1024, unit = " KiB")
@@ -142,5 +142,5 @@ fun human_size(bytes: u64) => String {
 /// The helper behind `human_size`, which picks the divisor and the unit.
 fun human_scale(bytes: u64, div: u64, unit: &str) => String {
     val text = float(x = bytes.to_f64() / div.to_f64(), decimals = 2)
-    return str.concat(text.as_str(), unit)
+    return str.concat(text, unit)
 }

@@ -7,22 +7,22 @@ pub fun build() {
     val dir = "__KELP_SCRATCH__/kelp_caps_link"
     val target = path.join(dir, "target.txt")
     val link = path.join(dir, "link.txt")
-    fs.write_text(target.as_str(), String.from_str("hello link"))
-    fs.symlink(target.as_str(), link.as_str())
+    fs.write_text(target, String.from_str("hello link"))
+    fs.symlink(target, link.as_str())
 
     // Both ends are inside the grant, so following the link resolves to a path
     // the check admits: a link is transparent to every access below it.
-    print(fs.is_file(link.as_str()))
-    print(fs.read_text(link.as_str()))
+    print(fs.is_file(link))
+    print(fs.read_text(link))
 
     // Removing the target leaves the link dangling, and `exists` follows it,
     // which is the proof that this is a link and not a copy.
-    fs.remove(target.as_str())
-    print(fs.exists(link.as_str()))
+    fs.remove(target)
+    print(fs.exists(link))
 
     // A dangling link is still removable: the check resolves the *link's* path,
     // which is inside the grant. The directory is empty afterwards, so the link
     // is gone rather than left behind.
-    fs.remove(link.as_str())
+    fs.remove(link)
     print(fs.list(dir).len())
 }

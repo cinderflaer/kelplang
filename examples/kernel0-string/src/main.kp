@@ -74,7 +74,7 @@ fun put_str(text: str) {
 // Kelp, so no `snprintf` is in the image.
 fun put_u64(value: u64) {
     val text = str.from_u64(value)
-    put_str(text.as_str())
+    put_str(text)
 }
 
 fun newline() {
@@ -86,7 +86,7 @@ fun build_and_print() {
     var shout: String = greeting.clone()
     shout.push_str("!")
     put_str("s: ")
-    put_str(shout.as_str())
+    put_str(shout)
     newline()
 
     put_str("n: ")

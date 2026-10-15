@@ -12,5 +12,5 @@ fun main() {
     s.set_timeout(100)
     print("waiting")
     val got = net.recv(s, 8)
-    print(got.as_str())
+    print(got)
 }

@@ -273,7 +273,7 @@ fun kind_name(kind: i32) => str {
     return "?"
 }
 
-// `x = str.concat(x.as_str(), t)` would borrow `x` while assigning to it, so an append is its own
+// `x = str.concat(x, t)` would borrow `x` while assigning to it, so an append is its own
 // call and the assignment happens after it returns.
 fun append(s: &String, t: str) => String = str.concat(s.as_str(), t)
 
@@ -488,10 +488,10 @@ impl core.Backend for Headless {
 // wired: the page is the first frame, not a running program.
 fun html_escape(s: str) => String {
     val a = str.replace(s, "&", "&amp;")
-    val b = str.replace(a.as_str(), "<", "&lt;")
-    val c = str.replace(b.as_str(), ">", "&gt;")
-    val d = str.replace(c.as_str(), "\"", "&quot;")
-    return str.replace(d.as_str(), "'", "&#39;")
+    val b = str.replace(a, "<", "&lt;")
+    val c = str.replace(b, ">", "&gt;")
+    val d = str.replace(c, "\"", "&quot;")
+    return str.replace(d, "'", "&#39;")
 }
 
 fun html_element(tag: str, attrs: str, body: str) => String {
@@ -513,13 +513,13 @@ fun html_of(n: &HNode) => String {
         body = append(body, child.as_str())
     }
     if n.kind == core.KIND_TEXT {
-        val escaped = html_escape(n.props.text.as_str())
+        val escaped = html_escape(n.props.text)
         val cls = if n.props.bold { " class=\"polyp-text polyp-bold\"" } else { " class=\"polyp-text\"" }
         val text_attrs = str.concat(cls, " data-kind=\"text\"")
         return html_element("p", text_attrs.as_str(), escaped.as_str())
     }
     if n.kind == core.KIND_BUTTON {
-        val label = html_escape(n.props.label.as_str())
+        val label = html_escape(n.props.label)
         return html_element("button", " type=\"button\" data-kind=\"button\"", label.as_str())
     }
     if n.kind == core.KIND_COLUMN || n.kind == core.KIND_ROW {
@@ -541,11 +541,11 @@ fun html_of(n: &HNode) => String {
     if n.kind == core.KIND_SPACER {
         val px = fmt.int(n.props.height.to_i64())
         val attrs = str.concat(" style=\"height:", px.as_str())
-        val spacer_attrs = str.concat(attrs.as_str(), "px\" data-kind=\"spacer\"")
+        val spacer_attrs = str.concat(attrs, "px\" data-kind=\"spacer\"")
         return html_element("div", spacer_attrs.as_str(), "")
     }
     val other = str.concat(" data-kind=\"", kind_name(n.kind))
-    val other_attrs = str.concat(other.as_str(), "\"")
+    val other_attrs = str.concat(other, "\"")
     return html_element("div", other_attrs.as_str(), body.as_str())
 }
 

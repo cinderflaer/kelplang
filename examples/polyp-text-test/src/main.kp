@@ -44,10 +44,10 @@ fun bytes(a: u8, b: u8, c: u8, d: u8, n: i32) => String {
 fun show_decode(label: str, a: u8, b: u8, c: u8, d: u8, n: i32) {
     print(label)
     val s = bytes(a, b, c, d, n)
-    val r = utf8.decode(s.as_str(), 0)
+    val r = utf8.decode(s, 0)
     print(utf8.unit_len(r))
     print(utf8.unit_cp(r))
-    print(utf8.count(s.as_str()))
+    print(utf8.count(s))
 }
 
 fun run_decode() {
@@ -73,16 +73,16 @@ fun run_width() {
     var h = hello
     h.push(0x6C)
     h.push(0x6F)
-    print(utf8.count(h.as_str()))
-    print(font.text_width(h.as_str(), 1))
-    print(font.text_width(h.as_str(), 2))
+    print(utf8.count(h))
+    print(font.text_width(h, 1))
+    print(font.text_width(h, 2))
     print(h.len())
     val cjk = bytes(0xE4, 0xB8, 0xAD, 0, 3)
-    print(font.text_width(cjk.as_str(), 1))
+    print(font.text_width(cjk, 1))
     val emoji = bytes(0xF0, 0x9F, 0x98, 0x80, 4)
-    print(font.text_width(emoji.as_str(), 1))
+    print(font.text_width(emoji, 1))
     val bad = bytes(0xFF, 0xFE, 0x41, 0, 3)
-    print(font.text_width(bad.as_str(), 1))
+    print(font.text_width(bad, 1))
 }
 
 fun run_glyphs() {
@@ -144,8 +144,8 @@ fun run_draw() {
     } else {
         print("tails equal")
     }
-    print(font.text_width(tail.as_str(), 1))
-    print(font.text_width(tail2.as_str(), 1))
+    print(font.text_width(tail, 1))
+    print(font.text_width(tail2, 1))
 }
 
 fun entry_view(s: St) => core.Node<i32> {

@@ -52,7 +52,7 @@ fun row_deps(r: &Row) => core.Deps {
     var d = core.deps()
     d.push_int(r.id.to_i64())
     d.push_bool(r.done)
-    d.push_str(r.label.as_str())
+    d.push_str(r.label)
     return d
 }
 

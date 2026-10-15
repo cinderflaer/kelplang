@@ -33,6 +33,7 @@ empty on release.
 
 ## changed
 
+- The standard library, the examples and the tests no longer write `.as_str()` at call arguments whose parameter is `str` or `&str`, such as `str.concat(a, b)` or `out.push_str(...)`: the checker takes the same borrow implicitly. Sites that still need the explicit form (`String.from_str`, generic `Children` methods, trait methods, function-typed parameters and `Bytes` values) keep it.
 - A parse error prints the token as written (`found ';'`, `found 'fun'`, `found end of file`) where it printed a Rust debug name (`found Semi`, `found Ident("fn")`).
 - `kelpc repl` builds run under a resumable memory guard: when memory runs low the guard stops the build's child tools, the line is refused with a low-memory message, and the session continues. A parse error in a typed line points at its place in the line, and an unknown name in the REPL no longer tells the user to declare it with `val` or `var`.
 - The return type is written `=>`: `fun f(a: i32) => i32`. The retired `=> ` marker still compiles and means the same, and `->` is an alias of `=>`. The `=> ` marker is removed, so `=> ` is now a parse error that names `=>`. Every example, the standard library, the runtime sources, the wiki and the messages the compiler prints now write `=>`.

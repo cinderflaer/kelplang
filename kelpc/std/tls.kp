@@ -296,7 +296,7 @@ fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<T
 /// Panics with the text of a refused handshake. Its return type is `TlsStream` so that `handshake` can call it as a value.
 fun fail_stream(e: move TlsError) => TlsStream {
     val text = error_text(e)
-    panic(text.as_str())
+    panic(text)
 }
 
 /// Performs the TLS client handshake with the default options, or panics with the error's text.
@@ -363,13 +363,13 @@ fun set_timeout(t: TlsStream, ms: u64) {
 /// Panics with the text of a failed TLS read or write that returns bytes.
 fun fail_bytes(e: move TlsError) => Bytes {
     val text = error_text(e)
-    panic(text.as_str())
+    panic(text)
 }
 
 /// Panics with the text of a failed TLS operation that returns a count.
 fun fail_usize(e: move TlsError) => usize {
     val text = error_text(e)
-    panic(text.as_str())
+    panic(text)
 }
 
 /// Writes some of `data` and returns how many bytes were written, or why the write failed. Like `net.send`, it may write fewer bytes than given.
@@ -539,7 +539,7 @@ fun shutdown(t: TlsStream) {
         Ok(_) -> {}
         Err(e) -> {
             val text = error_text(e)
-            panic(text.as_str())
+            panic(text)
         }
     }
 }

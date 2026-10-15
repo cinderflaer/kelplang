@@ -1151,10 +1151,10 @@ fun run_dump() {
 
 fun mode() => i32 {
     val m = env.get("POLYP_SOFT_TEST")
-    if str.eq(m.as_str(), "scale") { return 1 }
-    if str.eq(m.as_str(), "clip_depth") { return 2 }
-    if str.eq(m.as_str(), "clip_empty") { return 3 }
-    if str.eq(m.as_str(), "dump") { return 4 }
+    if str.eq(m, "scale") { return 1 }
+    if str.eq(m, "clip_depth") { return 2 }
+    if str.eq(m, "clip_empty") { return 3 }
+    if str.eq(m, "dump") { return 4 }
     return 0
 }
 

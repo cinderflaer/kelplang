@@ -11,10 +11,10 @@ fun err_of(pat: &str) => String {
     val r = regex.compile(pat)
     var out = String.empty()
     if let Err(e) = r {
-        out.push_str(e.message.as_str())
+        out.push_str(e.message)
         out.push_str(" @")
         val n = str.from_u64(e.offset.to_u64())
-        out.push_str(n.as_str())
+        out.push_str(n)
     }
     if let Ok(re) = r {
         out.push_str("compiled")
@@ -25,7 +25,7 @@ fun err_of(pat: &str) => String {
 fun e(st: mut Stats, pat: &str, expect: &str) {
     val got = err_of(pat)
     st.run += 1
-    if !str.eq(got.as_str(), expect) {
+    if !str.eq(got, expect) {
         st.bad += 1
         print("FAIL")
         print(str.len(pat))
@@ -104,7 +104,7 @@ fun main() {
     e(st, deep.as_str(), "compiled")
     var deeper = String.empty()
     deeper.push('(')
-    deeper.push_str(deep.as_str())
+    deeper.push_str(deep)
     deeper.push(')')
     e(st, deeper.as_str(), "nesting is too deep (limit 100) @100")
     var ncdeep = String.empty()

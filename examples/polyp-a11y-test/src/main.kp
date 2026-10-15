@@ -58,7 +58,7 @@ fun run_dump() {
     boot(b, p, &tree)
     val t = b.a11y_tree()
     val text = a11y.dump(&t)
-    print(text.as_str())
+    print(text)
     print(a11y.count(&t))
 }
 
@@ -93,7 +93,7 @@ fun press_case(use_tree: bool) {
     tree = step(b, p, tree, st)
     tree = step(b, p, tree, st)
     print(st.items.len())
-    print(st.draft.as_str())
+    print(st.draft)
     print(b.focus_slot())
     val after = b.a11y_tree()
     print(a11y.find_id(&after, a11y.ROLE_LABEL, "alpha") >= 0)
@@ -138,7 +138,7 @@ fun run_set_value() {
     print(b.a11y_set_value(entry, "typed by a screen reader"))
     tree = step(b, p, tree, st)
     tree = step(b, p, tree, st)
-    print(st.draft.as_str())
+    print(st.draft)
     val add = a11y.find_id(&t, a11y.ROLE_BUTTON, "add")
     print(b.a11y_set_value(add, "nope"))
 }
@@ -161,7 +161,7 @@ fun run_toggle() {
     print(st.items.get(0).done)
     val t2 = b.a11y_tree()
     val row = t2.kids.get(1).kids.get(0).kids.get(0)
-    print(row.value.as_str())
+    print(row.value)
     print(row.state)
 }
 
@@ -223,7 +223,7 @@ fun run_disabled() {
     }
     val t = b.a11y_tree()
     val text = a11y.dump(&t)
-    print(text.as_str())
+    print(text)
     val dead = a11y.find_id(&t, a11y.ROLE_BUTTON, "dead")
     val ent = a11y.find_id(&t, a11y.ROLE_ENTRY, "")
     print(b.a11y_act(dead, a11y.ACT_PRESS))

@@ -333,5 +333,5 @@ fun Socket.peer_addr() => String = peer_addr_raw(fd)
 /// Panics: if the host is outside the granted capability, or does not resolve.
 fun resolve(host: &str) => List<String> {
     val raw = resolve_raw(host)
-    return str.split(raw.as_str(), "\n")
+    return str.split(raw, "\n")
 }

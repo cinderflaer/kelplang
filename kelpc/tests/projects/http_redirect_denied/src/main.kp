@@ -30,7 +30,7 @@ fun url_for(path: &str) => String {
     val port_text = str.from_u64(server_port().to_u64())
     var out = String.with_capacity(64)
     out.push_str("http://127.0.0.1:")
-    out.push_str(port_text.as_str())
+    out.push_str(port_text)
     out.push_str(path)
     return out
 }

@@ -39,12 +39,12 @@ fun err_name(e: move tls.TlsError) => String = when e {
 
 fun fail(e: move tls.TlsError) => tls.TlsStream {
     val text = err_name(e)
-    panic(text.as_str())
+    panic(text)
 }
 
 fun fail_unit(e: move tls.TlsError) {
     val text = err_name(e)
-    panic(text.as_str())
+    panic(text)
 }
 
 fun arg_port() => u16 {

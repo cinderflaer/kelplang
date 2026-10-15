@@ -30,7 +30,7 @@ fun url_for(path: &str) => String {
     val port_text = str.from_u64(server_port().to_u64())
     var out = String.with_capacity(64)
     out.push_str("http://127.0.0.1:")
-    out.push_str(port_text.as_str())
+    out.push_str(port_text)
     out.push_str(path)
     return out
 }
@@ -53,7 +53,7 @@ fun main() {
     // A framed 200: status, body, and the reuse verdict.
     val r1 = pool.send(req_for("/a"))
     print(r1.status)
-    print(r1.body.as_str())
+    print(r1.body)
     print(r1.reusable)
     print(r1.has_header("x-test"))
     print(r1.has_header("absent"))
@@ -68,7 +68,7 @@ fun main() {
     // Chunked: the framing keep-alive makes mandatory.
     val r3 = pool.send(req_for("/chunked"))
     print(r3.status)
-    print(r3.body.as_str())
+    print(r3.body)
     print(r3.reusable)
 
     // A 404 is a normal return, not a panic.
@@ -80,7 +80,7 @@ fun main() {
     // connection is *not* kept: the pool goes back to empty.
     val r5 = pool.send(req_for("/close"))
     print(r5.status)
-    print(r5.body.as_str())
+    print(r5.body)
     print(r5.reusable)
     print(pool.len())
     pool.close_all()

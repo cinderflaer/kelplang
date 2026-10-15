@@ -44,8 +44,8 @@ fun main() {
     print(walked.get(walked.len() - 1).as_str())
 
     val tmp = fs.temp_path("/tmp/kelp_fs_breadth_test/tmp-")
-    print(str.starts_with(tmp.as_str(), "/tmp/kelp_fs_breadth_test/tmp-"))
-    print(fs.is_file(tmp.as_str()))
+    print(str.starts_with(tmp, "/tmp/kelp_fs_breadth_test/tmp-"))
+    print(fs.is_file(tmp))
 
     fs.remove_all(root)
     print(fs.exists(root))

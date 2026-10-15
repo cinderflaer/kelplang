@@ -11,11 +11,11 @@ fun main() {
         while i < 20000 {
             s.push_str("p")
             val num = str.from_i64(i * 7 + round)
-            s.push_str(num.as_str())
+            s.push_str(num)
             s.push_str(",")
             i = i + 1
         }
-        val pieces = str.split(s.as_str(), ",")
+        val pieces = str.split(s, ",")
         var count: i64 = 0
         var k: usize = 0
         while k < pieces.len() {

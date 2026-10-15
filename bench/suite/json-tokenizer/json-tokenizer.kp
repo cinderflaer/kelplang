@@ -36,13 +36,13 @@ fun main() {
     while s.len() < target {
         s.push_str("{\"id\":")
         val a = str.from_i64(i)
-        s.push_str(a.as_str())
+        s.push_str(a)
         s.push_str(",\"name\":\"user")
         val b = str.from_i64(i % 1000)
-        s.push_str(b.as_str())
+        s.push_str(b)
         s.push_str("\",\"tags\":[\"a\",\"b\\\"c\"],\"score\":")
         val c = str.from_i64(i % 97)
-        s.push_str(c.as_str())
+        s.push_str(c)
         s.push_str(".5,\"ok\":true,\"n\":null},\n")
         i = i + 1
     }

@@ -47,15 +47,15 @@ fun main() {
     marks.sort()
     when marks.get(0) {
         Empty -> print("empty")
-        Named(l) -> print(l.as_str())
+        Named(l) -> print(l)
     }
     when marks.get(1) {
         Empty -> print("empty")
-        Named(l) -> print(l.as_str())
+        Named(l) -> print(l)
     }
     when marks.get(2) {
         Empty -> print("empty")
-        Named(l) -> print(l.as_str())
+        Named(l) -> print(l)
     }
     print(marks_copy.len())
 }

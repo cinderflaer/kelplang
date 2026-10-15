@@ -8,12 +8,12 @@ fun main() {
 
     var first = String.empty()
     print(reader.read_line_into(first))
-    print(first.as_str())
+    print(first)
 
     // What the chunked reader already holds plus the rest of the stream.
     val whole = reader.read_all()
     print(whole.len())
-    print(whole.as_str())
+    print(whole)
 
     print(reader.file.is_open())
     reader.file.flush()

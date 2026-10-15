@@ -16,7 +16,7 @@ impl "std/str"
 // needs a place to live before it can be appended.
 fun push_num(out: mut String, n: u64) {
     val text = str.from_u64(n)
-    out.push_str(text.as_str())
+    out.push_str(text)
 }
 
 pub fun report() => String {
@@ -40,7 +40,7 @@ pub fun report() => String {
     // The peer address is the *connected* address, so it starts with the
     // address the client named; the port is whatever the kernel assigned.
     val who = server.peer_addr()
-    val loopback = str.starts_with(who.as_str(), "127.0.0.1:")
+    val loopback = str.starts_with(who, "127.0.0.1:")
 
     var out = String.empty()
     push_num(out, first_send.to_u64())

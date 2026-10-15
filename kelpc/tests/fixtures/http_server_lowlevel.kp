@@ -15,7 +15,7 @@ fun show_opt(o: move option.Option<String>) => String {
 
 fun show(o: move option.Option<String>) {
     val s = show_opt(o)
-    print(s.as_str())
+    print(s)
 }
 
 fun main() {
@@ -53,7 +53,7 @@ fun main() {
     show(req.query_param("bad"))
     show(req.query_param("missing"))
     val one = req.header("X-ONE")
-    print(one.as_str())
+    print(one)
     print(req.has_header("X-one"))
     print(req.has_header("x-two"))
 
@@ -66,9 +66,9 @@ fun main() {
     val first = conn.read_request(&lim)
     when first {
         Ok(r) -> {
-            print(r.method.as_str())
-            print(r.path.as_str())
-            print(r.query.as_str())
+            print(r.method)
+            print(r.path)
+            print(r.query)
             val resp = http.ok_text("one")
             val w = conn.write_response(&resp)
         }
@@ -77,7 +77,7 @@ fun main() {
     val second = conn.read_request(&lim)
     when second {
         Ok(r) -> {
-            print(r.method.as_str())
+            print(r.method)
             print(r.body.len())
             val base = http.json("{}")
             val resp = base.with_header("X-Seen", "yes")
@@ -98,7 +98,7 @@ fun main() {
     print(conn.wants_close())
     conn.close()
     val got = net.recv(client, 4096)
-    print(got.as_str())
+    print(got)
     net.close(client)
 
     // A refused request is answered by `write_error` with its status.
@@ -115,7 +115,7 @@ fun main() {
     }
     conn2.close()
     val got2 = net.recv(bad, 4096)
-    print(got2.as_str())
+    print(got2)
     net.close(bad)
     server.close()
 }

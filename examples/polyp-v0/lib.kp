@@ -115,7 +115,7 @@ fun button_widget<M>(label: String, msg: move M, msgs: mut List<M>, next: mut i3
 fun build<M>(node: move Node<M>, msgs: mut List<M>, next: mut i32) => gtk.Widget = when node {
     Column(children) -> box_widget(children, VERTICAL, msgs, next)
     Row(children) -> box_widget(children, HORIZONTAL, msgs, next)
-    Text(text) -> gtk.gtk_label_new(text.as_str())
+    Text(text) -> gtk.gtk_label_new(text)
     Button(label, on_click) -> button_widget(label, on_click, msgs, next)
 }
 

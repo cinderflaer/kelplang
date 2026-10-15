@@ -28,7 +28,7 @@ fun arg_port(at: usize) => u16 {
 fun url_for(port: u16, path: &str) => String {
     val port_text = str.from_u64(port.to_u64())
     val head = str.concat("http://127.0.0.1:", port_text.as_str())
-    return str.concat(head.as_str(), path)
+    return str.concat(head, path)
 }
 
 fun show(label: &str, r: move result.Result<http.Response, http.HttpErr>) {
@@ -46,22 +46,22 @@ fun show(label: &str, r: move result.Result<http.Response, http.HttpErr>) {
 
 fun main() {
     val dead = url_for(arg_port(1), "/")
-    show("refused", http.try_get(dead.as_str()))
+    show("refused", http.try_get(dead))
 
     val port = arg_port(2)
     val cut = url_for(port, "/cut")
-    show("fresh", http.try_get(cut.as_str()))
+    show("fresh", http.try_get(cut))
 
     var pool = http.pool("127.0.0.1", port)
-    show("pool-cut", pool.try_send(http.make_get(cut.as_str())))
+    show("pool-cut", pool.try_send(http.make_get(cut)))
     print("pool kept ${pool.len()}")
 
     val loop_url = url_for(port, "/loop")
-    show("pool-loop", pool.try_send(http.make_get(loop_url.as_str())))
+    show("pool-loop", pool.try_send(http.make_get(loop_url)))
     print("pool kept ${pool.len()}")
 
     val hello = url_for(port, "/hello")
-    show("pool-hello", pool.try_send(http.make_get(hello.as_str())))
+    show("pool-hello", pool.try_send(http.make_get(hello)))
     print("pool kept ${pool.len()}")
     pool.close_all()
     print("survived")

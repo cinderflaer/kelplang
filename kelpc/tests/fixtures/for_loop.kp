@@ -67,7 +67,7 @@ fun main() {
     // it, hence the `.as_str()` (the open-item-21 wart, unchanged here).
     val names = str.split("a,b,c", ",")
     for name in names {
-        print(name.as_str())
+        print(name)
     }
 
     // Nesting: two loops, two synthesized index names, no interference.

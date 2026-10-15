@@ -11,7 +11,7 @@ impl fmt.Display for Tag {
         var out = String.empty()
         val s = fmt.int(id)
         out.push_str("#")
-        out.push_str(s.as_str())
+        out.push_str(s)
         return out
     }
 }

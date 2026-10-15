@@ -249,12 +249,12 @@ fun check(label: &str, pat: &str, r: &Ref, root: i32, seed: u64, count: i32, nul
         // The engine's.
         var gs: i64 = -1
         var ge: i64 = -1
-        val m = re.find(text.as_str())
+        val m = re.find(text)
         if let Some(x) = m {
             gs = x.start.to_i64()
             ge = x.end.to_i64()
         }
-        val yes = re.is_match(text.as_str())
+        val yes = re.is_match(text)
         if gs != rs || ge != re_end || yes != (rs >= 0) {
             bad += 1
             print("DIFF ${label} on '${text}': engine ${gs}..${ge}, reference ${rs}..${re_end}")

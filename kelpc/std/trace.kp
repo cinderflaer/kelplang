@@ -40,21 +40,21 @@ fun emit(kind: &str, file: &str, line: usize, name: &str, elapsed_ns: i64) {
     val safe_file = escape(file)
     val safe_name = escape(name)
     val out0 = str.concat("trace\t", kind)
-    val out1 = str.concat(out0.as_str(), "\t")
-    val out2 = str.concat(out1.as_str(), time_ns.as_str())
-    val out3 = str.concat(out2.as_str(), "\t")
-    val out4 = str.concat(out3.as_str(), safe_file.as_str())
-    val out5 = str.concat(out4.as_str(), ":")
-    val out6 = str.concat(out5.as_str(), at.as_str())
-    val out7 = str.concat(out6.as_str(), "\t")
-    val out = str.concat(out7.as_str(), safe_name.as_str())
+    val out1 = str.concat(out0, "\t")
+    val out2 = str.concat(out1, time_ns.as_str())
+    val out3 = str.concat(out2, "\t")
+    val out4 = str.concat(out3, safe_file.as_str())
+    val out5 = str.concat(out4, ":")
+    val out6 = str.concat(out5, at.as_str())
+    val out7 = str.concat(out6, "\t")
+    val out = str.concat(out7, safe_name.as_str())
     if elapsed_ns >= 0 {
         val elapsed = fmt.int(elapsed_ns)
-        val with_separator = str.concat(out.as_str(), "\t")
-        val completed = str.concat(with_separator.as_str(), elapsed.as_str())
-        io.eprint(completed.as_str())
+        val with_separator = str.concat(out, "\t")
+        val completed = str.concat(with_separator, elapsed.as_str())
+        io.eprint(completed)
     } else {
-        io.eprint(out.as_str())
+        io.eprint(out)
     }
 }
 
@@ -62,6 +62,6 @@ fun emit(kind: &str, file: &str, line: usize, name: &str, elapsed_ns: i64) {
 /// trace record always stays on one line with its tab-separated fields intact.
 fun escape(text: &str) => String {
     val slashes = str.replace(text, "\\", "\\\\")
-    val tabs = str.replace(slashes.as_str(), "\t", "\\t")
-    return str.replace(tabs.as_str(), "\n", "\\n")
+    val tabs = str.replace(slashes, "\t", "\\t")
+    return str.replace(tabs, "\n", "\\n")
 }

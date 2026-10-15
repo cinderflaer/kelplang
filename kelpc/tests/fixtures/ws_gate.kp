@@ -33,16 +33,16 @@ fun server_port() => u16 {
 // authority, and the port is the harness's own.
 fun url_for(port: u16) => String {
     val port_text = str.from_u64(port.to_u64())
-    val rest = str.concat(port_text.as_str(), "/gateway")
+    val rest = str.concat(port_text, "/gateway")
     return str.concat("ws://127.0.0.1:", rest.as_str())
 }
 
 fun main() {
     val url = url_for(server_port())
-    val u = ws.parse_url(url.as_str())
+    val u = ws.parse_url(url)
     print("url ${u.host} ${u.port} ${u.path}")
 
-    var c = ws.connect(u.host.as_str(), u.port, u.path.as_str())
+    var c = ws.connect(u.host, u.port, u.path.as_str())
     print("connected")
 
     val m1 = c.recv()

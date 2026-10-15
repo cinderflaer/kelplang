@@ -90,8 +90,8 @@ fun boot<M>(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPl
 fun say(label: str, n: i64) {
     val shown = str.from_i64(n)
     val head = str.concat(label, " ")
-    val line = str.concat(head.as_str(), shown.as_str())
-    print(line.as_str())
+    val line = str.concat(head, shown.as_str())
+    print(line)
 }
 
 fun say_bool(label: str, v: bool) {

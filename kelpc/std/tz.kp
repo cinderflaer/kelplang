@@ -844,7 +844,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
     var first = Counts(isutcnt = 0, isstdcnt = 0, leapcnt = 0, timecnt = 0, typecnt = 0, charcnt = 0)
     r.counts(what = "the header is truncated", out = first)
     if r.bad {
-        return corrupt(r.why.as_str())
+        return corrupt(r.why)
     }
     var use64 = false
     var block: usize = 44
@@ -863,7 +863,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
         r.at = block + 20
         r.counts(what = "the second header is truncated", out = first)
         if r.bad {
-            return corrupt(r.why.as_str())
+            return corrupt(r.why)
         }
         use64 = true
         block = block + 44
@@ -903,7 +903,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
         i = i + 1
     }
     if r.bad {
-        return corrupt(r.why.as_str())
+        return corrupt(r.why)
     }
     var at_type: List<u8> = List.empty()
     i = 0
@@ -931,7 +931,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
         i = i + 1
     }
     if r.bad {
-        return corrupt(r.why.as_str())
+        return corrupt(r.why)
     }
     i = 0
     while i < timecnt {
@@ -966,7 +966,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
             return corrupt("the TZ string in the footer is not terminated by a newline")
         }
         val text = bytes_to_string(r.data, tail + 1, end)
-        tz = parse_tz_string(text.as_str())
+        tz = parse_tz_string(text)
     }
     var uniques: List<i32> = List.empty()
     i = 0
@@ -1054,7 +1054,7 @@ fun dir_ok(dir: &str) => bool {
 fun join_path(dir: &str, name: &str) => String {
     val sep = if str.byte(dir, str.len(dir) - 1) == 47 { "" } else { "/" }
     val head = str.concat(dir, sep)
-    return str.concat(head.as_str(), name)
+    return str.concat(head, name)
 }
 
 /// Loads the zone `name` from the database in `dir`.
@@ -1068,7 +1068,7 @@ fun load_in(dir: &str, name: &str) => result.Result<Zone, TzErr> {
         return denied()
     }
     val path = join_path(dir, name)
-    return read_zone(path.as_str())
+    return read_zone(path)
 }
 
 /// Loads the zone `name` from the system database, trying `$TZDIR` first.
@@ -1085,7 +1085,7 @@ fun load(name: &str) => result.Result<Zone, TzErr> {
     }
     var dirs: List<String> = List.empty()
     val tzdir = env.get("TZDIR")
-    val usable = dir_ok(tzdir.as_str())
+    val usable = dir_ok(tzdir)
     if usable {
         dirs.push(tzdir)
     }
@@ -1101,7 +1101,7 @@ fun load_from(dirs: &List<String>, name: &str, i: usize) => result.Result<Zone, 
         return not_found()
     }
     val path = join_path(dirs.get(i).as_str(), name)
-    val got = read_zone(path.as_str())
+    val got = read_zone(path)
     return when got {
         Ok(zone) -> result.Result.Ok(value = zone)
         Err(e) -> next_or_stop(e = e, dirs = dirs, name = name, i = i)
@@ -1395,7 +1395,7 @@ fun format_spec(out: mut String, spec: u8, lt: LocalTime) {
         push_pad(out = out, value = secs / SECS_HOUR, width = 2)
         push_pad(out = out, value = (secs % SECS_HOUR) / SECS_MINUTE, width = 2)
     } elif spec == 90 {
-        out.push_str(lt.offset.abbrev.as_str())
+        out.push_str(lt.offset.abbrev)
     } elif spec == 97 {
         push_three(out = out, table = WDAY_NAMES, index = lt.weekday)
     } elif spec == 98 {
@@ -1421,7 +1421,7 @@ fun push_pad(out: mut String, value: i64, width: usize) {
         out.push('0')
         i = i + 1
     }
-    out.push_str(digits.as_str())
+    out.push_str(digits)
 }
 
 /// Appends the three bytes of `table` at entry `index`.

@@ -61,7 +61,7 @@ fun update(state: mut Counter, msg: Msg) {
 
 fun smoke_enabled() => bool {
     val value = env.get("POLYP_SMOKE")
-    return str.eq(value.as_str(), "1")
+    return str.eq(value, "1")
 }
 
 // With POLYP_SMOKE=1 the program drives itself: +1, +1, -1, then it sets the entry's text (which

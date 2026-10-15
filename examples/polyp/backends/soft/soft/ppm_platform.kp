@@ -50,10 +50,10 @@ fun PpmPlatform.pixel(x: i32, y: i32) => u32 = inner.pixel(x, y)
 
 fun mut PpmPlatform.dump(f: fb.Fb) {
     if !dir.is_empty() {
-        val head = str.concat(dir.as_str(), "/frame_")
+        val head = str.concat(dir, "/frame_")
         val index = fmt.int(n.to_i64())
-        val mid = str.concat(head.as_str(), index.as_str())
-        val path = str.concat(mid.as_str(), ".ppm")
+        val mid = str.concat(head, index.as_str())
+        val path = str.concat(mid, ".ppm")
         debug.dump_ppm(f, path.as_str())
         n += 1
     }

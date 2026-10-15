@@ -7,13 +7,13 @@ pub fun has_home() => bool = env.has("HOME")
 
 pub fun get_home_nonempty() => bool {
     val v = env.get("HOME")
-    return str.len(v.as_str()) > 0
+    return str.len(v) > 0
 }
 
 pub fun set_read_unset() => bool {
     env.set("KELP_ENV_PROBE", "value")
     val v = env.get("KELP_ENV_PROBE")
-    val ok = str.eq(v.as_str(), "value")
+    val ok = str.eq(v, "value")
     env.unset("KELP_ENV_PROBE")
     return ok && !env.has("KELP_ENV_PROBE")
 }

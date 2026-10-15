@@ -54,7 +54,7 @@ fun main() {
     decode_show("Z===")
     decode_show("Zm=v")
     decode_show("+/+/")
-    val back = encoding.base64_decode(enc.as_str())
+    val back = encoding.base64_decode(enc)
     when back {
         Ok(b) -> {
             print(b.len())

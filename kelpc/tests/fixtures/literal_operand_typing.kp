@@ -31,7 +31,7 @@ fun main() {
     // The literal on the left takes `cp`'s `u32`.
     var out = String.empty()
     push_codepoint(out, 20013)
-    print(str.eq(out.as_str(), "中"))
+    print(str.eq(out, "中"))
 
     // Both sides, every width, and both directions.
     val a: u8 = 3

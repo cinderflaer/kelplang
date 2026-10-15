@@ -55,7 +55,7 @@ fun main() {
     // file, which is legal but means the connection is spent. Either way the
     // body is complete, so report which it was rather than guessing.
     val declared = resp.header("content-length")
-    if str.is_empty(declared.as_str()) {
+    if str.is_empty(declared) {
         print("no Content-Length: the body ends at end of file")
     } else {
         print("Content-Length: ${declared.as_str()}")
@@ -65,9 +65,9 @@ fun main() {
     // this is the byte-exact path: no utf-8 validation, no text round trip. A
     // `String` in Kelp is validated utf-8 and could not hold an image.
     val part = str.concat(out.as_str(), ".part")
-    fs.write(part.as_str(), resp.body)
-    fs.sync(part.as_str())
-    fs.rename(part.as_str(), out.as_str())
+    fs.write(part, resp.body)
+    fs.sync(part)
+    fs.rename(part, out.as_str())
 
     // Read the size back off the disk rather than trusting the write: the
     // check that costs one syscall and catches the class of bug where a
@@ -84,7 +84,7 @@ fun main() {
     val bytes = fmt.uint(on_disk)
     var msg = String.empty()
     msg.push_str("wrote ")
-    msg.push_str(bytes.as_str())
+    msg.push_str(bytes)
     msg.push_str(" bytes to ")
     msg.push_str(out.as_str())
     print(msg)

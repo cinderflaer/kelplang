@@ -76,7 +76,7 @@ fun main() {
         print(v)
     }
     if let Err(e) = bad {
-        print(e.as_str())
+        print(e)
     }
 
     // `?` on an `Option` in an `Option`-returning function.

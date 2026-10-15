@@ -135,9 +135,9 @@ fun check_same(be: &headless_backend.Headless, tree: &core.Node<i32>, label: str
     core.apply_patches(backend = fresh, patches = &all)
     val got = headless_backend.dump(be)
     val want = headless_backend.dump(&fresh)
-    if !str.eq(got.as_str(), want.as_str()) {
-        print(got.as_str())
-        print(want.as_str())
+    if !str.eq(got, want.as_str()) {
+        print(got)
+        print(want)
         panic("polyp invariant: the patched tree disagrees with the view")
     }
     print("invariant")
@@ -221,7 +221,7 @@ fun run_headless_todo() {
 
 fun which() {
     val mode = env.get("POLYP_TEST")
-    if str.eq(mode.as_str(), "dupkey") {
+    if str.eq(mode, "dupkey") {
         run_duplicate_key()
         return
     }

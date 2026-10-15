@@ -89,7 +89,7 @@ fun main() {
             // in an `if` condition lives until the end of the block, so comparing
             // inline would keep both texts borrowed while `words.set` needs the
             // list exclusively.
-            val needs_swap = str.less(right_text.as_str(), left_text.as_str())
+            val needs_swap = str.less(right_text, left_text.as_str())
             if needs_swap {
                 words.set(b - 1, right_text)
                 words.set(b, left_text)

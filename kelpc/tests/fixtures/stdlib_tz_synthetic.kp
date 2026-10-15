@@ -39,14 +39,14 @@ fun label(r: &tz.Resolved) => String {
     if let One(u) = r {
         out.push_str("one ")
         val d = digits(u)
-        out.push_str(d.as_str())
+        out.push_str(d)
     } elif let Ambiguous(a, b) = r {
         out.push_str("ambiguous ")
         val da = digits(a)
         val db = digits(b)
-        out.push_str(da.as_str())
+        out.push_str(da)
         out.push(' ')
-        out.push_str(db.as_str())
+        out.push_str(db)
     } else {
         out.push_str("gap")
     }

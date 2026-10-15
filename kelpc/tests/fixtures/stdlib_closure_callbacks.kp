@@ -41,7 +41,7 @@ fun main() {
     print(list.any(xs, fun(x: &i32) => bool = x > limit))
     val tag = String.from_str("v")
     list.each(xs, fun(x: &i32) {
-        print!(str.concat(tag.as_str(), "="))
+        print!(str.concat(tag, "="))
         print!(x)
     })
     print("")

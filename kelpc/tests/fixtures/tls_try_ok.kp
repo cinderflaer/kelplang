@@ -20,7 +20,7 @@ fun server_port() => u16 {
 
 fun fail(e: move tls.TlsError) => tls.TlsStream {
     val text = tls.error_text(e)
-    panic(text.as_str())
+    panic(text)
 }
 
 fun exercise(t: tls.TlsStream) {

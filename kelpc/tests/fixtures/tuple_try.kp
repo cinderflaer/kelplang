@@ -26,12 +26,12 @@ fun main() {
             print(sum)
             print(product)
         }
-        Err(e) -> print(e.as_str())
+        Err(e) -> print(e)
     }
 
     val second = go(-1)
     when second {
         Ok(v) -> print(1)
-        Err(e) -> print(e.as_str())
+        Err(e) -> print(e)
     }
 }

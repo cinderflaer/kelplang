@@ -70,7 +70,7 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
 datac Pair(val name: String, val id: i32)
 
 fun Pair.eq(other: &Pair) => bool {
-    return str.eq(self.name.as_str(), other.name.as_str()) && self.id == other.id
+    return str.eq(self.name, other.name.as_str()) && self.id == other.id
 }
 
 // A `Bytes` field, whose equality has to be written by hand: `Bytes` is not a

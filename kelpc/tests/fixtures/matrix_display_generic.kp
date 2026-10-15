@@ -10,9 +10,9 @@ impl fmt.Display for Vec2 {
         val xs = fmt.int(x)
         val ys = fmt.int(y)
         out.push_str("<")
-        out.push_str(xs.as_str())
+        out.push_str(xs)
         out.push_str(",")
-        out.push_str(ys.as_str())
+        out.push_str(ys)
         out.push_str(">")
         return out
     }
@@ -25,7 +25,7 @@ impl fmt.Display for Tag {
         var out = String.empty()
         val s = fmt.int(id)
         out.push_str("#")
-        out.push_str(s.as_str())
+        out.push_str(s)
         return out
     }
 }

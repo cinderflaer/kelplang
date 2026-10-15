@@ -17,11 +17,11 @@ fun main() {
     fs.mkdir_all(root)
     fs.mkdir_all(target)
     val keep = path.join(target, "keep.txt")
-    fs.write_text(keep.as_str(), "keep\n")
+    fs.write_text(keep, "keep\n")
 
     val note = path.join(root, "note.txt")
     val sub = path.join(root, "sub")
-    val inner = path.join(sub.as_str(), "inner.txt")
+    val inner = path.join(sub, "inner.txt")
     val file_link = path.join(root, "file-link")
     val dir_link = path.join(root, "dir-link")
     val out_link = path.join(root, "out")
@@ -29,9 +29,9 @@ fun main() {
     val dangling = path.join(root, "dangling")
     val missing = path.join(root, "missing")
 
-    fs.write_text(note.as_str(), "kept\n")
-    fs.mkdir(sub.as_str())
-    fs.write_text(inner.as_str(), "inner\n")
+    fs.write_text(note, "kept\n")
+    fs.mkdir(sub)
+    fs.write_text(inner, "inner\n")
     fs.symlink(target = note.as_str(), link = file_link.as_str())
     fs.symlink(target = sub.as_str(), link = dir_link.as_str())
     fs.symlink(target = target, link = out_link.as_str())
@@ -39,14 +39,14 @@ fun main() {
     fs.symlink(target = missing.as_str(), link = dangling.as_str())
 
     // A link answers `true` here and resolves through the other predicates.
-    print(fs.is_symlink(file_link.as_str()))
-    print(fs.is_file(file_link.as_str()))
-    print(fs.is_dir(dir_link.as_str()))
-    print(fs.is_symlink(note.as_str()))
-    print(fs.read_link(file_link.as_str()))
+    print(fs.is_symlink(file_link))
+    print(fs.is_file(file_link))
+    print(fs.is_dir(dir_link))
+    print(fs.is_symlink(note))
+    print(fs.read_link(file_link))
     // A broken link still has a target text.
-    print(fs.is_symlink(dangling.as_str()))
-    print(fs.exists(dangling.as_str()))
+    print(fs.is_symlink(dangling))
+    print(fs.exists(dangling))
 
     // `back` points at `root` itself and `dir-link` at `sub`; neither is walked
     // into, so this terminates and holds each entry once.
@@ -57,7 +57,7 @@ fun main() {
     print(fs.exists(root))
     // The link to `target` was unlinked, not descended: the target's own file
     // is still there.
-    print(fs.exists(keep.as_str()))
+    print(fs.exists(keep))
 
     fs.remove_all(target)
     print(fs.exists(target))

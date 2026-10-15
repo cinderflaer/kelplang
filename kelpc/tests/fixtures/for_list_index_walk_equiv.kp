@@ -48,7 +48,7 @@ fun main() {
         k += 1
     }
     for name in names {
-        print(name.as_str())
+        print(name)
     }
 
     // A body that reads a second list.

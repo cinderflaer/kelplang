@@ -18,12 +18,12 @@ datac Job(val port: i32, val id: i64)
 
 fun fail(e: move tls.TlsError) => tls.TlsStream {
     val text = tls.error_text(e)
-    panic(text.as_str())
+    panic(text)
 }
 
 fun fail_unit(e: move tls.TlsError) {
     val text = tls.error_text(e)
-    panic(text.as_str())
+    panic(text)
 }
 
 fun arg_port() => i32 {
@@ -47,9 +47,9 @@ fun worker(j: move Job) => i32 {
     val id_text = str.from_i64(j.id)
     var req = String.with_capacity(64)
     req.push_str("GET /")
-    req.push_str(id_text.as_str())
+    req.push_str(id_text)
     req.push_str(" HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Id: ")
-    req.push_str(id_text.as_str())
+    req.push_str(id_text)
     req.push_str("\r\n\r\n")
     var s = net.connect("127.0.0.1", j.port.to_u16())
     s.set_timeout(20000)

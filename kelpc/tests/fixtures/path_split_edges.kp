@@ -25,7 +25,7 @@ fun main() {
     show("/é/ü")
     show("a/b/c")
     val long = str.repeat("/comp", 2000)
-    val parts = path.split(long.as_str())
+    val parts = path.split(long)
     print(parts.len())
     print(parts.get(0).as_str())
     print(parts.get(1999).as_str())

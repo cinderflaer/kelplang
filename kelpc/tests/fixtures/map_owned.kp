@@ -11,19 +11,19 @@ fun main() {
     print(m.len())
     {
         val v = m.get("beta")
-        print(v.as_str())
+        print(v)
     }
     val existing = m.get_or("beta", String.from_str("fallback"))
-    print(existing.as_str())
+    print(existing)
     val absent = m.get_or("gamma", String.from_str("fallback"))
-    print(absent.as_str())
+    print(absent)
     m.insert("beta", String.from_str("TWO"))
     {
         val v = m.get("beta")
-        print(v.as_str())
+        print(v)
     }
     val taken = m.remove("alpha")
-    print(taken.as_str())
+    print(taken)
     print(m.len())
     val keys = m.keys()
     print(keys.get(0).as_str())

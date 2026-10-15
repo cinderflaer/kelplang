@@ -33,14 +33,14 @@ fun label(r: &tz.Resolved) => String {
     if let One(u) = r {
         out.push_str("one ")
         val d = digits(u)
-        out.push_str(d.as_str())
+        out.push_str(d)
     } elif let Ambiguous(a, b) = r {
         out.push_str("ambiguous ")
         val da = digits(a)
         val db = digits(b)
-        out.push_str(da.as_str())
+        out.push_str(da)
         out.push(' ')
-        out.push_str(db.as_str())
+        out.push_str(db)
     } else {
         out.push_str("gap")
     }
@@ -54,8 +54,8 @@ fun has_zone(dir: String, name: &str) => bool {
         return false
     }
     val head = str.concat(dir.as_str(), "/")
-    val path = str.concat(head.as_str(), name)
-    return fs.is_file(path.as_str())
+    val path = str.concat(head, name)
+    return fs.is_file(path)
 }
 
 fun dir_of(name: &str) => String {

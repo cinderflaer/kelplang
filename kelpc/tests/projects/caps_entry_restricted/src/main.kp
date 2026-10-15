@@ -10,5 +10,5 @@ fun main() {
     fs.write_text(note, String.from_str("hi"))
     print(fs.exists(note))
     val contents = fs.read_text(note)
-    print(contents.as_str())
+    print(contents)
 }

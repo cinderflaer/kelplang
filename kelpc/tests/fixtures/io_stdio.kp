@@ -5,7 +5,7 @@ impl "std/io"
 fun main() {
     val header = io.read_line()
     if let Some(text) = header {
-        print(text.as_str())
+        print(text)
     } else {
         print("(no header)")
     }

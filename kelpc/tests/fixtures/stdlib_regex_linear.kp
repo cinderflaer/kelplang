@@ -44,15 +44,15 @@ fun main() {
     // Each of these is exponential for a backtracker.
     val bad_a = repeated("a", 30, "b")
     var p1 = compile_or_die("(a+)+$")
-    print(p1.is_match(bad_a.as_str()))
+    print(p1.is_match(bad_a))
     val s1 = steps_of(p1, bad_a.as_str())
     print(s1 < 5000)
     var p2 = compile_or_die("(a|aa)+$")
-    print(p2.is_match(bad_a.as_str()))
+    print(p2.is_match(bad_a))
     print(steps_of(p2, bad_a.as_str()) < 5000)
     val bad_x = repeated("x", 30, "")
     var p3 = compile_or_die("(x+x+)+y")
-    print(p3.is_match(bad_x.as_str()))
+    print(p3.is_match(bad_x))
     print(steps_of(p3, bad_x.as_str()) < 5000)
 
     // The same patterns, with an input that does match, give the right span.
@@ -66,7 +66,7 @@ fun main() {
 
     // Longer inputs of the exponential kind: 200 a's.
     val long_a = repeated("a", 200, "b")
-    print(p1.is_match(long_a.as_str()))
+    print(p1.is_match(long_a))
     print(steps_of(p1, long_a.as_str()) < 100000)
 
     // Linearity on the step counter: doubling the input at most doubles the
@@ -76,7 +76,7 @@ fun main() {
     val t1 = repeated(unit, 15000, "")
     val t2 = repeated(unit, 30000, "")
     val t4 = repeated(unit, 60000, "")
-    print(str.len(t4.as_str()) > 1000000)
+    print(str.len(t4) > 1000000)
     val n1 = steps_of(lin, t1.as_str())
     val n2 = steps_of(lin, t2.as_str())
     val n4 = steps_of(lin, t4.as_str())
@@ -84,13 +84,13 @@ fun main() {
     print(n2 <= 2 * n1 + 100)
     print(n4 <= 2 * n2 + 100)
     print(n2 >= n1)
-    print(n4 <= 40 * str.len(t4.as_str()).to_i64())
+    print(n4 <= 40 * str.len(t4).to_i64())
     print(span_of(lin, t4.as_str()))
 
     // A 1 MiB scan with a capturing pattern and a match at the very end.
     var caps = compile_or_die("(\\d+)-(\\d+)$")
     val big = repeated("ab ", 350000, "12-345")
-    val m = caps.captures(big.as_str())
+    val m = caps.captures(big)
     if let Some(c) = m {
         val g1 = c.get(1)
         val g2 = c.get(2)
@@ -101,5 +101,5 @@ fun main() {
             print(b)
         }
     }
-    print(caps.steps() <= 80 * str.len(big.as_str()).to_i64())
+    print(caps.steps() <= 80 * str.len(big).to_i64())
 }

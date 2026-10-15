@@ -16,7 +16,7 @@ fun worker_a(x: move i64) => bool {
     val before = !env.has("KELP_ENV_THREAD_A")
     env.set("KELP_ENV_THREAD_A", "value-a")
     val v = env.get("KELP_ENV_THREAD_A")
-    val mid = str.eq(v.as_str(), "value-a")
+    val mid = str.eq(v, "value-a")
     env.unset("KELP_ENV_THREAD_A")
     val after = !env.has("KELP_ENV_THREAD_A")
     before && mid && after
@@ -26,7 +26,7 @@ fun worker_b(x: move i64) => bool {
     val before = !env.has("KELP_ENV_THREAD_B")
     env.set("KELP_ENV_THREAD_B", "value-b")
     val v = env.get("KELP_ENV_THREAD_B")
-    val mid = str.eq(v.as_str(), "value-b")
+    val mid = str.eq(v, "value-b")
     env.unset("KELP_ENV_THREAD_B")
     val after = !env.has("KELP_ENV_THREAD_B")
     before && mid && after
@@ -36,7 +36,7 @@ fun worker_c(x: move i64) => bool {
     val before = !env.has("KELP_ENV_THREAD_C")
     env.set("KELP_ENV_THREAD_C", "value-c")
     val v = env.get("KELP_ENV_THREAD_C")
-    val mid = str.eq(v.as_str(), "value-c")
+    val mid = str.eq(v, "value-c")
     env.unset("KELP_ENV_THREAD_C")
     val after = !env.has("KELP_ENV_THREAD_C")
     before && mid && after

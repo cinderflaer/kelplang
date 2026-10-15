@@ -28,7 +28,7 @@ fun bump_tally() {
 }
 
 fun show_banner() {
-    print(banner.as_str())
+    print(banner)
 }
 
 // Reads `failures` itself, so it receives the hidden parameter, and forwards

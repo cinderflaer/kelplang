@@ -13,8 +13,8 @@ fun main() {
     val empty = String.with_capacity(n = 0)
     print(empty.len())
     print(empty.is_empty())
-    print(str.len(empty.as_str()))
-    print(str.is_empty(empty.as_str()))
+    print(str.len(empty))
+    print(str.is_empty(empty))
     print(empty)
 
     // A real capacity still reserves, still starts empty, and still grows.

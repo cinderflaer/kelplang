@@ -20,7 +20,7 @@ fun main() {
     // A `String` is not a `str` (open item 21): the owned result is bound
     // and viewed before it can be concatenated.
     val padded = fmt.pad_left("7", 3, 48)
-    print(str.concat(padded.as_str(), "!"))
+    print(str.concat(padded, "!"))
 
     print(fmt.commas_u64(0))
     print(fmt.commas_u64(999))

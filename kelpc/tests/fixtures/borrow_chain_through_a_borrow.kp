@@ -24,7 +24,7 @@ fun main() {
     val v = &xs.get(i = 0).v
     print(*v)
     val name = &xs.get(i = 0).name
-    print(name.as_str())
+    print(name)
 
     // The bound borrow is an ordinary `&i32`: reading it again costs nothing
     // and stages nothing.

@@ -33,10 +33,10 @@ fun fd_count() => usize {
 }
 
 fun handle(req: &http.ServerRequest) => http.ServerResponse {
-    if str.eq(req.path.as_str(), "/id") {
+    if str.eq(req.path, "/id") {
         thread.sleep_ms(200)
         val id = fmt.uint(thread.current_id())
-        return http.ok_text(id.as_str())
+        return http.ok_text(id)
     }
     return http.ok_text("hello")
 }
@@ -45,19 +45,19 @@ fun main() {
     val before = fd_count()
     val s = http.listen(0)
     val port = fmt.uint(s.port().to_u64())
-    say(port.as_str())
+    say(port)
     val limits = http.default_limits()
     val n = http.serve_threaded_on(&s, handle, &limits, arg_u64(1).to_usize(), arg_u64(2))
     s.close()
     val after = fd_count()
     var line = String.from_str("served ")
     val t = fmt.uint(n)
-    line.push_str(t.as_str())
+    line.push_str(t)
     line.push_str(" fds ")
     val b = fmt.uint(before.to_u64())
-    line.push_str(b.as_str())
+    line.push_str(b)
     line.push_str(" ")
     val a = fmt.uint(after.to_u64())
-    line.push_str(a.as_str())
-    say(line.as_str())
+    line.push_str(a)
+    say(line)
 }

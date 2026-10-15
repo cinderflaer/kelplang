@@ -38,14 +38,14 @@ pub fun spawn_marker_code(dir: &str) => i32 {
 // its stderr, before any `exec`.
 pub fun bad_dir_code(dir: &str) => i32 {
     val bad = path.join(dir, "nope")
-    val r = process.run_in(bad.as_str(), "/bin/sh", sh("true"))
+    val r = process.run_in(bad, "/bin/sh", sh("true"))
     return r.code
 }
 
 pub fun bad_dir_message(dir: &str) => bool {
     val bad = path.join(dir, "nope")
-    val r = process.run_in(bad.as_str(), "/bin/sh", sh("true"))
-    val at = str.index_of(r.err.as_str(), "cannot enter")
+    val r = process.run_in(bad, "/bin/sh", sh("true"))
+    val at = str.index_of(r.err, "cannot enter")
     return option.is_some(at)
 }
 
@@ -60,7 +60,7 @@ pub fun dir_outside_grant() => String {
 // executable file and the harness's 0644 file is not.
 pub fun executable_answers(dir: &str) => bool {
     val file = path.join(dir, "not-exec")
-    return process.executable("/bin/sh") && !process.executable(file.as_str())
+    return process.executable("/bin/sh") && !process.executable(file)
 }
 
 // The failure payload, as a word the harness can compare.
@@ -82,7 +82,7 @@ pub fun try_ok(dir: &str) => String {
 // pre-check is what decides.
 pub fun try_missing(dir: &str) => String {
     val absent = path.join(dir, "missing-tool")
-    val r = process.try_run(absent.as_str(), sh("x"))
+    val r = process.try_run(absent, sh("x"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)
@@ -93,7 +93,7 @@ pub fun try_missing(dir: &str) => String {
 // it.
 pub fun try_not_executable(dir: &str) => String {
     val file = path.join(dir, "not-exec")
-    val r = process.try_run(file.as_str(), sh("x"))
+    val r = process.try_run(file, sh("x"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)
@@ -102,7 +102,7 @@ pub fun try_not_executable(dir: &str) => String {
 
 pub fun try_dir_missing(dir: &str) => String {
     val bad = path.join(dir, "nope")
-    val r = process.try_run_in(bad.as_str(), "/bin/sh", sh("true"))
+    val r = process.try_run_in(bad, "/bin/sh", sh("true"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)

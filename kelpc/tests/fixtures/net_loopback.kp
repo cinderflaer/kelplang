@@ -15,7 +15,7 @@ fun main() {
 
     net.send_text(c, "hello")
     val got = net.recv(s, 32)
-    print(got.as_str())
+    print(got)
 
     net.close(c)
     net.close(s)

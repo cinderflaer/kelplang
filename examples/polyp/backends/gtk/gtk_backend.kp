@@ -91,18 +91,18 @@ pub fun close(be: mut GtkBackend) {
 // not parsed; the optional tags wrap the escaped text.
 fun label_markup(text: str, size: i32, bold: bool) => String {
     val amp = str.replace(text, "&", "&amp;")
-    val lt = str.replace(amp.as_str(), "<", "&lt;")
-    var out = str.replace(lt.as_str(), ">", "&gt;")
+    val lt = str.replace(amp, "<", "&lt;")
+    var out = str.replace(lt, ">", "&gt;")
     if size > 0 {
         val pts = fmt.int(size.to_i64())
         val head = str.concat("<span size=\"", pts.as_str())
-        val open = str.concat(head.as_str(), "\">")
-        val opened = str.concat(open.as_str(), out.as_str())
-        out = str.concat(opened.as_str(), "</span>")
+        val open = str.concat(head, "\">")
+        val opened = str.concat(open, out.as_str())
+        out = str.concat(opened, "</span>")
     }
     if bold {
         val opened = str.concat("<b>", out.as_str())
-        out = str.concat(opened.as_str(), "</b>")
+        out = str.concat(opened, "</b>")
     }
     return out
 }
@@ -248,7 +248,7 @@ fun copy_strings(xs: List<String>) => List<String> {
 
 fun text_widget(props: &core.Props) => gtk.Widget {
     val w = gtk.gtk_label_new("")
-    val markup = label_markup(props.text.as_str(), props.size, props.bold)
+    val markup = label_markup(props.text, props.size, props.bold)
     gtk.gtk_label_set_markup(w, markup.as_str())
     return w
 }
@@ -260,7 +260,7 @@ fun spacer_widget(height: i32) => gtk.Widget {
 }
 
 fun checkbox_widget(props: &core.Props) => gtk.Widget {
-    val w = gtk.gtk_check_button_new_with_label(props.label.as_str())
+    val w = gtk.gtk_check_button_new_with_label(props.label)
     gtk.gtk_check_button_set_active(w, bool_i32(props.checked))
     return w
 }
@@ -326,7 +326,7 @@ fun make_widget(be: mut GtkBackend, kind: i32, props: &core.Props, rec: mut Moun
         gtk.gtk_editable_set_text(w, props.text.as_str())
         be.entry_builds += 1
     } else if kind == core.KIND_BUTTON {
-        w = gtk.gtk_button_new_with_label(props.label.as_str())
+        w = gtk.gtk_button_new_with_label(props.label)
         slot = be.next_slot
         be.next_slot += 1
         handler = gtk.connect(w, "clicked", post_handler(slot), 0)
@@ -369,7 +369,7 @@ fun apply_props_to(rec: mut Mount, w: gtk.Widget, props: &core.Props, focus: gtk
     } else if rec.kind == core.KIND_ROW {
         gtk.gtk_box_set_spacing(gtk.as_box(w), props.spacing)
     } else if rec.kind == core.KIND_TEXT {
-        val markup = label_markup(props.text.as_str(), props.size, props.bold)
+        val markup = label_markup(props.text, props.size, props.bold)
         gtk.gtk_label_set_markup(w, markup.as_str())
     } else if rec.kind == core.KIND_SPACER {
         gtk.gtk_widget_set_size_request(w, -1, props.height)

@@ -23,9 +23,9 @@ pub datac Model(
 
 // The other half of the declared key pair the note above `hash_str` explains: `Todo` and `Msg` both
 // hold a `String`, so the derived pair would compare it through the hosted `kelp_map_key_eq`.
-fun Todo.hash() => u64 = core.hash_str(title.as_str()) ^ id.to_u64()
+fun Todo.hash() => u64 = core.hash_str(title) ^ id.to_u64()
 
-fun Todo.eq(other: &Todo) => bool = id == other.id && done == other.done && str.eq(title.as_str(), other.title.as_str())
+fun Todo.eq(other: &Todo) => bool = id == other.id && done == other.done && str.eq(title, other.title.as_str())
 
 // Every action names an item by id, not by position, for the same reason the view keys by id.
 pub enum Msg {

@@ -323,7 +323,7 @@ fun run_remove() {
     print(b.measure_count())
     print(b.arrange_count())
     print(top)
-    print(dropped.title.as_str())
+    print(dropped.title)
 }
 
 fun run_append() {

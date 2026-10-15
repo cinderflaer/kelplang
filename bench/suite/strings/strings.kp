@@ -23,12 +23,12 @@ fun main() {
     while i < n {
         s.push_str("p")
         val num = str.from_i64(i)
-        s.push_str(num.as_str())
+        s.push_str(num)
         s.push_str(",")
         i = i + 1
     }
     val text_len = s.len()
-    val pieces = str.split(s.as_str(), ",")
+    val pieces = str.split(s, ",")
     var count: i64 = 0
     var total_len: i64 = 0
     var h: u64 = 0

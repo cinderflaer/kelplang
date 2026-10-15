@@ -27,7 +27,7 @@ fun url_for(path: &str) => String {
     val port_text = str.from_u64(server_port().to_u64())
     var out = String.with_capacity(64)
     out.push_str("http://127.0.0.1:")
-    out.push_str(port_text.as_str())
+    out.push_str(port_text)
     out.push_str(path)
     return out
 }
@@ -50,12 +50,12 @@ fun main() {
     // 301 -> /a, same host, so hop 2 reuses hop 1's connection.
     val r = pool.send(req_for("/redirect"))
     print(r.status)
-    print(r.body.as_str())
+    print(r.body)
     print(pool.len())
 
     // A POST with a body and a content type, straight through `Client.send`.
     val echo_url = url_for("/echo")
-    val posted = http.post_text(echo_url.as_str(), "payload", "text/plain")
+    val posted = http.post_text(echo_url, "payload", "text/plain")
     print(posted.status)
     print(posted.text())
 }

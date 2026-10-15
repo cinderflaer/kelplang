@@ -422,11 +422,11 @@ fun slice(s: &str, from: usize, to: usize) => String {
     }
     if !is_codepoint_start(sv, from) {
         val msg = bad_boundary_message(from)
-        panic(msg.as_str())
+        panic(msg)
     }
     if !is_codepoint_start(sv, to) {
         val msg = bad_boundary_message(to)
-        panic(msg.as_str())
+        panic(msg)
     }
     return copy_range(s, from, to)
 }
@@ -435,7 +435,7 @@ fun slice(s: &str, from: usize, to: usize) => String {
 fun bad_boundary_message(at: usize) => String {
     val digits = from_u64(at.to_u64())
     val head = concat("str.slice: byte ", digits.as_str())
-    return concat(head.as_str(), " is inside a codepoint")
+    return concat(head, " is inside a codepoint")
 }
 
 // BEGIN GENERATED: Unicode simple case lookup (kelpc/tools/gen_case_table.pl)

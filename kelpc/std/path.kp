@@ -33,7 +33,7 @@ fun absolute(base: &str, p: &str) => String {
         return normalize(p)
     }
     val joined = join(base, p)
-    return normalize(joined.as_str())
+    return normalize(joined)
 }
 
 /// The byte index just past the last `/` in `s`, or 0 when the path has none.

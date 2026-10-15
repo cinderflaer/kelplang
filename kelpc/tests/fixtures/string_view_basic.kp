@@ -54,7 +54,7 @@ fun main() {
 
     // A `View` to an owned `String`: the one length-aware copy out of a slice.
     val owned = v.slice(4, 9).to_string()
-    print(owned.as_str())
+    print(owned)
     print(owned.len())
 
     // A `String`'s own view costs no `strlen`.
@@ -64,6 +64,6 @@ fun main() {
 
     // The byte path back: `Bytes.as_str` is the checked borrow.
     val b = Bytes.from_str("raw")
-    print(b.as_str())
+    print(b)
     print(str.len(b.as_str()))
 }

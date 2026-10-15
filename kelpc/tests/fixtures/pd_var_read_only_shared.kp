@@ -7,10 +7,10 @@ pd var app: String = String.from_str(s = "shapes")
 
 fun show(s: &String) {
     print(s.as_str())
-    print(app.as_str())
+    print(app)
 }
 
 fun main() {
     show(app)
-    print(app.as_str())
+    print(app)
 }

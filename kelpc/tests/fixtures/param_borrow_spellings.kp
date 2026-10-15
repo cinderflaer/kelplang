@@ -21,8 +21,8 @@ fun main() {
     print(xs.len())
 
     val word = String.from_str(s = "kelp")
-    print(width_plain(word.as_str()))
-    print(width_ref(word.as_str()))
+    print(width_plain(word))
+    print(width_ref(word))
     print(width_plain("four"))
     print(width_ref("four"))
 }

@@ -19,16 +19,16 @@ fun main() {
 
     {
         val borrowed = m.get("beta")
-        print(borrowed.as_str())
+        print(borrowed)
     }
 
     val present = m.get_or("gamma", String.from_str("absent"))
-    print(present.as_str())
+    print(present)
     val absent = m.get_or("delta", String.from_str("fallback"))
-    print(absent.as_str())
+    print(absent)
 
     val moved = m.remove("alpha")
-    print(moved.as_str())
+    print(moved)
     print(m.len())
 
     {

@@ -64,7 +64,7 @@ fun main() {
     // length-aware copy, not `String.from_str`, which is `strlen` and would
     // copy past the end of a slice.
     val owned: String = v.slice(4, 9)
-    print(owned.as_str())
+    print(owned)
 
     var xs: List<String> = List.empty()
     xs.push(v.slice(0, 3))

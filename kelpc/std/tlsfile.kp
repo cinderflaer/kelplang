@@ -36,7 +36,7 @@ fun read_pem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> {
             text.push_str(" file ")
             text.push_str(path)
             text.push_str(": ")
-            text.push_str(e.message.as_str())
+            text.push_str(e.message)
             result.Result.Err(error = tls.TlsError.Io(reason = text))
         }
     }
@@ -73,9 +73,9 @@ fun mode_text(mode: u32) => String {
     val a = str.from_u64((bits >> 6).to_u64())
     val b = str.from_u64(((bits >> 3) & 7).to_u64())
     val c = str.from_u64((bits & 7).to_u64())
-    out.push_str(a.as_str())
-    out.push_str(b.as_str())
-    out.push_str(c.as_str())
+    out.push_str(a)
+    out.push_str(b)
+    out.push_str(c)
     return out
 }
 
@@ -95,7 +95,7 @@ fun read_key(path: &str) => result.Result<Bytes, tls.TlsError> {
             text.push_str(path)
             text.push_str(" has mode ")
             val shown = mode_text(m.mode)
-            text.push_str(shown.as_str())
+            text.push_str(shown)
             text.push_str(": group and others must have no access (chmod 600)")
             return result.Result.Err(error = tls.TlsError.Io(reason = text))
         }

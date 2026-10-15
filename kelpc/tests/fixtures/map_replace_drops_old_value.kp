@@ -23,29 +23,29 @@ fun main() {
     print(m.len())
     {
         val v = m.get("alpha")
-        print(v.as_str())
+        print(v)
     }
 
     m.insert("alpha", String.from_str("1"))
     print(m.len())
     {
         val v = m.get("alpha")
-        print(v.as_str())
+        print(v)
     }
 
     m.insert("beta", String.from_str("TWO"))
     {
         val v = m.get("beta")
-        print(v.as_str())
+        print(v)
     }
     print(m.len())
 
     val removed = m.remove("beta")
-    print(removed.as_str())
+    print(removed)
     m.insert("beta", String.from_str("two again"))
     {
         val v = m.get("beta")
-        print(v.as_str())
+        print(v)
     }
     print(m.len())
 

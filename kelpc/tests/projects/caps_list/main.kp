@@ -19,10 +19,10 @@ fun clear(dir: &str) {
         var i: usize = 0
         while i < entries.len() {
             val p = path_of(dir, entries.get(i).as_str())
-            if fs.is_dir(p.as_str()) {
-                clear(p.as_str())
+            if fs.is_dir(p) {
+                clear(p)
             } else {
-                fs.remove(p.as_str())
+                fs.remove(p)
             }
             i = i + 1
         }

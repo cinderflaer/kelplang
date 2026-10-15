@@ -42,7 +42,7 @@ fun err_tag(e: &tls.TlsError) => String = when e {
 
 fun pem(dir: &str, name: &str) => Bytes {
     val p = path(dir, name)
-    return when tlsfile.read_pem(p.as_str(), "file") {
+    return when tlsfile.read_pem(p, "file") {
         Ok(b) -> b
         Err(_) -> Bytes.empty()
     }
@@ -68,9 +68,9 @@ fun config_line(label: &str, dir: &str, cert: &str, key: &str, phrase: &str) => 
         }
         Err(e) -> {
             val tmp_6857 = err_tag(&e)
-            line.push_str(tmp_6857.as_str())
+            line.push_str(tmp_6857)
             val text = tls.error_text(e)
-            if str.contains(text.as_str(), "swordfish") || str.contains(text.as_str(), "PRIVATE KEY") {
+            if str.contains(text, "swordfish") || str.contains(text, "PRIVATE KEY") {
                 line.push_str(" leak")
             }
         }
@@ -80,13 +80,13 @@ fun config_line(label: &str, dir: &str, cert: &str, key: &str, phrase: &str) => 
 
 fun encrypted_keys(dir: &str) {
     val line1 = config_line("encrypted with the phrase", dir, "server.pem", "server_enc.key", "swordfish")
-    say(line1.as_str())
+    say(line1)
     val line2 = config_line("encrypted without a phrase", dir, "server.pem", "server_enc.key", "")
-    say(line2.as_str())
+    say(line2)
     val line3 = config_line("encrypted with a wrong phrase", dir, "server.pem", "server_enc.key", "wrong")
-    say(line3.as_str())
+    say(line3)
     val line4 = config_line("plain with a phrase", dir, "server.pem", "server.key", "swordfish")
-    say(line4.as_str())
+    say(line4)
 }
 
 fun key_line(name: &str, p: &str) => String {
@@ -101,9 +101,9 @@ fun key_line(name: &str, p: &str) => String {
         }
         Err(e) -> {
             val tag = err_tag(&e)
-            line.push_str(tag.as_str())
+            line.push_str(tag)
             val text = tls.error_text(e)
-            if str.contains(text.as_str(), "0644") {
+            if str.contains(text, "0644") {
                 line.push_str(" mode=0644")
             }
         }
@@ -116,11 +116,11 @@ fun key_perms(dir: &str) {
     val open = path(dir, "server_open.key")
     val gone = path(dir, "no_such.key")
     val a = key_line("good", good.as_str())
-    say(a.as_str())
+    say(a)
     val b = key_line("open", open.as_str())
-    say(b.as_str())
+    say(b)
     val c = key_line("gone", gone.as_str())
-    say(c.as_str())
+    say(c)
 }
 
 // The server thread owns the TLS configuration. A thread may take only scalars
@@ -136,7 +136,7 @@ fun server_main(job: move Job) => u64 {
     val args = process.args()
     val dir = args.get(2).clone()
     val opts = tls.server_options()
-    val built = tls.server_config_pem_with(pem(dir.as_str(), "server.pem"), pem(dir.as_str(), "server.key"), &opts)
+    val built = tls.server_config_pem_with(pem(dir, "server.pem"), pem(dir, "server.key"), &opts)
     return when built {
         Ok(cfg) -> serve_rounds(cfg, job.fd, job.rounds, dir.as_str(), &opts)
         Err(_) -> 0
@@ -251,7 +251,7 @@ fun reload_line(label: &str, code: u64) => String {
     line.push_str(label)
     line.push_str(" ")
     val tag = code_tag(code)
-    line.push_str(tag.as_str())
+    line.push_str(tag)
     return line
 }
 
@@ -261,10 +261,10 @@ fun server_line(packed: u64) => String {
     var line = String.with_capacity(48)
     line.push_str("server accepted ")
     val tmp_7007 = fmt.uint(seen)
-    line.push_str(tmp_7007.as_str())
+    line.push_str(tmp_7007)
     line.push_str(" completed ")
     val tmp_9429 = fmt.uint(done)
-    line.push_str(tmp_9429.as_str())
+    line.push_str(tmp_9429)
     return line
 }
 
@@ -283,19 +283,19 @@ fun client_round(label: &str, dir: &str, port: u16) => String {
                 Ok(b) -> {
                     line.push_str("echo=")
                     val tmp_5147 = String.from_bytes(b)
-                    line.push_str(tmp_5147.as_str())
+                    line.push_str(tmp_5147)
                 }
                 Err(e) -> {
                     line.push_str("read ")
                     val tmp_6857 = err_tag(&e)
-                    line.push_str(tmp_6857.as_str())
+                    line.push_str(tmp_6857)
                 }
             }
             val sd = tls.try_shutdown(t)
         }
         Err(e) -> {
             val tmp_6857 = err_tag(&e)
-            line.push_str(tmp_6857.as_str())
+            line.push_str(tmp_6857)
         }
     }
     net.close(s)
@@ -318,14 +318,14 @@ fun reload(dir: &str) {
             val line9 = reload_line("reload mismatched", digit(p, 4096))
             val line11 = reload_line("reload valid", digit(p, 65536))
             val line13 = server_line(p)
-            say(line6.as_str())
-            say(line7.as_str())
-            say(line8.as_str())
-            say(line9.as_str())
-            say(line10.as_str())
-            say(line11.as_str())
-            say(line12.as_str())
-            say(line13.as_str())
+            say(line6)
+            say(line7)
+            say(line8)
+            say(line9)
+            say(line10)
+            say(line11)
+            say(line12)
+            say(line13)
         }
         Err(_) -> {
             say("server thread failed")
@@ -351,16 +351,16 @@ fun main() {
     val args = process.args()
     val mode = args.get(1).clone()
     val dir = args.get(2).clone()
-    if str.eq(mode.as_str(), "encrypted_keys") {
-        encrypted_keys(dir.as_str())
+    if str.eq(mode, "encrypted_keys") {
+        encrypted_keys(dir)
     }
-    if str.eq(mode.as_str(), "key_perms") {
-        key_perms(dir.as_str())
+    if str.eq(mode, "key_perms") {
+        key_perms(dir)
     }
-    if str.eq(mode.as_str(), "reload") {
-        reload(dir.as_str())
+    if str.eq(mode, "reload") {
+        reload(dir)
     }
-    if str.eq(mode.as_str(), "listen_on") {
+    if str.eq(mode, "listen_on") {
         listen_host()
     }
 }

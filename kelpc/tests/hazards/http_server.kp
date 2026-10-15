@@ -64,21 +64,21 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
     }
     if str.eq(first, "method") {
         var out = String.with_capacity(64)
-        out.push_str(req.method.as_str())
+        out.push_str(req.method)
         out.push_str(" ")
-        out.push_str(req.target.as_str())
+        out.push_str(req.target)
         out.push_str(" ")
-        out.push_str(req.path.as_str())
+        out.push_str(req.path)
         out.push_str(" ")
-        out.push_str(req.query.as_str())
-        return http.ok_text(out.as_str())
+        out.push_str(req.query)
+        return http.ok_text(out)
     }
     if str.eq(first, "users") && segs.len() == 2 {
         var out = String.with_capacity(64)
         out.push_str("{\"id\":\"")
         out.push_str(segs.get(1).as_str())
         out.push_str("\"}")
-        return http.json(out.as_str())
+        return http.json(out)
     }
     if str.eq(first, "seg") {
         var out = String.with_capacity(64)
@@ -90,31 +90,31 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
             out.push_str(segs.get(i).as_str())
             i = i + 1
         }
-        return http.ok_text(out.as_str())
+        return http.ok_text(out)
     }
     if str.eq(first, "q") {
         var out = String.with_capacity(64)
         val a = param(req, "name")
         val b = param(req, "n")
         val c = param(req, "missing")
-        out.push_str(a.as_str())
+        out.push_str(a)
         out.push_str(",")
-        out.push_str(b.as_str())
+        out.push_str(b)
         out.push_str(",")
-        out.push_str(c.as_str())
-        return http.html(out.as_str())
+        out.push_str(c)
+        return http.html(out)
     }
     if str.eq(first, "hdr") {
         var out = String.with_capacity(64)
         val v = req.header("x-test")
-        out.push_str(v.as_str())
+        out.push_str(v)
         if req.has_header("X-TEST") {
             out.push_str("|has")
         }
         if !req.has_header("x-absent") {
             out.push_str("|absent")
         }
-        val r = http.ok_text(out.as_str())
+        val r = http.ok_text(out)
         return r.with_header("X-Reply", "yes")
     }
     if str.eq(first, "nocontent") {
@@ -135,7 +135,7 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
     }
     if str.eq(first, "len") {
         val n = fmt.uint(req.body.len().to_u64())
-        return http.ok_text(n.as_str())
+        return http.ok_text(n)
     }
     return http.not_found()
 }
@@ -149,7 +149,7 @@ fun main() {
     val before = fd_count()
     val s = http.listen(0)
     val port = fmt.uint(s.port().to_u64())
-    say(port.as_str())
+    say(port)
     val limits = http.Limits(
         max_request_line = 8192,
         max_header_bytes = 16384,
@@ -165,12 +165,12 @@ fun main() {
     val after = fd_count()
     var line = String.from_str("served ")
     val t = fmt.uint(n)
-    line.push_str(t.as_str())
+    line.push_str(t)
     line.push_str(" fds ")
     val b = fmt.uint(before.to_u64())
-    line.push_str(b.as_str())
+    line.push_str(b)
     line.push_str(" ")
     val a = fmt.uint(after.to_u64())
-    line.push_str(a.as_str())
-    say(line.as_str())
+    line.push_str(a)
+    say(line)
 }

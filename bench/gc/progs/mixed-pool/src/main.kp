@@ -31,11 +31,11 @@ fun job(k: i64) => i64 {
     while i < 800 {
         s.push_str("q")
         val num = str.from_i64(i * k)
-        s.push_str(num.as_str())
+        s.push_str(num)
         s.push_str(",")
         i = i + 1
     }
-    val parts = str.split(s.as_str(), ",")
+    val parts = str.split(s, ",")
     return check(t) + parts.len().to_i64() + k
 }
 
