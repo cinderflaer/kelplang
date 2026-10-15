@@ -5427,9 +5427,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 .g
                 .builder
                 .build_indirect_call(code, call_ty, &all, name);
-            for (slot, ty) in held {
-                self.g.call_drop(slot, &ty)?;
-            }
+            self.free_held(held)?;
             return Ok(if yields { Some(v) } else { None });
         }
 
@@ -5461,9 +5459,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .g
             .builder
             .build_indirect_call(code, call_ty, &all, name);
-        for (slot, ty) in held {
-            self.g.call_drop(slot, &ty)?;
-        }
+        self.free_held(held)?;
         Ok(if yields { Some(v) } else { None })
     }
 
@@ -6084,7 +6080,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 if self.g.owns_memory(&root.ty) {
                     let root_ty = root.ty.clone();
                     let lty = self.lty(&root_ty)?;
-                    let slot = self.temp_alloca(lty, "borrow.tmp");
+                    // In a spawning program the staged temporary is owned by the
+                    // frame until the operation frees it, so a panic in the
+                    // operation still drops it (decision 125).
+                    let slot = if self.frame_owns(&root_ty) {
+                        let slot = self.alloca(&root_ty, "borrow.tmp")?;
+                        self.register_frame_slot(&root_ty, slot)?;
+                        slot
+                    } else {
+                        self.temp_alloca(lty, "borrow.tmp")
+                    };
                     let value = self.value_of(root)?;
                     self.g.builder.build_store(value, slot);
                     let ptr = self.chain_addr(slot, sub)?;
@@ -6309,6 +6314,49 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g.builder.build_store(null, slot);
         self.g.builder.position_at_end(self.cur);
         self.registered.push((slot, ty.clone()));
+        Ok(())
+    }
+
+    /// Whether a temporary of `ty` is owned by this function's frame while it is
+    /// staged: it has a drop that frees it (`call_drop`), and this function has a
+    /// frame. A spawn-free program has no frame, so nothing takes this path there.
+    fn frame_owns(&self, ty: &Ty) -> bool {
+        self.frame.is_some() && self.g.owns_memory(ty) && self.g.managed_drop(ty)
+    }
+
+    /// Registers a staged temporary's slot with the cleanup frame, cleared in the
+    /// entry block, the way `register_owned` registers a named binding's slot.
+    fn register_frame_slot(&mut self, ty: &Ty, slot: Value<'a>) -> Result<(), String> {
+        let lty = self.lty(ty)?;
+        let null = self.g.ctx.const_null(lty);
+        self.g.builder.position_after(slot, self.entry);
+        self.g.builder.build_store(null, slot);
+        self.g.builder.position_at_end(self.cur);
+        self.registered.push((slot, ty.clone()));
+        Ok(())
+    }
+
+    /// An owned argument's slot: allocated, registered with the frame, and set to
+    /// the evaluated value. The caller clears it before the call moves the value
+    /// into the callee, which registers its own parameter (decision 125).
+    fn frame_arg_slot(&mut self, ty: &Ty, value: Value<'a>) -> Result<Value<'a>, String> {
+        let slot = self.alloca(ty, "arg.tmp")?;
+        self.register_frame_slot(ty, slot)?;
+        self.g.builder.build_store(value, slot);
+        Ok(slot)
+    }
+
+    /// Frees the temporaries an operation staged (`held`) after the operation. A
+    /// slot the frame owns is cleared too, so the frame does not drop it again on
+    /// a later panic.
+    fn free_held(&mut self, held: Vec<(Value<'a>, Ty)>) -> Result<(), String> {
+        for (slot, ty) in held {
+            self.g.call_drop(slot, &ty)?;
+            if self.frame_owns(&ty) {
+                let lty = self.lty(&ty)?;
+                self.g.builder.build_store(self.g.ctx.const_null(lty), slot);
+            }
+        }
         Ok(())
     }
 
@@ -7605,9 +7653,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 "",
             );
         }
-        for (slot, ty) in held {
-            self.g.call_drop(slot, &ty)?;
-        }
+        self.free_held(held)?;
         Ok(Some(handle))
     }
 
@@ -8402,6 +8448,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if let Some(info) = self.g.funcs.get(callee).cloned() {
             let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
             let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
+            // The owned arguments a spawning program stages in frame slots, each
+            // cleared again just before the call moves it into the callee.
+            let mut moved: Vec<(Value<'a>, Ty)> = Vec::new();
             for (index, a) in args.iter().enumerate() {
                 // A `unit` argument crosses as nothing: the callee's own
                 // signature has no parameter for it (`declare_functions`
@@ -8416,15 +8465,29 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     }
                     continue;
                 }
-                match prepared.get(&index) {
-                    Some(v) => values.push(*v),
-                    None => values.push(self.arg_value(a, &mut held)?),
+                let v = match prepared.get(&index) {
+                    Some(v) => *v,
+                    None => self.arg_value(a, &mut held)?,
+                };
+                // An owned argument is held by the frame from the moment it is
+                // evaluated, so a panic in a later argument still drops it.
+                if self.frame_owns(&a.ty) {
+                    let slot = self.frame_arg_slot(&a.ty, v)?;
+                    moved.push((slot, a.ty.clone()));
                 }
+                values.push(v);
             }
             // The allowlist checks run before the call, after every argument has
             // been evaluated: the statement expression `cap_checked_call` builds
             // has the same order.
             self.emit_cap_checks(plan.as_ref(), &prepared)?;
+            // The values move into the callee now. Its frame owns each one from
+            // its entry on, so the caller's slots are cleared first: a panic in
+            // the callee must not drop a value twice.
+            for (slot, ty) in &moved {
+                let lty = self.lty(ty)?;
+                self.g.builder.build_store(self.g.ctx.const_null(lty), *slot);
+            }
             // A call that yields `void` must not be given a name: an instruction
             // with a name has to have a value, and the verifier rejects a named
             // void one. A unit method (a `mut` receiver that writes a field and
@@ -8434,9 +8497,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             let v = self.g.builder.build_call(info.func, info.ty, &values, name);
             // An owned temporary staged for the argument is freed *after* the
             // call, as the earlier emitter's `hoisted_call` frees it.
-            for (slot, ty) in held {
-                self.g.call_drop(slot, &ty)?;
-            }
+            self.free_held(held)?;
             if !yields_value {
                 return Ok(None);
             }
@@ -8501,9 +8562,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             let yields_value = *ret != Ty::Unit;
             let name = if yields_value { "call" } else { "" };
             let v = self.g.builder.build_call(func, fty, &values, name);
-            for (slot, ty) in held {
-                self.g.call_drop(slot, &ty)?;
-            }
+            self.free_held(held)?;
             return Ok(if yields_value { Some(v) } else { None });
         }
 
@@ -8575,9 +8634,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
             self.emit_cap_checks(plan, prepared)?;
             self.g.builder.build_call(rt.func, rt.ty, &values, "");
-            for (slot, ty) in held {
-                self.g.call_drop(slot, &ty)?;
-            }
+            self.free_held(held)?;
             return Ok(Some(self.g.builder.build_load(ret_ty, slot, "sret.val")));
         }
         let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
@@ -8590,9 +8647,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.emit_cap_checks(plan, prepared)?;
         let name = if rt.yields { "call" } else { "" };
         let v = self.g.builder.build_call(rt.func, rt.ty, &values, name);
-        for (slot, ty) in held {
-            self.g.call_drop(slot, &ty)?;
-        }
+        self.free_held(held)?;
         Ok(if rt.yields { Some(v) } else { None })
     }
 
@@ -8769,9 +8824,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let yields_value = *ret != Ty::Unit;
         let name = if yields_value { "call" } else { "" };
         let v = self.g.builder.build_call(func, fty, &values, name);
-        for (slot, ty) in held {
-            self.g.call_drop(slot, &ty)?;
-        }
+        self.free_held(held)?;
         Ok(if yields_value { Some(v) } else { None })
     }
 
@@ -8909,9 +8962,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .build_call(snprintf, snprintf_ty, &fill, "");
         let len_ptr = self.g.builder.build_struct_gep(lty, slot, 1, "tmpl.len");
         self.g.builder.build_store(n, len_ptr);
-        for (held, ty) in holds {
-            self.g.call_drop(held, &ty)?;
-        }
+        self.free_held(holds)?;
         Ok(self.g.builder.build_load(lty, slot, "tmpl"))
     }
 
