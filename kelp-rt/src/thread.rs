@@ -1087,3 +1087,94 @@ pub unsafe extern "C" fn kelp_mutex_wait_while_timeout(
         if timed_out { 0 } else { 1 }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::AtomicUsize;
+
+    /// Drops of the worker body's own copy of the argument: the drop the
+    /// generated function registers on its cleanup list.
+    static CALLEE_DROPS: AtomicUsize = AtomicUsize::new(0);
+    /// Drops the runtime makes of a started worker's argument. Must stay 0.
+    static STARTED_ARG_DROPS: AtomicUsize = AtomicUsize::new(0);
+    /// Drops the runtime makes of an argument whose spawn never started.
+    static ABANDON_DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn count_callee_drop(_slot: *mut c_void) {
+        CALLEE_DROPS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    unsafe extern "C" fn count_started_arg_drop(_slot: *mut c_void) {
+        STARTED_ARG_DROPS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    unsafe extern "C" fn count_abandon_drop(_slot: *mut c_void) {
+        ABANDON_DROPS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// A worker body that owns its argument, registers it on the cleanup list
+    /// the way the generated function does, and then panics before the value
+    /// moves out.
+    unsafe extern "C" fn owning_panicking_body(
+        _code: *mut c_void,
+        _env: *mut c_void,
+        arg: *mut c_void,
+        _out: *mut c_void,
+    ) {
+        unsafe {
+            let mut frame = CleanupFrame {
+                run: count_callee_drop,
+                arg,
+                prev: ptr::null_mut(),
+            };
+            cleanup_push(&raw mut frame);
+            kelp_panic(c"worker boom".as_ptr());
+        }
+    }
+
+    fn new_handle() -> *mut WorkerHandle {
+        unsafe { kelp_thread_new(core::mem::size_of::<usize>(), core::mem::size_of::<usize>()) }
+    }
+
+    #[test]
+    fn started_worker_that_panics_drops_its_argument_once() {
+        let h = new_handle();
+        unsafe {
+            h.as_ref().unwrap().arg.cast::<usize>().write(7);
+            start_common(
+                h,
+                Some(owning_panicking_body),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                None,
+                ptr::null(),
+                ptr::null(),
+                Some(count_started_arg_drop),
+            );
+            assert_eq!(kelp_thread_wait(h), 1, "the worker must panic");
+            kelp_thread_dispose(h);
+        }
+        assert_eq!(CALLEE_DROPS.load(Ordering::SeqCst), 1, "the callee drops its argument once");
+        assert_eq!(STARTED_ARG_DROPS.load(Ordering::SeqCst), 0, "a started argument is not the runtime's");
+    }
+
+    #[test]
+    fn abandoned_spawn_drops_its_argument_once() {
+        let h = new_handle();
+        unsafe {
+            let s = libc::malloc(core::mem::size_of::<ThreadStart>()).cast::<ThreadStart>();
+            s.write(ThreadStart {
+                handle: h,
+                body: None,
+                code: ptr::null_mut(),
+                env: ptr::null_mut(),
+                env_drop: None,
+                env_root: 0,
+                arg_drop: Some(count_abandon_drop),
+            });
+            spawn_abandon(h, s, ptr::null_mut(), None);
+        }
+        assert_eq!(ABANDON_DROPS.load(Ordering::SeqCst), 1, "an abandoned spawn drops its argument once");
+    }
+}
