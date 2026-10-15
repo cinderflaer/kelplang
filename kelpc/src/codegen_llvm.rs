@@ -4347,6 +4347,61 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.emit_fallthrough_return()?;
             }
         }
+        if let Some(frame) = self.frame {
+            self.emit_frame_setup(frame)?;
+        }
+        Ok(())
+    }
+
+    /// Builds this function's handler and the code that enters the frame
+    /// (decision 125). The handler is `<name>.unwind`: it takes the registry, a
+    /// table of the registered slots' addresses, and drops each slot with its
+    /// type. A null slot drops nothing, and a slot is cleared at every move and
+    /// after its drop, so the handler drops only what the function still owns.
+    /// The enter call and the registry go into the entry block after its
+    /// allocas, so they run before any code of the body.
+    fn emit_frame_setup(&mut self, frame: Value<'a>) -> Result<(), String> {
+        let registered = std::mem::take(&mut self.registered);
+        let ptr = self.g.pty();
+
+        // The handler: one drop per registered slot, read through the registry.
+        let handler_ty = self.g.ctx.fn_type(self.g.ctx.void(), &[ptr], false);
+        let handler = self.g.module.add_function(&format!("{}.unwind", self.fn_name), handler_ty);
+        let handler_entry = handler.append_block("entry");
+        self.g.builder.position_at_end(handler_entry);
+        let registry = handler.get_param(0);
+        for (i, (_, ty)) in registered.iter().enumerate() {
+            let at = self.g.builder.build_gep(ptr, registry, self.g.v_i64(i as u64), "slot.at");
+            let slot = self.g.builder.build_load(ptr, at, "slot");
+            self.g.call_drop(slot, ty)?;
+        }
+        self.g.builder.build_ret_void();
+
+        // The entry block: the registry (its slot addresses, which are all
+        // allocas in this block), then the enter call, after the last alloca.
+        match self.alloca_after {
+            Some(prev) => self.g.builder.position_after(prev, self.entry),
+            None => self.g.builder.position_at_start(self.entry),
+        }
+        let registry_value = if registered.is_empty() {
+            self.g.ctx.const_null(ptr)
+        } else {
+            let table_ty = self.g.ctx.array_type(ptr, registered.len() as u64);
+            let table = self.g.builder.build_alloca(table_ty, "cleanup.slots");
+            for (i, (slot, _)) in registered.iter().enumerate() {
+                let at = self.g.builder.build_gep(ptr, table, self.g.v_i64(i as u64), "slot.at");
+                self.g.builder.build_store(*slot, at);
+            }
+            table
+        };
+        let enter = self.g.rt("kelp_cleanup_enter")?;
+        self.g.call(
+            enter.func,
+            enter.ty,
+            &[frame, handler.as_value(), registry_value],
+            "",
+        );
+        self.g.builder.position_at_end(self.cur);
         Ok(())
     }
 

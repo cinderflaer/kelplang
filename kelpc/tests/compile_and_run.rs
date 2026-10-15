@@ -18580,3 +18580,65 @@ fn tidepool_duplicate_key_is_refused_by_name() {
         "'headroom_pct' appears more than once in coral.toml's [tidepool] section",
     );
 }
+
+/// The `define` bodies of one unit's IR, as `(header, body lines)`.
+fn ir_function_bodies(text: &str) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    let mut current: Option<(String, Vec<String>)> = None;
+    for line in text.lines() {
+        if line.starts_with("define ") {
+            current = Some((line.to_string(), Vec::new()));
+        } else if line == "}" {
+            if let Some(done) = current.take() {
+                out.push(done);
+            }
+        } else if let Some((_, body)) = current.as_mut() {
+            body.push(line.trim_start().to_string());
+        }
+    }
+    out
+}
+
+/// Decision 125, item 8: a spawning program gives every function with a body one
+/// cleanup frame, entered once at its start and left once before each return.
+/// Checked on the unoptimized unit IR of a fixture that spawns.
+#[test]
+fn spawn_frames_enter_once_and_leave_before_every_return() {
+    let units = std::env::temp_dir().join(format!("kelpc-frames-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&units);
+    std::fs::create_dir_all(&units).expect("create the units directory");
+    let bin = units.join("prog");
+    let build = kelpc()
+        .env("KELPC_DUMP_UNITS", &units)
+        .env("KELPC_CACHE_DIR", units.join("cache"))
+        .arg("build")
+        .arg(fixture("tests/fixtures/thread_spawn_closure.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+
+    let mut framed = 0;
+    for entry in std::fs::read_dir(&units).expect("read the units directory") {
+        let path = entry.expect("directory entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("ll") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("read a unit's IR");
+        for (header, body) in ir_function_bodies(&text) {
+            let enters = body.iter().filter(|l| l.starts_with("call void @kelp_cleanup_enter(")).count();
+            let leaves = body.iter().filter(|l| l.starts_with("call void @kelp_cleanup_leave(")).count();
+            let rets = body.iter().filter(|l| l.starts_with("ret ")).count();
+            if enters == 0 {
+                assert_eq!(leaves, 0, "a leave without an enter in {header}");
+                continue;
+            }
+            framed += 1;
+            assert_eq!(enters, 1, "one enter per function in {header}");
+            assert_eq!(leaves, rets, "a leave before every return in {header}");
+        }
+    }
+    assert!(framed > 0, "a spawning program emits at least one framed function");
+    let _ = std::fs::remove_dir_all(&units);
+}
