@@ -3,7 +3,7 @@ name = "kelp_gc"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "KelpScript managed-mode garbage collector core (non-moving mark-region, phase 1)"
+description = "KelpScript Tidepool garbage collector core (non-moving mark-region, phase 1)"
 
 # Own workspace: the kelpc workspace root lists only `kelpc`, and this crate is
 # built by its own `cargo test` and by the driver that embeds the staticlib.

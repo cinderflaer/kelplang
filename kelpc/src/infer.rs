@@ -227,7 +227,7 @@ struct InstanceState {
     in_progress: std::collections::HashSet<String>,
 }
 
-/// Managed mode: records that a value of `ty` goes into the heap at `slot`.
+/// Tidepool: records that a value of `ty` goes into the heap at `slot`.
 /// The check itself runs after the pass, in `managed::check_heap_uses`. Hosted
 /// builds record nothing.
 fn note_heap_use(env: &TypeEnv, slot: managed::HeapSlot, ty: &Ty, span: Span) {
@@ -257,11 +257,11 @@ struct TypeEnv {
     /// signatures are, and the derived-copy fixpoints those resolutions ask
     /// must already know which types a destructor keeps out of them.
     declared_drops: std::rc::Rc<std::collections::HashSet<String>>,
-    /// Managed mode (`managed.rs`): whether this program is checked for the
+    /// Tidepool heap (`managed.rs`): whether this program is checked for the
     /// collected heap. Off in hosted and freestanding, where `heap_uses` stays
     /// empty and no check runs.
     managed: bool,
-    /// Managed mode: every value that goes into a heap slot, recorded during
+    /// Tidepool: every value that goes into a heap slot, recorded during
     /// the pass and decided after it (`managed::check_heap_uses`).
     heap_uses: std::rc::Rc<std::cell::RefCell<Vec<managed::HeapUse>>>,
     /// The canonical keys of the items each module exports (A-13). Private by
@@ -1171,7 +1171,7 @@ impl Ctx {
         } else {
             ty
         };
-        // Managed mode: an owned environment is a heap object, so a value
+        // Tidepool: an owned environment is a heap object, so a value
         // captured into it is a heap slot. A scoped literal's environment is
         // the stack, so it is not one.
         if !self.borrowed_captures {
@@ -10078,7 +10078,7 @@ fn check_program_pass(
     let mut dyn_traits: Vec<String> = env.dyn_traits.borrow().iter().cloned().collect();
     dyn_traits.sort();
 
-    // Managed mode: every heap slot the pass recorded, decided now that every
+    // Tidepool: every heap slot the pass recorded, decided now that every
     // declaration's facts are known (`managed::check_heap_uses`).
     if env.managed {
         let uses = env.heap_uses.borrow().clone();

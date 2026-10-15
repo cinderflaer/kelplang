@@ -12,7 +12,7 @@
 #     (FAILED-EXIT, OUTPUT-MISMATCH, BUILD-FAILED, NO-GC) while the baseline row was "ok";
 #   - a managed row in the new file is not "ok" at all (BUILD-FAILED, NO-GC, ...). A managed
 #     row that cannot be measured is not a pass. ALLOW_UNMEASURED=1 turns that one rule off,
-#     for a run on a branch where the managed mode is known not to build yet.
+#     for a run on a branch where the Tidepool build is known not to build yet.
 # A baseline row that is not "ok" (for example BUILD-FAILED) is reported and not compared.
 # Exit 0 when nothing fails. Prints one line per row.
 set -u

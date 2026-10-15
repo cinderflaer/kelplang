@@ -1,6 +1,6 @@
 #!/bin/sh
-# Managed-mode benchmark gate (WP4). Times the GC-relevant benchmarks in hosted mode and, when a
-# managed-capable kelpc is named, in managed mode, with the same wrapper as bench/run.sh (ulimit,
+# Tidepool benchmark gate (WP4). Times the GC-relevant benchmarks in hosted mode and, when a
+# managed-capable kelpc is named, as a Tidepool build, with the same wrapper as bench/run.sh (ulimit,
 # timeout, GNU time for peak RSS, nice -n 0). Reports the ratio managed / hosted of the median wall
 # time against gate G-A: 1.00x, with 1.10x as the fallback the owner may accept.
 #
@@ -113,7 +113,7 @@ bench_row json-tokenizer "" "$SUITE/json-tokenizer"
 
 # Table, in the shape of bench/RESULTS.md. Wall seconds, median of RUNS runs.
 {
-    echo "# Managed-mode gate table (wall time, median of $RUNS runs after $WARMUP warm-up)"
+    echo "# Tidepool gate table (wall time, median of $RUNS runs after $WARMUP warm-up)"
     echo
     echo "Hosted: $KELPC_HOSTED. Managed: ${KELPC_MANAGED:-not available}. binary-trees depth $BT_DEPTH."
     echo "Gate G-A: managed median / hosted median <= 1.00 PASS, <= 1.10 FALLBACK (owner must accept), else FAIL."

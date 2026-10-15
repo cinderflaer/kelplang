@@ -1,7 +1,7 @@
-//! KelpScript managed mode, front end (WP2 of the collector design,
+//! KelpScript Tidepool heap, front end (WP2 of the collector design,
 //! `kelpscript-gc-paper.md` sections 7 and 10).
 //!
-//! Managed mode keeps memory values in a collected heap and refuses resource
+//! A hosted build keeps memory values in a collected heap and refuses resource
 //! values there. This module decides which is which, and it is the only place
 //! that decides it. The checker asks `resolve` (or `resource_kind` when no
 //! program is in hand) and then `check_heap_slot` at each position a value
@@ -703,10 +703,10 @@ mod tests {
         assert_eq!(value.parse::<u64>().expect("a whole number"), DEFAULT_HEADROOM_PCT);
     }
 
-    /// The collector's heap cap and start guesses are written as `N << 20` (N
-    /// MiB) in `kelpc/gc/src/state.rs`. Each one with a manifest default here
-    /// must agree with it. The collector's minimum heap has no manifest default,
-    /// so nothing holds it to one.
+    /// The collector's heap cap, start guesses and minimum heap are written as
+    /// `N << 20` (N MiB) in `kelpc/gc/src/state.rs`. Each one with a manifest
+    /// default here must agree with it. The minimum heap has no manifest default,
+    /// so it is held to the copy the lowering emits (`gc_descr::DEFAULT_HEAP_MIN`).
     #[test]
     fn the_collector_default_heap_and_start_sizes_are_the_manifest_defaults() {
         let state = include_str!("../gc/src/state.rs");
@@ -724,5 +724,6 @@ mod tests {
         assert_eq!(mib("DEFAULT_HEAP_MAX"), DEFAULT_HEAP_MAX_MIB);
         assert_eq!(mib("DEFAULT_START_LOW"), DEFAULT_START_LOW_MIB);
         assert_eq!(mib("DEFAULT_START_HIGH"), DEFAULT_START_HIGH_MIB);
+        assert_eq!(mib("DEFAULT_HEAP_MIN") << 20, crate::gc_descr::DEFAULT_HEAP_MIN);
     }
 }

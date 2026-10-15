@@ -10174,7 +10174,7 @@ impl<'a> Gen<'a> {
     /// routes a null to the project's panic handler with "out of memory".
     fn heap_alloc(&self, bytes: Value<'a>, align: u64) -> Result<Value<'a>, String> {
         if self.managed {
-            // Managed mode allocates only typed objects (`alloc_elem`). An
+            // A hosted build allocates only typed objects (`alloc_elem`). An
             // untyped byte allocation has no descriptor, and a noscan one would
             // hide the pointers a `List` or `Map` buffer holds from the collector.
             return Err("a hosted build: this container allocation has no GC type descriptor yet (WP3 follow-up)".to_string());

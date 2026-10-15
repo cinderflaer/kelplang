@@ -1,4 +1,4 @@
-//! KelpScript managed-mode garbage collector core (WP1, phase 1).
+//! KelpScript Tidepool garbage collector core (WP1, phase 1).
 //!
 //! Non-moving mark-region (Immix-style) tracing collector with a precise heap
 //! and conservatively scanned thread stacks. See `kelpscript-gc-paper.md`

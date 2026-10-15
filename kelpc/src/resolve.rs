@@ -308,7 +308,7 @@ pub struct TargetDecl {
     /// static is laid out as. 1 when the section names none, which is what a
     /// single-hart image and every project before this stage get.
     cpus: u64,
-    /// `heap_max = N` (managed mode): the collected heap's cap in MiB. `None`
+    /// `heap_max = N` (Tidepool heap): the collected heap's cap in MiB. `None`
     /// when the section names none; `heap_max_mib` then gives the default.
     heap_max: Option<u64>,
     /// The manifest's `[tidepool]` section, copied in at the end of

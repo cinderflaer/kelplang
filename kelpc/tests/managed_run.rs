@@ -1,4 +1,4 @@
-//! Managed mode, end to end: programs whose allocations exceed the initial
+//! Tidepool heap, end to end: programs whose allocations exceed the initial
 //! heap must collect and still print the right sums. Needs the collector
 //! archive (`KELP_GC_LIB`, built from `kelpc/gc` with `cargo build --release`),
 //! so the tests are `#[ignore]`d and run with `--ignored`.

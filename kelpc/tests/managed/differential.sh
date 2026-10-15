@@ -1,7 +1,7 @@
 #!/bin/sh
-# Managed-mode differential check (WP4). Runs every corpus program in corpus/ with the hosted build
+# Tidepool differential check (WP4). Runs every corpus program in corpus/ with the hosted build
 # and compares stdout, stderr and exit status with the recorded expectation. When a managed-capable
-# kelpc is named, it also builds each program in managed mode and requires the same three things,
+# kelpc is named, it also builds each program as a Tidepool build and requires the same three things,
 # byte for byte, as the hosted run.
 #
 #   sh kelpc/tests/managed/differential.sh             hosted-only check against expected/
@@ -10,7 +10,7 @@
 #
 # Environment: KELPC_HOSTED (default: the 26.10.5 release asset), KELPC_MANAGED (unset means managed
 # is not yet available and is reported as such, not as a failure), MANAGED_FLAGS (extra build flags
-# that select managed mode, for example the flag WP2 defines; empty until then), OUT (scratch dir),
+# that select the Tidepool build, for example the flag WP2 defines; empty until then), OUT (scratch dir),
 # PROGRAM_TIMEOUT (seconds per run, default 60).
 #
 # Builds run one at a time under the shared build lock; runs are not locked. Exit status is 1 when a

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Managed-mode GC benchmark runner (bench/gc). For each program in bench/gc/progs it builds a
+# Tidepool GC benchmark runner (bench/gc). For each program in bench/gc/progs it builds a
 # managed project (coral.toml with [target] mode = "managed" and heap_max) and an unmanaged
 # project (no mode line: the malloc / Box free-list path). Each build runs once as a discarded
 # warm-up and then RUNS times (default 3). It writes:
@@ -211,7 +211,7 @@ END {
     print ""
     print "- Machine: " cpu ", " mem " RAM, " host
     print "- kelpc: " kelpc
-    print "- Build: `kelpc build -O2` on the default LLVM backend. Managed rows set `heap_max` (MiB). Unmanaged rows set `mode = \"hosted\"`. Since the managed mode was removed, both kinds of row build the same shared-pool program."
+    print "- Build: `kelpc build -O2` on the default LLVM backend. Managed rows set `heap_max` (MiB). Unmanaged rows set `mode = \"hosted\"`. Since the separate managed target was removed, both kinds of row build the same hosted program."
     print "- Run wrapper: `( ulimit -v 2097152; ulimit -t 60; timeout 120 ... )`."
     print ""
     print "| bench | variant | status | wall s (median) | spread % | user s | sys s | peak RSS MiB | collections | pause total ms | pause max ms | managed / unmanaged wall |"
@@ -226,7 +226,7 @@ END {
         printf "| %s | %s | %s | %s | %s | %s | %s | %.1f | %s | %s | %s | %s |\n", f[1], f[2], st[k], med[k], spr[k], usr[k], sy[k], rss[k] / 1024, col[k], pt[k], pm[k], ratio
     }
     print ""
-    print "Status NO-GC: the managed build did not link the collector (no `kelp_gc_*` symbol in the binary). The production driver generates code with managed = false, so the binary is the hosted one and its numbers are not overhead. No ratio is printed for these rows. A blank counter means no `kelp-gc-stats:` line was printed; no collector prints one at this commit."
+    print "Status NO-GC: the Tidepool build did not link the collector (no `kelp_gc_*` symbol in the binary). The production driver generates code with managed = false, so the binary is the hosted one and its numbers are not overhead. No ratio is printed for these rows. A blank counter means no `kelp-gc-stats:` line was printed; no collector prints one at this commit."
     print ""
     print "Spread is the run-to-run noise of three timed runs. Differences smaller than the spread are not signal."
 }' "$CSV" > "$MD"

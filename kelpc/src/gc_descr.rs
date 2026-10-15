@@ -1,4 +1,4 @@
-//! Managed mode's lowering support (WP3 of the GC design,
+//! A hosted build's lowering support (WP3 of the GC design,
 //! `kelpscript-gc-paper.md` sections 3.2, 3.4 and 8.2).
 //!
 //! Three things live here:
@@ -36,7 +36,7 @@ pub const GC_SAFEPOINT: &str = "kelp_gc_safepoint";
 pub const GC_THREAD_ATTACH: &str = "kelp_gc_thread_attach";
 pub const GC_THREAD_DETACH: &str = "kelp_gc_thread_detach";
 
-/// The minimum heap a managed program starts with (the collection trigger
+/// The minimum heap a Tidepool program starts with (the collection trigger
 /// floor), 8 MiB, paper 3.4. The maximum is the manifest's `heap_max`, in
 /// `managed::DEFAULT_HEAP_MAX_MIB` when it names none.
 pub const DEFAULT_HEAP_MIN: u64 = 8 << 20;
@@ -284,7 +284,7 @@ pub fn resource_types(program: &Program) -> HashSet<String> {
 
 /// The LLVM side of the descriptors: the `kelp_gc_type` struct, the one
 /// allocation entry point and the cache of descriptors already emitted into the
-/// module. Built once per module in managed mode.
+/// module. Built once per module in a hosted build.
 pub struct GcTypes<'a> {
     /// `struct kelp_gc_type` (paper 3.2): `{ u32 id, u32 size, u32 align,
     /// u32 flags, u32 n_ptrs, ptr ptr_off, u32 tag_off, u32 n_variants,
@@ -884,7 +884,7 @@ mod container_layout {
 mod container_lowering {
     //! The container fixture (`managed_lower/containers.kp`): each heap
     //! container's allocation names the descriptor of its element, or of its
-    //! entry record or environment, in managed mode.
+    //! entry record or environment, in a hosted build.
     use super::tests::{check_golden, link_and_run, lower};
 
     #[test]

@@ -4033,7 +4033,7 @@ fn assert_fixture_panics_all(name: &str, needles: &[&str]) {
 }
 
 /// Decision 21: the refusal is the point of these fixtures, so each one asserts
-/// that managed mode refuses it, and that the diagnostic names the reason. The
+/// that a hosted build refuses it, and that the diagnostic names the reason. The
 /// refusal is never relaxed to make a fixture build.
 fn assert_fixture_refused(name: &str, needle: &str) {
     let source = format!("tests/fixtures/{name}.kp");
@@ -4053,7 +4053,7 @@ fn assert_fixture_refused(name: &str, needle: &str) {
     );
     assert!(
         !build.status.success(),
-        "expected managed mode to refuse '{source}', but it built"
+        "expected a hosted build to refuse '{source}', but it built"
     );
     assert!(
         text.contains(needle),
@@ -4908,7 +4908,7 @@ fn an_enum_that_declares_hash_and_eq_is_a_map_key() {
     // A-12: the same rule for an `enum`. The declared `hash` folds only the
     // tag, so the two `Ratio` keys collide and `eq` is what the probe has to
     // call to tell them apart.
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("map_declared_key_enum", "describes the enum 'Kind' only as a heap object");
 }
 
@@ -4928,7 +4928,7 @@ fn a_datac_with_derived_eq_and_hash_is_a_map_key() {
 fn an_enum_with_derived_eq_and_hash_is_a_map_key() {
     // lang-derive-eq: the same rule for an `enum`. Two variants with the same
     // payload fields are different keys, and a unit variant is one key.
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("derive_map_key_enum", "describes the enum 'Shape' only as a heap object");
 }
 
@@ -5578,7 +5578,7 @@ fn a_freestanding_image_dispatches_through_a_dyn_and_boots() {
 /// the list drops.
 #[test]
 fn a_list_of_owned_trait_objects_is_dispatched_through_each_vtable() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("traits_boxdyn_list", "'Box<dyn Shape>' cannot be a List element");
 }
 
@@ -5597,7 +5597,7 @@ fn a_factory_returns_an_owned_trait_object_and_the_trait_is_borrowed_back() {
 /// runs through the vtable when its box dies.
 #[test]
 fn a_datac_field_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("traits_boxdyn_field", "'Circle' cannot be the payload of a Box");
 }
 
@@ -5606,7 +5606,7 @@ fn a_datac_field_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
 /// dies.
 #[test]
 fn an_enum_payload_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("traits_boxdyn_enum", "'Circle' cannot be the payload of a Box");
 }
 
@@ -5615,7 +5615,7 @@ fn an_enum_payload_holds_an_owned_trait_object_and_drops_it_through_the_vtable()
 /// by value.
 #[test]
 fn an_owned_trait_object_moves_between_lists_and_through_a_move_parameter() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("traits_boxdyn_move", "'Box<dyn Shape>' cannot be a List element");
 }
 
@@ -5626,7 +5626,7 @@ fn an_owned_trait_object_moves_between_lists_and_through_a_move_parameter() {
 fn an_owned_trait_object_crosses_a_thread_boundary() {
     // The worker owns the box, so its drop runs when `area_of` returns, before
     // the join hands the result back to the main thread to print.
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("traits_boxdyn_thread", "'Circle' cannot be the payload of a Box");
 }
 
@@ -5796,7 +5796,7 @@ fn a_declared_key_pair_that_is_half_or_misshaped_is_rejected() {
 
 #[test]
 fn an_enum_whose_variant_payloads_are_keyable_is_a_map_key() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("map_enum_key", "describes the enum 'Key' only as a heap object");
 }
 
@@ -10538,7 +10538,7 @@ fn a_shared_mutex_handle_and_a_swap() {
 /// channel, and the receiver's `for` ends by itself when the last sender drops.
 #[test]
 fn a_bounded_channel_carries_four_producers_to_one_consumer() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("chan_bounded_mpsc", "cannot be a thread's argument");
 }
 
@@ -10556,7 +10556,7 @@ fn a_channel_closes_when_its_senders_or_its_receiver_drop() {
 /// that leaves while the sender is parked hands the value back.
 #[test]
 fn a_rendezvous_send_completes_only_when_a_receive_takes_it() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("chan_rendezvous", "'Job' cannot be a thread's argument");
 }
 
@@ -10569,7 +10569,7 @@ fn a_select_takes_whichever_channel_is_ready() {
 /// `select3` with nothing ready waits for the one channel that sends.
 #[test]
 fn a_select_with_no_ready_case_blocks_until_one_is() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("chan_select_blocks", "cannot be a thread's argument");
 }
 
@@ -10585,7 +10585,7 @@ fn a_select_over_two_element_types_is_refused() {
 /// `recv_timeout` times out, takes a late value, and reports a closed channel.
 #[test]
 fn a_channel_recv_timeout_times_out_and_then_receives() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("chan_recv_timeout", "cannot be a thread's argument");
 }
 
@@ -10615,14 +10615,14 @@ fn a_freestanding_channel_is_refused() {
 /// The thread pool (`std/pool`): 1000 jobs on four workers with a sum check.
 #[test]
 fn a_pool_runs_a_thousand_jobs() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("pool_sum", "'std.pool.PoolShared' cannot be a thread's argument");
 }
 
 /// A panicking job is counted and its worker survives to run the rest.
 #[test]
 fn a_pool_counts_a_panicking_job_and_keeps_its_worker() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("pool_panics", "'std.pool.PoolShared' cannot be a thread's argument");
 }
 
@@ -10630,12 +10630,12 @@ fn a_pool_counts_a_panicking_job_and_keeps_its_worker() {
 /// own what they capture (here a channel's sender).
 #[test]
 fn a_pool_shuts_down_without_deadlock() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
     assert_fixture_refused("pool_drop_joins", "cannot be a value captured by a closure environment");
 }
 
-/// Decision 21: queueing on a joined pool and an empty pool are both refused in managed
-/// mode, because the pool's job is a thread argument the collector does not scan yet.
+/// Decision 21: queueing on a joined pool and an empty pool are both refused in a hosted
+/// build, because the pool's job is a thread argument the collector does not scan yet.
 #[test]
 fn a_pool_refuses_work_after_join_and_zero_workers() {
     assert_fixture_refused("pool_spawn_after_join", "'std.pool.PoolShared' cannot be a thread's argument");
@@ -13444,7 +13444,7 @@ fn a_moved_out_destructor_value_is_not_dropped() {
     assert_compiles_and_runs("tests/fixtures/drop_moved.kp", "moved\nleaf\n1\n");
 }
 
-/// Decision 21: a container of a destructor type is refused in managed mode, because
+/// Decision 21: a container of a destructor type is refused in a hosted build, because
 /// a resource never enters the collected heap. The refusal is what this test asserts.
 #[test]
 fn containers_drop_each_element_through_its_destructor() {
@@ -13458,7 +13458,7 @@ fn an_enum_destructor_runs_for_every_variant() {
     assert_compiles_and_runs("tests/fixtures/drop_enum.kp", "body\nmaybe\nmaybe\nleaf\n1\n");
 }
 
-/// Decision 21: a `Map` value of a destructor type is refused in managed mode, because
+/// Decision 21: a `Map` value of a destructor type is refused in a hosted build, because
 /// a resource never enters the collected heap. The refusal is what this test asserts.
 #[test]
 fn map_values_drop_through_their_destructor() {
@@ -13481,7 +13481,7 @@ fn a_destructor_type_owns_its_buffer_until_the_last_field_drop() {
 }
 
 /// Decision 21: a closure that captures a destructor type cannot cross a thread
-/// boundary in managed mode, so the refusal is what this test asserts.
+/// boundary in a hosted build, so the refusal is what this test asserts.
 #[test]
 fn a_destructor_in_a_thread_closures_environment_runs_on_the_worker() {
     assert_fixture_refused("drop_thread_closure", "'Guard' cannot be a value captured by a closure environment in a hosted build");
@@ -13998,7 +13998,7 @@ fn an_allocator_with_the_wrong_signature_is_refused() {
 }
 
 /// The hosted regression: with no `[target]` allocator configured, containers still
-/// allocate, and every hosted build is managed (decision 21). The program runs and
+/// allocate, and every hosted build collects memory (decision 21). The program runs and
 /// prints its sum, and (on the LLVM backend) the IR takes its buffers from the
 /// collector, `@kelp_gc_alloc_array`, and never from libc `@malloc`.
 #[test]
@@ -14953,7 +14953,7 @@ fn an_arena_hands_out_writable_aligned_memory_and_zeroes_on_request() {
     );
 }
 
-/// Managed refusal (owner decision 2026-10-12): every hosted build is managed, and a managed
+/// Refusal (owner decision 2026-10-12): every hosted build collects memory, and a hosted
 /// build refuses `Ptr.try_alloc` because its allocation has no collector descriptor. The
 /// refusal stays in `heap_alloc`; this test pins it.
 #[test]
