@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1117 ran=558 c_refused=526 excluded=33
+# counts candidates=1121 ran=564 c_refused=524 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -89,6 +89,7 @@ fixture_chan_select	ran	exit 0		d467d747eb25f8b1a6bf4a759110d997d0fc76670509605c
 fixture_chan_select_blocks	ran	exit 0		ac853736761ed279625f05b51995a4879d7fb5801b4f1c525f81400f83b9eb6a
 fixture_chan_select_mixed	c-refused		error: argument 'b' has type '&std.sync.Receiver<String>', expected '&std.sync.Receiver<i64>'	
 fixture_chan_send_a_lock	c-refused		error: in 'std.sync.bounded<Mutex<i64>>'	
+fixture_chan_string_producers	ran	exit 0		7e82c359a33d04f4ceb4b24c2a3c7eabde0f41ada000f04ea2eca915f7a97913
 fixture_chan_zero_capacity	ran	exit 1	panic: sync.bounded: the capacity must be at least 1	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_char_literal_does_not_fit	c-refused		error: the character '中' (U+4E2D) does not fit in 'u8'	
 fixture_char_literals	ran	exit 0		9d30ee55f9060b29c8ef2018da4609294649ae820c4e9e1d562dec4f76970407
@@ -544,6 +545,7 @@ fixture_mut_param_bare_read	c-refused		error: operator requires matching numeric
 fixture_mut_param_shared_reborrow_twice	ran	exit 0		93bb398ee62b03f88a7f4da667527d36c76df6e4392a12ce0ed971816ca8aace
 fixture_mutex_into_inner	ran	exit 0		1ff3d08be3e31077a9c753f747a586f34b24e7d8129c157250879574434439c5
 fixture_mutex_list_push	ran	exit 0		673650f936cb3b0a2f93ce09d81be10748b1b203c19e8176b4eefc1964a0cf3a
+fixture_mutex_list_worker	ran	exit 0		9367dd14ee7e57e0b4e916fb72d85d2fa922906a3eb832f389ba24400effd448
 fixture_mutex_lock_borrow_returned	c-refused		error: return type mismatch	
 fixture_mutex_lock_borrow_stored	c-refused		error: a 'fun' literal cannot capture 'v'	
 fixture_mutex_lock_return	ran	exit 0		53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3
@@ -635,9 +637,10 @@ fixture_pd_var_read_only_shared	ran	exit 0		6a4cd3158a5b3434f54fb79be796548b861c
 fixture_pd_var_write	ran	exit 0		31f75ca815e515fae9c2c28d073c588d0b06bc0b9e925ad05f4802575b99e55b
 fixture_pd_write_reaches_callers	ran	exit 0		b6d2dcff1abd56b5acef59328337e2bd3602cc9168059edd70566d97a3962054
 fixture_pool_drop_joins	ran	exit 0		51aee3cf692d8421368768a90601c008cc38b02e124743f8fc9f87fbc35bab9f
-fixture_pool_panics	c-refused		error: 'std.pool.PoolShared' cannot be a thread's argument in a hosted build	
+fixture_pool_gate_strings	ran	exit 0		c1d6029dd36b35f6c455b166d6937e6b380d99f6cd7b13e6714abc59aa0f74d4
+fixture_pool_panics	ran	exit 0		c6a456485a6e0e11260f7a00907500070f376fa7b22cf6152ef4d1d481d06395
 fixture_pool_spawn_after_join	ran	exit 1	panic: Pool.spawn: the pool has been joined	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-fixture_pool_sum	c-refused		error: 'std.pool.PoolShared' cannot be a thread's argument in a hosted build	
+fixture_pool_sum	ran	exit 0		c8dd0456c8fca3d7d7556b73ddbcd6efb60391447453eeb000e4bdbf5daa4499
 fixture_pool_zero_workers	ran	exit 1	panic: pool.new: a pool needs at least one worker	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_process_spawn	ran	exit 0		93044ad5e1d3331ec1c0158e243b6c828ed732a4cf2b4cf4a5a2c9e0f797c536
 fixture_ptr_from_fn	ran	exit 0		6bbb4fb214212d1fd3d1a84b515b85180428fa070e3b98b9e1b75925b258c054
@@ -773,6 +776,7 @@ fixture_template_print_unchanged	ran	exit 0		5c2179c44afdb01f9aac9339ca03efb3459
 fixture_template_string_arg	ran	exit 0		7fb4a4fcf6a394cfb179c672f11dfda9dce59c25e2e5c47b8a243a290b2c1418
 fixture_template_string_val	ran	exit 0		0d529d52b5b16c4466cc6008cc65ccaad61b62be7ae6fdcd1af214f6968991b5
 fixture_templates	ran	exit 0		d9c5f408208d56756d61cf101ae9555f916ae095d923b5f222875649f7a6973d
+fixture_thread_arg_sender_panic	ran	exit 0		47b3a169382618425bf0fdc65c8c998f1c82ba6e92cf3108d03a55ad18394fff
 fixture_thread_current_id	ran	exit 0		acb2b288b9f028830645d94e3a4417e5ffc574a024576d6f69b53d989e9d93ea
 fixture_thread_fence	ran	exit 0		3231d517713de40c42cbb9f33588e46d3221919c918f146e36c134bc85c90287
 fixture_thread_join_accepted	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
