@@ -34,8 +34,9 @@ fun main() {
     gate.lock { v ->
         print(v.len())
         var sevens = 0
+        val target = String.from_str("job-7")
         for name in v.iter() {
-            if name.as_str() == "job-7" {
+            if name.as_str() == target.as_str() {
                 sevens += 1
             }
         }
