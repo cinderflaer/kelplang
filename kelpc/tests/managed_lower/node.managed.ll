@@ -42,9 +42,9 @@ declare void @kelp_assert(i1 zeroext)
 
 declare ptr @kelp_thread_new(i64, i64)
 
-declare void @kelp_thread_start(ptr, ptr, ptr, ptr, ptr)
+declare void @kelp_thread_start(ptr, ptr, ptr, ptr, ptr, ptr)
 
-declare void @kelp_thread_start_rooted(ptr, ptr, ptr, ptr, ptr, ptr, ptr)
+declare void @kelp_thread_start_rooted(ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr)
 
 declare i32 @kelp_thread_wait(ptr)
 

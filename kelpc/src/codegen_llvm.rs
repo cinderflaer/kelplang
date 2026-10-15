@@ -7444,6 +7444,11 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let moved = self.arg_value(arg, &mut held)?;
         self.g.builder.build_store(moved, arg_slot);
         let body = self.g.closure_symbol(&thread_body_symbol(&entry.ty))?;
+        // The argument's own drop, for a spawn that never starts (the runtime drops
+        // it then; a started body drops its own parameter).
+        let arg_drop = self
+            .drop_fn_value(&params[0])?
+            .unwrap_or_else(|| self.g.ctx.const_null(self.g.pty()));
         if self.g.managed {
             // Managed: the spawn's argument and result are rooted (section 3).
             let arg_descr = self.g.record_descr(&params[0])?;
@@ -7456,7 +7461,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             self.g.call(
                 start.func,
                 start.ty,
-                &[handle, body.as_value(), code, env, drop, arg_descr, result_descr],
+                &[handle, body.as_value(), code, env, drop, arg_descr, result_descr, arg_drop],
                 "",
             );
         } else {
@@ -7464,7 +7469,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             self.g.call(
                 start.func,
                 start.ty,
-                &[handle, body.as_value(), code, env, drop],
+                &[handle, body.as_value(), code, env, drop, arg_drop],
                 "",
             );
         }
@@ -15838,13 +15843,13 @@ fn declare_runtime<'a>(
         &mut out,
         "kelp_thread_start",
         void,
-        &[ptr, ptr, ptr, ptr, ptr],
+        &[ptr, ptr, ptr, ptr, ptr, ptr],
         false,
         false,
     );
     if managed {
         // The managed entry roots the spawn's values (section 3). Hosted IR does not name it.
-        decl(&mut out, "kelp_thread_start_rooted", void, &[ptr, ptr, ptr, ptr, ptr, ptr, ptr], false, false);
+        decl(&mut out, "kelp_thread_start_rooted", void, &[ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr], false, false);
     }
     decl(&mut out, "kelp_thread_wait", ctx.i32(), &[ptr], true, false);
     decl(&mut out, "kelp_thread_arg", ptr, &[ptr], true, false);

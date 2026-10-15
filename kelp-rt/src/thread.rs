@@ -37,6 +37,10 @@ pub struct ThreadStart {
     env_drop: Option<Drop1>,
     /// Root of `env`, the record's own pointer slot (0 when not rooted).
     env_root: u64,
+    /// The argument's own drop, used only when the spawn never starts. A
+    /// started worker's body owns its argument (its generated function drops it
+    /// on every exit), so the runtime never drops it then.
+    arg_drop: Option<Drop1>,
 }
 
 /// Spawns still open at once. The collector attaches at most 256 threads, so
@@ -229,8 +233,9 @@ pub unsafe extern "C" fn kelp_thread_start(
     code: *mut c_void,
     env: *mut c_void,
     env_drop: Option<Drop1>,
+    arg_drop: Option<Drop1>,
 ) {
-    unsafe { start_common(h, body, code, env, env_drop, ptr::null(), ptr::null()) }
+    unsafe { start_common(h, body, code, env, env_drop, ptr::null(), ptr::null(), arg_drop) }
 }
 
 /// Starts the worker on `h` and roots the spawn's values (a managed spawn):
@@ -249,18 +254,21 @@ pub unsafe extern "C" fn kelp_thread_start_rooted(
     env_drop: Option<Drop1>,
     arg_descr: *const c_void,
     result_descr: *const c_void,
+    arg_drop: Option<Drop1>,
 ) {
-    unsafe { start_common(h, body, code, env, env_drop, arg_descr, result_descr) }
+    unsafe { start_common(h, body, code, env, env_drop, arg_descr, result_descr, arg_drop) }
 }
 
 /// Frees what a spawn that did not start owns: its roots, the open-worker
 /// slot, the start record and the handle's slots. The environment's drop runs
-/// first, as it always did.
+/// first, as it always did, then the argument's drop: the argument was never
+/// handed to a body, so nothing else will drop it.
 ///
 /// # Safety
 /// `h` and `s` must be the handle and start record of a spawn not started.
 unsafe fn spawn_abandon(h: *mut WorkerHandle, s: *mut ThreadStart, env: *mut c_void, env_drop: Option<Drop1>) {
     unsafe {
+        let arg_drop = (*s).arg_drop;
         gc::root_drop((*s).env_root);
         gc::root_drop((*h).arg_root);
         gc::root_drop((*h).result_root);
@@ -269,6 +277,9 @@ unsafe fn spawn_abandon(h: *mut WorkerHandle, s: *mut ThreadStart, env: *mut c_v
             if let Some(drop_env) = env_drop {
                 drop_env(env);
             }
+        }
+        if let Some(drop_arg) = arg_drop {
+            drop_arg((*h).arg);
         }
         libc::free(s.cast());
         libc::free((*h).arg);
@@ -289,6 +300,7 @@ unsafe fn start_common(
     env_drop: Option<Drop1>,
     arg_descr: *const c_void,
     result_descr: *const c_void,
+    arg_drop: Option<Drop1>,
 ) {
     unsafe {
         let s = libc::malloc(core::mem::size_of::<ThreadStart>()).cast::<ThreadStart>();
@@ -302,6 +314,7 @@ unsafe fn start_common(
             env,
             env_drop,
             env_root: 0,
+            arg_drop,
         });
         // Refused before anything is rooted: the new thread never sees this,
         // the spawner does.
@@ -311,6 +324,9 @@ unsafe fn start_common(
                 if let Some(drop_env) = env_drop {
                     drop_env(env);
                 }
+            }
+            if let Some(drop_arg) = arg_drop {
+                drop_arg((*h).arg);
             }
             libc::free((*h).arg);
             libc::free((*h).result);
@@ -1115,21 +1131,31 @@ mod tests {
 
     /// A worker body that owns its argument, registers it on the cleanup list
     /// the way the generated function does, and then panics before the value
-    /// moves out.
+    /// moves out. `code` carries the worker handle, so the body can record the
+    /// panic the way `worker_end` does (`panicked` and the message).
+    ///
+    /// The panic ends in `cleanup_run_all_then_exit`, the path `worker_end`
+    /// takes, rather than `kelp_panic`: in this test build a forced unwind that
+    /// passes an `extern "C"` frame aborts the process, and `kelp_panic` is
+    /// reached through one (the `extern "C"` body). `kelp_panic` itself is
+    /// covered by the panic tests.
     unsafe extern "C" fn owning_panicking_body(
-        _code: *mut c_void,
+        code: *mut c_void,
         _env: *mut c_void,
         arg: *mut c_void,
         _out: *mut c_void,
     ) {
         unsafe {
+            let h = code.cast::<WorkerHandle>();
             let mut frame = CleanupFrame {
                 run: count_callee_drop,
                 arg,
                 prev: ptr::null_mut(),
             };
             cleanup_push(&raw mut frame);
-            kelp_panic(c"worker boom".as_ptr());
+            (*h).panicked = 1;
+            (*h).message = c"worker boom".as_ptr();
+            crate::cleanup::cleanup_run_all_then_exit(ptr::null_mut());
         }
     }
 
@@ -1145,7 +1171,7 @@ mod tests {
             start_common(
                 h,
                 Some(owning_panicking_body),
-                ptr::null_mut(),
+                h.cast(),
                 ptr::null_mut(),
                 None,
                 ptr::null(),
