@@ -10638,6 +10638,14 @@ fn a_pool_panics_on_work_after_join_and_on_zero_workers() {
 
 /// A worker that owns a Sender and panics still closes its channel: its drop runs
 /// on the way out, so the receiver gets the queued value and then `Closed`.
+/// Decision 131: a closure value cannot be a thread argument. Its environment is
+/// collected memory that the start record does not root, so the refusal names the
+/// argument, and the closure entry itself is still accepted.
+#[test]
+fn a_closure_value_is_refused_as_a_thread_argument() {
+    assert_fixture_refused("thread_arg_closure_value", "cannot be a thread's argument");
+}
+
 #[test]
 fn a_worker_that_panics_closes_the_sender_it_was_given() {
     assert_compiles_and_runs("tests/fixtures/thread_arg_sender_panic.kp", "1\nclosed\nworker gives up\n");

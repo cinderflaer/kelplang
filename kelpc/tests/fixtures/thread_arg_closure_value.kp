@@ -1,0 +1,15 @@
+// Decision 131: a closure value is refused as a thread argument. Its environment
+// is a collected heap object that the worker's start record does not root, so a
+// worker must not receive one, even though the entry takes it by move. The
+// refusal names the argument; the entry itself is an accepted `fun` literal.
+impl "std/thread"
+impl "std/result"
+
+fun main() {
+    val k: i64 = 40
+    val h = thread.spawn(fun(f: move closure() => i64) => i64 = f() + 2, fun() => i64 = k)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

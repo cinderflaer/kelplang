@@ -375,6 +375,9 @@ fn crosses(ty: &Ty, walk: &mut Walk<'_>) -> bool {
         Ty::Mutex(elem) | Ty::RwLock(elem) => classify(elem, walk) == ResourceKind::Memory,
         Ty::Condvar => true,
         Ty::Thread(elem) => crosses(elem, walk),
+        // A closure value owns a heap environment that the start record does not
+        // root, so it never crosses as an argument (decision 131).
+        Ty::Closure { .. } => false,
         Ty::Struct(name) => struct_crosses(name, walk),
         _ => classify(ty, walk) == ResourceKind::Memory,
     }
@@ -864,6 +867,7 @@ mod tests {
             ("std.pool.Pool", Ty::Struct("std.pool.Pool".into())),
             ("List<Sender<i64>>", list(sender())),
             ("Missing", Ty::Struct("Missing".into())),
+            ("closure() => i64", Ty::Closure { params: vec![], ret: Box::new(Ty::I64) }),
         ];
         for (label, ty) in refused {
             assert_ne!(
