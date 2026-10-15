@@ -4664,6 +4664,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 .drop_slot(t)
                 .ok_or_else(|| no_value(&format!("the owned local '{}'", t.name)))?;
             self.g.call_drop(slot, &t.ty)?;
+            // A spawning program clears the slot the drop freed, so the frame
+            // finds nothing there on a panic (decision 125).
+            if self.g.spawn_frames && self.g.owns_memory(&t.ty) {
+                let lty = self.lty(&t.ty)?;
+                self.g.builder.build_store(self.g.ctx.const_null(lty), slot);
+            }
         }
         Ok(())
     }
@@ -6152,7 +6158,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
             },
         };
         let value = self.g.builder.build_load(lty, slot, name);
-        if self.g.owns_memory(&e.ty) && self.g.drops.moves_at(&self.fn_name, e) {
+        // A spawning program clears the slot at every owned move, not only at
+        // those some path leaves live: its frame drops whatever a panic finds
+        // still holding a value (decision 125).
+        let moved = self.g.drops.moves_at(&self.fn_name, e)
+            || (self.g.spawn_frames && self.g.drops.moves_any(&self.fn_name, e));
+        if self.g.owns_memory(&e.ty) && moved {
             self.g.builder.build_store(self.g.ctx.const_null(lty), slot);
         }
         Ok(value)

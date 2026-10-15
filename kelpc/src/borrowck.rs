@@ -282,6 +282,12 @@ pub struct FnDrops {
     /// entry: a binding moved on every path is dropped nowhere, so its slot's
     /// contents are never read again and clearing it would be dead code.
     at_move: std::collections::HashSet<NodeId>,
+    /// Every expression that moves an owned binding's value out, including the
+    /// ones on which the binding is moved on every path. A spawning program's
+    /// frame drops a slot a panic finds still holding a value, so each of these
+    /// clears its slot (decision 125). `at_move` is the subset codegen clears in
+    /// every program.
+    moved_any: std::collections::HashSet<NodeId>,
     /// The expressions that move one *projection* of an owned binding out (a
     /// `datac` field or an `enum` payload), and the projection each one
     /// emptied. A binding a projection was taken from stays live, so it is
@@ -375,6 +381,15 @@ impl DropPlan {
         self.functions
             .get(function)
             .map(|f| f.at_move.contains(&expr_id(expr)))
+            .unwrap_or(false)
+    }
+
+    /// Whether `expr` moves an owned binding's value out in `function`, on any
+    /// path (decision 125). A superset of `moves_at`.
+    pub fn moves_any(&self, function: &str, expr: &tir::Expr) -> bool {
+        self.functions
+            .get(function)
+            .map(|f| f.moved_any.contains(&expr_id(expr)))
             .unwrap_or(false)
     }
 
@@ -2294,6 +2309,11 @@ fn check_function(
         .flat_map(|(_, sites)| sites.iter().copied())
         .collect();
     ctx.plan.at_move.extend(clears);
+    ctx.plan.moved_any.extend(
+        ctx.move_sites
+            .values()
+            .flat_map(|sites| sites.iter().copied()),
+    );
     // A partial move always clears: the binding it came out of stays in every
     // drop set it was already in, so each of these clears a slot a drop reaches.
     ctx.plan.at_clear = ctx.field_move_sites.clone();
