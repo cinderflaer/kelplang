@@ -3,6 +3,7 @@
 // of them is "job-7".
 impl "std/pool"
 impl "std/fmt"
+impl "std/str"
 
 pd val gate: Mutex<List<String>> = Mutex.new(List.empty())
 
