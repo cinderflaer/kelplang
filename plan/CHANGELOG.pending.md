@@ -40,7 +40,7 @@ empty on release.
 - `=>` is accepted as the same arrow as `->` in `when` arms and in a trailing block's parameter header (`{ x => ... }`). Both spellings are one token, so no existing program changes; the arrow's error messages now name both.
 - The `managed` target mode is removed: a `[target] mode = "managed"` line is refused with the replacement named. Every hosted build links the tracing collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (files, sockets, processes, threads, locks, channel ends, pools) still drop at scope end. Delete the mode line; `heap_max` is read in every hosted build.
 - `kelpc` builds the collector archive itself from `kelpc/gc`, so a hosted build needs no `KELP_GC_LIB`. The variable, when set, names a different archive to link.
-- A resource (file, socket, process, channel end, pool, TLS stream or capability receipt) cannot go in a `Box`, `List`, `Map`, array or closure environment, or be a thread's argument: the checker refuses it by name in every hosted build.
+- A resource (file, socket, process, TLS stream or capability receipt) cannot go in a `Box`, `List`, `Map`, array or closure environment, or be a thread's argument: the checker refuses it by name in every hosted build. A channel end, a pool, a `Mutex`, an `RwLock` and a `Condvar` may be a thread's argument and result.
 - A `fun` literal written directly as the `thread.spawn` entry may capture a channel end, a `Mutex`, a `Condvar` or pool state; its captures are dropped when the worker ends, also on a panic. Every other closure still refuses a resource capture, and a closure value cannot be a thread's argument.
 - A hosted build accepts channels that close when their senders or receiver drop, `select` over channels where one is ready, a `Mutex` shared through one handle, a `Mutex` block value that is returned or consumed by `into_inner`, and a `Mutex` guarding a `List` pushed from several workers. `sync.bounded(0)` still panics (`sync.bounded: the capacity must be at least 1`); `sync.rendezvous()` is the zero-capacity channel and does not panic.
 - A hosted project whose `coral.toml` sets `[build] incremental = true` is built whole-program with a warning that names the reason (the collector's descriptor ids are per unit). The `--incremental` flag is still refused for a hosted build.
@@ -59,7 +59,7 @@ empty on release.
 - The `Box` free lists read their per-thread state with the initial-exec TLS model, so each allocation skips a `__tls_get_addr` call.
 - In the hosted collector bench (`kelpc/gc`, binary-trees, medians of 5 runs), total stop-the-world time falls from 217 ms to 131 ms (-39%); a 1.5 M-node live set falls from 880 ms to 633 ms (-28%), and the longest pause from 42 ms to 30 ms. Wall time is 11-12% lower on both.
 
-- A hosted build accepts `thread.spawn` with a closure that captures values. A thread's argument and result may hold collected memory, such as a `List`, and a resource (a lock, a channel end, a pool) is refused as a thread argument by name.
+- A hosted build accepts `thread.spawn` with a closure that captures values. A thread's argument and result may hold collected memory, such as a `List`, and a file, a socket or a process is refused as a thread argument by name, while a lock, a channel end and a pool cross under the crossing rule.
 - A hosted build refuses a `thread.spawn` once 256 threads are open: it panics with `thread.spawn: 256 threads are already running; join or drop a thread before spawning another`, because the collector attaches at most 256 threads.
 - A shared-pool array above 4294967295 elements is named in its own message, and so is a count times size that overflows.
 - A `KELP_GC_` variable whose value is not a whole number prints one notice and is ignored. `KELP_GC_STOP_TIMEOUT_MS=0` is refused the same way.
@@ -69,6 +69,7 @@ empty on release.
 - The language reference says `kelpc` emits LLVM IR, not C, and no longer says the binary is written next to a `.c` file.
 
 - A misspelled or misplaced Tidepool section is refused by name: `[target.tidepool]`, `[[tidepool]]`, `[tidpool]`, `[tidepool.x]` and the old name `[gc]` each stop the build, and a `[tidepool]` key in a freestanding build is refused, where before the section was skipped without a word. An out-of-range `headroom_pct` (above 1000), a duplicate key and a `start_high_mib` above `heap_max` are refused by name.
+- A `start_high_mib` below `start_low_mib` is refused by name, with both values in the message. An unset key counts as its default, so `start_low_mib = 5` alone is refused against the default `start_high_mib` of 4.
 - `.return:` is refused by name: the parser says to write the return type with `=>`, as in `fun f(a: i32) => i32`. The migration to `=>` is complete, so no shipped module, example or fixture uses the old spelling.
 - `else if` is the preferred spelling of a chain link, and `elif` stays legal and means the same. `kelpc lint` no longer warns about either spelling.
 - The examples write `list.get(i)` and `list.set(i, v)` without argument names, and a guard whose body is one `return` that fits in 100 columns on one line: `if n < 2 { return n }`. Style only; no program changes.
@@ -128,7 +129,7 @@ empty on release.
 
 ## limits
 
-- A thread argument that is a file, a socket, a `Pool` or a closure is still refused in a hosted build, and so is a `Mutex` of a resource.
+- A thread argument that is a file, a socket or a closure value is still refused in a hosted build, and so is a `Mutex` of a resource.
 - A hosted worker that panics while it evaluates a resource temporary inside a struct literal field leaks that resource, so a receiver waiting on its channel may block.
 - A hosted worker that panics while it evaluates a resource temporary as a method receiver leaks that resource, so a receiver waiting on its channel may block.
 - A hosted worker that panics while a later argument of a closure call, a function value call or a runtime call is evaluated leaks a resource an earlier argument holds, so a receiver waiting on its channel may block.

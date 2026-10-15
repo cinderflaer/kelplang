@@ -2322,6 +2322,19 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
             ));
         }
     }
+    // A reversed start pair is refused by name (design D3, G16, test T84). The
+    // pair is compared as it takes effect, so an unset key counts as its default.
+    let tidepool = &manifest.tidepool;
+    let (low, high) = (tidepool.start_low_mib_or_default(), tidepool.start_high_mib_or_default());
+    if high < low {
+        return Err(Diagnostic::new(
+            format!(
+                "{MANIFEST_NAME}'s [tidepool] key 'start_high_mib' must be at least 'start_low_mib', which is '{low}', found '{high}'"
+            ),
+            at,
+            "",
+        ));
+    }
     // A freestanding build has no shared pool, so a key in `[tidepool]` would
     // do nothing. An empty header is harmless and is still accepted.
     if manifest.target.is_freestanding() && !manifest.tidepool.is_unset() {
@@ -4815,6 +4828,16 @@ mod tests {
         let err = manifest_err("name = \"x\"\n[target]\nheap_max = 8\n[tidepool]\nstart_high_mib = 9\n");
         assert!(
             err.message.contains("'start_high_mib' must not exceed [target] heap_max (8 MiB), found '9'"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn tidepool_start_high_below_start_low_is_refused_by_name() {
+        let err = manifest_err("name = \"x\"\n[target]\nheap_max = 8\n[tidepool]\nstart_low_mib = 3\nstart_high_mib = 2\n");
+        assert!(
+            err.message.contains("'start_high_mib' must be at least 'start_low_mib', which is '3', found '2'"),
             "{}",
             err.message
         );
