@@ -35,7 +35,7 @@ fun main() {
         print(v.len())
         var sevens = 0
         for name in v.iter() {
-            if name == "job-7" {
+            if name.as_str() == "job-7" {
                 sevens += 1
             }
         }
