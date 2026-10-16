@@ -112,6 +112,7 @@ empty on release.
 
 ## fixes
 
+- The golden corpus index lists the two block fixtures added by the block parser: `block_names_stay_ordinary` is frozen from the LLVM output, and `block_region_not_built` is recorded as a refusal, so the golden manifest test passes.
 - The `std/fs` tests write their scratch files under a directory unique to each test in each run, and remove it afterwards, so two kelpc suites running at once no longer delete each other's files.
 - A hosted build refuses an `Atomic` as a `List`, `Map`, `Box` or array element, because the container's own routines read and write an element as a plain location. A `datac` field of atomic type is accepted.
 - A hosted program whose worker panics no longer stalls the next collection until the stop timeout. The worker leaves the collector in its cleanup handler.
