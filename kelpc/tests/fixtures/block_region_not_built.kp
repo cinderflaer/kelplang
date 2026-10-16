@@ -1,5 +1,5 @@
-// Manual memory blocks (decision 139, slice 1): the statement form parses,
-// and the checker refuses it by name until the block runtime is built.
+// Manual memory blocks (decision 139): a block's result is neither used with
+// `?` nor matched with `when`, so the checker refuses it by name.
 
 fun main() {
     val total: i32 = block request: i32 {

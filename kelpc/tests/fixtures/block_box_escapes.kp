@@ -1,0 +1,19 @@
+// Manual memory blocks (decision 139, step 3): a block box is read only through
+// a field of its own binding. Passing the box on leaves its block, so it is
+// refused by name.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        val copy = cell
+        Node(value = 2)
+    }?
+    Ok(1)
+}
+
+fun main() {
+    print(0)
+}

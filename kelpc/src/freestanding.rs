@@ -1124,6 +1124,7 @@ impl Checker<'_> {
                 Ok(())
             }
             ExprKind::IntLit(_)
+            | ExprKind::BlockBox { .. }
             | ExprKind::CharLit(_)
             | ExprKind::FloatLit(_)
             | ExprKind::StringLit(_)

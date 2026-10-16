@@ -1536,6 +1536,7 @@ fn collect_expr_refs(expr: &Expr, from: &str, note: &mut impl FnMut(&str, &str))
             }
         }
         ExprKind::IntLit(_)
+        | ExprKind::BlockBox { .. }
         | ExprKind::CharLit(_)
         | ExprKind::FloatLit(_)
         | ExprKind::StringLit(_)
@@ -4963,6 +4964,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     fn emit_expr(&mut self, e: &Expr) -> Result<Option<Value<'a>>, String> {
         match &e.kind {
+            ExprKind::BlockBox { name, .. } => Err(format!("the box of the block '{name}' is not lowered yet (step 4 of issue 194)")),
             ExprKind::IntLit(v) => Ok(Some(self.int_const(&e.ty, *v)?)),
             ExprKind::CharLit(v) => Ok(Some(self.int_const(&e.ty, *v as i128)?)),
             ExprKind::FloatLit(v) => Ok(Some(self.float_const(&e.ty, *v)?)),
@@ -5016,7 +5018,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 else_block,
             } => self.emit_if(cond, then_block, else_block.as_ref(), &e.ty),
             ExprKind::Block(block) => self.emit_block_value(block),
-            ExprKind::Region { name, elem, body } => self.emit_region(name, elem, body),
+            // The checker types a region as `Result<T, BlockError>`, and wrapping
+            // its value in `Ok` is the lowering of step 4 (issue 194). Until
+            // then a checked region is refused by name; a region typed as its
+            // element (or as a statement) is lowered as it always was.
+            ExprKind::Region { name, elem, body } => {
+                if e.ty != *elem && e.ty != Ty::Unit {
+                    return Err(format!("the block '{name}' is not lowered yet (step 4 of issue 194)"));
+                }
+                self.emit_region(name, elem, body)
+            }
             ExprKind::FieldAccess { base, field } => {
                 Ok(Some(self.emit_field_read(e, base, field, &e.ty)?))
             }
@@ -16777,6 +16788,7 @@ fn fused_index_call<'e>(callee: &str, args: &'e [Expr]) -> Option<(Ty, &'e str, 
 fn read_only_expr(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::IntLit(_)
+        | ExprKind::BlockBox { .. }
         | ExprKind::CharLit(_)
         | ExprKind::FloatLit(_)
         | ExprKind::BoolLit(_)

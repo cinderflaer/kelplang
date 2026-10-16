@@ -1,0 +1,22 @@
+// Manual memory blocks (decision 139, step 3): a block box is bound by a `let`
+// inside its block, with `?`. Here it is passed on as a plain call argument,
+// so it is refused by name.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun keep(n: Node) => i32 {
+    return n.value
+}
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        keep(request.box()?)
+        Node(value = 2)
+    }?
+    Ok(1)
+}
+
+fun main() {
+    print(0)
+}

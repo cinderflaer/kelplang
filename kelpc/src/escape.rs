@@ -414,6 +414,7 @@ impl<'a> Cx<'a> {
                 _ => Carry::new(),
             },
             ExprKind::IntLit(_)
+            | ExprKind::BlockBox { .. }
             | ExprKind::CharLit(_)
             | ExprKind::FloatLit(_)
             | ExprKind::StringLit(_)

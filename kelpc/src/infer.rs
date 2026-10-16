@@ -690,6 +690,26 @@ fn tuple_elems_of(ty: &Ty, ctx: &Ctx) -> Option<Vec<Ty>> {
 /// one clone is visible to every other.
 #[derive(Clone)]
 struct Ctx {
+    /// Manual block regions (decision 139): every block name declared so far in
+    /// this function. A name is unique per function, so a second block of the
+    /// same name, or a let of that name, is refused by name.
+    block_names: std::collections::HashSet<String>,
+    /// The blocks being checked, innermost last: name and element type. A
+    /// `name.box()` is valid only while its block is active.
+    active_blocks: Vec<(String, Ty)>,
+    /// Let-bound names so far in this function (the shadow check).
+    let_names: std::collections::HashSet<String>,
+    /// Let-bound block boxes in scope. Such a binding may only be read as the
+    /// base of a field access, because the region releases its element.
+    box_bindings: std::collections::HashSet<String>,
+    /// Set just before a block expression that is the direct operand of `?` or
+    /// `when`: the only places a block result may go (decision 139, R31).
+    block_result_used: bool,
+    /// Set just before the initializer of a `let` that is `name.box()?`.
+    box_let_ok: bool,
+    /// Set by a field access for its base, read by the identifier check.
+    field_base_ok: bool,
+    field_base_here: bool,
     sigs: HashMap<String, FnSig>,
     structs: HashMap<String, StructDef>,
     /// The `enum` table (A-1), keyed exactly like `structs`. An enum name is
@@ -2007,6 +2027,11 @@ impl TypeScope<'_> {
         // (A-13). Skipping it is what let a private type cross the boundary.
         if self.structs.contains_key(&ty.name) && self.owns_canonical_key(&ty.name) {
             return Ok(Ty::Struct(ty.name.clone()));
+        }
+        // The built-in `BlockError` (decision 139) is named with no import, the
+        // way a block's own `Result<T, BlockError>` names it.
+        if ty.name == "BlockError" && ty.args.is_empty() {
+            return Ok(block_error_ty());
         }
         let qualified = self.qualify(&ty.name, ty.span)?;
         if self.handles.contains(&qualified) {
@@ -9100,6 +9125,36 @@ fn check_program_pass(
 
     let mut enums: HashMap<String, EnumDef> = HashMap::new();
     let mut enum_order: Vec<String> = Vec::new();
+    // `BlockError` is the built-in error of a manual block (decision 139): one
+    // variant, `Full`. It is registered for every program in the same tables a
+    // declared enum is, so a block's `Result` names it with no import, and its
+    // layout comes from the same enum path codegen already reads.
+    {
+        let name = block_error_name();
+        enums.insert(
+            name.clone(),
+            EnumDef {
+                name: name.clone(),
+                variants: vec![crate::types::VariantDef {
+                    name: "Full".to_string(),
+                    fields: Vec::new(),
+                    discriminant: None,
+                }],
+                repr: Repr::C,
+                order: 0,
+            },
+        );
+        enum_order.push(name.clone());
+        structs.insert(
+            name.clone(),
+            StructDef {
+                name,
+                fields: Vec::new(),
+                repr: Repr::C,
+                order: 0,
+            },
+        );
+    }
     for (order, name, is_enum) in &merged {
         // A-2: a generic `datac`/`enum` is a *template*, not a concrete type.
         // It gets no entry in either table and no declaration order; it is
@@ -10402,6 +10457,14 @@ fn base_ctx(
         .map(|p| (p.name.clone(), p.module.clone()))
         .collect();
     Ctx {
+        block_names: std::collections::HashSet::new(),
+        active_blocks: Vec::new(),
+        let_names: std::collections::HashSet::new(),
+        box_bindings: std::collections::HashSet::new(),
+        block_result_used: false,
+        box_let_ok: false,
+        field_base_ok: false,
+        field_base_here: false,
         sigs: sigs.clone(),
         structs: structs.clone(),
         enums: enums.clone(),
@@ -11714,6 +11777,23 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             init,
             ..
         } => {
+            if ctx.block_names.contains(name) {
+                return Err(TypeError {
+                    help: Some("name the binding something else: a block's name is unique in its function".to_string()),
+                    message: format!("'{name}' is a block name in this function, so a 'let' may not shadow it"),
+                    span: stmt_span(stmt),
+                });
+            }
+            ctx.let_names.insert(name.clone());
+            let box_let = matches!(init, ast::Expr::Try { expr, .. } if matches!(expr.as_ref(), ast::Expr::MethodCall { receiver, method, args, .. } if block_box_receiver(receiver, method, args, ctx).is_some()));
+            if box_let && *mutable {
+                return Err(TypeError {
+                    help: Some("bind it with 'let', not 'var'".to_string()),
+                    message: format!("a block box '{name}' is read-only: a 'var' may not hold one"),
+                    span: stmt_span(stmt),
+                });
+            }
+            ctx.box_let_ok = box_let;
             let expected = match ty {
                 Some(t) => Some(ctx.type_scope().resolve(t, false)?),
                 None => None,
@@ -11755,6 +11835,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             ctx.defer_empty_container = deferred;
             let init = check_expr(init, ctx, expected.as_ref());
             ctx.defer_empty_container = outer_defer;
+            ctx.box_let_ok = false;
             let init = init?;
             let final_ty = expected.unwrap_or_else(|| init.ty.clone());
             if final_ty != init.ty {
@@ -11767,6 +11848,11 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                     ),
                     span: stmt_span(stmt),
                 });
+            }
+            if box_let {
+                ctx.box_bindings.insert(name.clone());
+            } else {
+                ctx.box_bindings.remove(name);
             }
             ctx.define(name, final_ty.clone(), *mutable);
             Ok(vec![tir::Stmt::Let {
@@ -12951,6 +13037,7 @@ fn check_fn_literal_pass(
 /// alternative shape (coerce at each site) is the same behaviour with N
 /// chances to forget one.
 fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
+    ctx.field_base_here = std::mem::take(&mut ctx.field_base_ok);
     // A failed check can be retried with other state by a caller that swallows
     // the error, so what it left in `probes` must not outlive it.
     let mark = ctx.probes.len();
@@ -13227,6 +13314,13 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             span: *span,
         }),
         ast::Expr::Ident(name, span) => {
+            if ctx.box_bindings.contains(name) && !ctx.field_base_here {
+                return Err(TypeError {
+                    help: Some("read the element through a field of the binding, which stays inside its block".to_string()),
+                    message: format!("'{name}' is a block box, and it cannot leave its block: it may only be read through a field"),
+                    span: *span,
+                });
+            }
             if let Some(info) = ctx.lookup(name) {
                 // An open container takes its element from the type this
                 // position expects: `take(xs)` on a `fun take(xs: List<i32>)`
@@ -13672,7 +13766,10 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     span: *span,
                 });
             }
-            let base_t = check_expr(base, ctx, None)?;
+            ctx.field_base_ok = matches!(base.as_ref(), ast::Expr::Ident(..));
+            let base_t = check_expr(base, ctx, None);
+            ctx.field_base_ok = false;
+            let base_t = base_t?;
             let Some(sname) = struct_name_of(&base_t.ty).map(|s| s.to_string()) else {
                 return Err(TypeError {
                     help: None,
@@ -13728,11 +13825,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
         // backends need no new shape for it: the call is the unsafe operation.
         // `block name: T { ... }` (manual memory blocks, slice 1): parsed, not
         // built yet. Refused by name until the block runtime lands (step 4).
-        ast::Expr::ManualBlock { name, span, .. } => Err(TypeError {
-            help: None,
-            message: format!("blocks are not built yet: the block '{name}' cannot be compiled in this build"),
-            span: *span,
-        }),
+        ast::Expr::ManualBlock { name, ty, body, span } => check_manual_block(name, ty, body, *span, ctx),
         ast::Expr::Unsafe { block, span } => {
             ctx.unsafe_depth += 1;
             let checked = check_block(block, ctx, expected);
@@ -13831,6 +13924,13 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             args,
             span,
         } => {
+            if let Some(bname) = block_box_receiver(receiver, method, args, ctx) {
+                return Err(TypeError {
+                    help: Some(format!("bind it with `let x = {bname}.box()?` inside the block")),
+                    message: format!("a block box comes out of '{bname}.box()' with '?', and nowhere else"),
+                    span: *span,
+                });
+            }
             // `circle.make(...)`: a module-qualified reference to an
             // imported item, not a method call. Recognized only when the
             // receiver is a bare identifier that names an `impl` alias and
@@ -13909,7 +14009,12 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             arms,
             span,
             let_else,
-        } => check_when_scrutinee(scrutinee, arms, *span, *let_else, ctx, expected),
+        } => {
+            if matches!(scrutinee.as_ref(), ast::Expr::ManualBlock { .. }) {
+                ctx.block_result_used = true;
+            }
+            check_when_scrutinee(scrutinee, arms, *span, *let_else, ctx, expected)
+        }
         // `[a, b, c]`: an array literal (A-18). Every element takes the
         // array's element type, which is either the one the context named or,
         // when nothing constrains it, the first element's own type.
@@ -14811,8 +14916,169 @@ fn try_shape(edef: &EnumDef) -> Option<TryShape> {
 /// the enclosing function has to return an enum of the same shape - with the
 /// *same* failure payload type for `Ok`/`Err`, because v1 has no error
 /// conversion. What the operator evaluates to is the success payload.
+/// The canonical name of the built-in `BlockError` enum.
+pub fn block_error_name() -> String {
+    format!("{}BlockError", crate::stdlib::key_prefix(crate::stdlib::BLOCK_MODULE))
+}
+
+/// The type of a block's failure half: `BlockError`.
+pub fn block_error_ty() -> Ty {
+    Ty::Struct(block_error_name())
+}
+
+/// The key of the stdlib `Result` that a block's type is an instance of. A
+/// program that never imports `std/result` is told to.
+fn block_result_key(ctx: &Ctx, span: Span) -> Result<String> {
+    let key = format!("{}Result", crate::stdlib::key_prefix(crate::stdlib::RESULT_MODULE));
+    if !ctx.env.generics.contains_key(&key) {
+        return Err(TypeError {
+            help: None,
+            message: format!(
+                "a block's result is a 'Result<T, BlockError>', which '{}' declares: add `impl \"{}\"` to the file that writes the block",
+                key,
+                crate::stdlib::RESULT_MODULE
+            ),
+            span,
+        });
+    }
+    Ok(key)
+}
+
+/// Whether `ty` may be a block's element (decision 138 C, slice 1): a scalar,
+/// or a `datac` whose fields are all scalars. A container or a box is refused.
+fn block_elem_ok(ty: &Ty, ctx: &Ctx) -> bool {
+    match ty {
+        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::F32 | Ty::F64 | Ty::Bool | Ty::Char => true,
+        Ty::U8 | Ty::U16 | Ty::Usize | Ty::Isize => true,
+        Ty::Struct(name) => {
+            !ctx.enums.contains_key(name)
+                && ctx.structs.get(name).is_some_and(|def| {
+                    !def.fields.is_empty() && def.fields.iter().all(|f| block_elem_ok(&f.ty, ctx))
+                })
+        }
+        _ => false,
+    }
+}
+
+/// `name.box()` with no arguments, when `name` is a block of this function:
+/// the block's name, or `None` for any other call.
+fn block_box_receiver(receiver: &ast::Expr, method: &str, args: &[ast::CallArg], ctx: &Ctx) -> Option<String> {
+    match receiver {
+        ast::Expr::Ident(name, _) if method == "box" && args.is_empty() && ctx.block_names.contains(name) => {
+            Some(name.clone())
+        }
+        _ => None,
+    }
+}
+
+/// `name.box()`: one zeroed element of the block's type, which the region
+/// owns. The result is `Result<Box<T>, BlockError>`.
+fn check_block_box(bname: &str, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
+    let Some((_, elem)) = ctx.active_blocks.iter().rev().find(|(n, _)| n == bname).cloned() else {
+        return Err(TypeError {
+            help: Some(format!("make the box inside `block {bname}: T {{ ... }}`")),
+            message: format!("'{bname}.box()' is valid only inside the block '{bname}'"),
+            span,
+        });
+    };
+    let key = block_result_key(ctx, span)?;
+    let ty = ctx.instantiate_type(&key, &[Ty::Box(Box::new(elem.clone())), block_error_ty()], span)?;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::BlockBox {
+            name: bname.to_string(),
+            elem,
+        },
+        ty,
+        span,
+    })
+}
+
+/// `block name: T { ... }` (decision 139): a named region whose value is the
+/// body's `T`, wrapped as `Result<T, BlockError>`. The name is unique in its
+/// function, and the block's result must be used with `?` or matched.
+fn check_manual_block(
+    name: &str,
+    ty: &ast::TypeExpr,
+    body: &ast::Block,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    if !std::mem::take(&mut ctx.block_result_used) {
+        return Err(TypeError {
+            help: Some(format!("write `block {name}: T {{ ... }}?` in a function that returns a Result, or match it with 'when'")),
+            message: format!("the result of the block '{name}' is neither used with '?' nor matched with 'when'"),
+            span,
+        });
+    }
+    if ctx.block_names.contains(name) {
+        return Err(TypeError {
+            help: Some("give the second block another name: a block's name is unique in its function".to_string()),
+            message: format!("the block '{name}' is already declared in this function"),
+            span,
+        });
+    }
+    if ctx.let_names.contains(name) {
+        return Err(TypeError {
+            help: Some("give the block another name, or the 'let' another one".to_string()),
+            message: format!("the block '{name}' shares its name with a 'let' in this function"),
+            span,
+        });
+    }
+    ctx.block_names.insert(name.to_string());
+    let elem = ctx.type_scope().resolve(ty, false)?;
+    if !block_elem_ok(&elem, ctx) {
+        return Err(TypeError {
+            help: Some("a block holds one datac of scalar fields (slice 1)".to_string()),
+            message: format!("the block '{name}' cannot hold '{}': its element must be a scalar or a datac of scalars", elem.display()),
+            span,
+        });
+    }
+    let key = block_result_key(ctx, span)?;
+    ctx.active_blocks.push((name.to_string(), elem.clone()));
+    let checked = check_block(body, ctx, Some(&elem));
+    ctx.active_blocks.pop();
+    let checked = checked?;
+    let value_ty = checked.tail.as_ref().map(|t| t.ty.clone()).unwrap_or(Ty::Unit);
+    if value_ty != elem {
+        return Err(TypeError {
+            help: Some(format!("end the block with a value of type '{}'", elem.display())),
+            message: format!("the block '{name}' ends with '{}', not its element type '{}'", value_ty.display(), elem.display()),
+            span,
+        });
+    }
+    let result = ctx.instantiate_type(&key, &[elem.clone(), block_error_ty()], span)?;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Region {
+            name: name.to_string(),
+            elem,
+            body: checked,
+        },
+        ty: result,
+        span,
+    })
+}
+
 fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
-    let inner = check_expr(sub, ctx, None)?;
+    let inner = if let ast::Expr::MethodCall { receiver, method, args, .. } = sub {
+        match block_box_receiver(receiver, method, args, ctx) {
+            Some(bname) => {
+                if !std::mem::take(&mut ctx.box_let_ok) {
+                    return Err(TypeError {
+                        help: Some(format!("write `let x = {bname}.box()?` inside the block, so the box stays in its block")),
+                        message: format!("a block box from '{bname}.box()?' must be bound by a 'let' in its block"),
+                        span,
+                    });
+                }
+                check_block_box(&bname, span, ctx)?
+            }
+            None => check_expr(sub, ctx, None)?,
+        }
+    } else {
+        if matches!(sub, ast::Expr::ManualBlock { .. }) {
+            ctx.block_result_used = true;
+        }
+        check_expr(sub, ctx, None)?
+    };
     // The operand is read as a whole value and its payload is moved out, so a
     // borrow is not usable here - `when`/`if let` is the form for that.
     let source = match &inner.ty {

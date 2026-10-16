@@ -1,0 +1,20 @@
+// Manual memory blocks (decision 139, step 3): `a.box()` is valid only inside
+// the block `a`. The box is taken after the block has ended, so it is refused.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    val n = when block a: Node {
+        Node(value = 1)
+    } {
+        Ok(v) -> v.value
+        Err(e) -> 0
+    }
+    val late = a.box()?
+    Ok(n)
+}
+
+fun main() {
+    print(0)
+}

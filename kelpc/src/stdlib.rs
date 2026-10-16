@@ -82,6 +82,11 @@ pub fn is_thread_fn(key: &str) -> bool {
     key == SPAWN_FN || key == JOIN_FN
 }
 
+/// The module whose key prefix names the built-in `BlockError` of a manual
+/// block (decision 139). The enum is registered for every program, so the
+/// module is never loaded: the id only fixes the name's spelling.
+pub const BLOCK_MODULE: &str = "std/block";
+
 /// The module that declares `Result<T, E>`. A builtin whose result *is* a
 /// `Result` names the instance through `key_prefix` of this id, for the same
 /// reason `OPTION_MODULE` exists: `Atomic.compare_exchange` hands back

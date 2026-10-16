@@ -4595,7 +4595,48 @@ fn block_stays_an_ordinary_name_outside_a_block_introducer() {
 
 #[test]
 fn a_block_region_is_refused_by_name_until_blocks_are_built() {
-    assert_rejected_with("tests/fixtures/block_region_not_built.kp", "blocks are not built yet");
+    assert_rejected_with(
+        "tests/fixtures/block_region_not_built.kp",
+        "the result of the block 'request' is neither used with '?' nor matched with 'when'",
+    );
+}
+
+#[test]
+fn a_block_name_is_unique_in_its_function() {
+    assert_rejected_with("tests/fixtures/block_name_twice.kp", "the block 'a' is already declared in this function");
+}
+
+#[test]
+fn a_let_may_not_shadow_a_block_name() {
+    assert_rejected_with("tests/fixtures/block_name_shadowed_by_let.kp", "shares its name with a 'let' in this function");
+}
+
+#[test]
+fn a_block_box_is_valid_only_inside_its_block() {
+    assert_rejected_with("tests/fixtures/block_box_outside_its_block.kp", "'a.box()' is valid only inside the block 'a'");
+}
+
+#[test]
+fn a_block_box_is_bound_by_a_let_inside_its_block() {
+    assert_rejected_with(
+        "tests/fixtures/block_box_not_bound_by_let.kp",
+        "a block box from 'request.box()?' must be bound by a 'let' in its block",
+    );
+}
+
+#[test]
+fn a_block_box_may_not_leave_its_block_through_a_plain_binding() {
+    assert_rejected_with("tests/fixtures/block_box_escapes.kp", "is a block box, and it cannot leave its block");
+}
+
+#[test]
+fn a_block_element_holds_scalar_fields_only() {
+    assert_rejected_with("tests/fixtures/block_element_not_scalar.kp", "cannot hold 'String'");
+}
+
+#[test]
+fn a_valid_block_checks_and_is_refused_only_by_the_lowering() {
+    assert_rejected_with("tests/fixtures/block_checks_and_waits_for_the_lowering.kp", "not lowered yet (step 4 of issue 194)");
 }
 
 #[test]

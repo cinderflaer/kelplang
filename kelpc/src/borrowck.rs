@@ -2572,6 +2572,7 @@ fn expr_mentions(expr: &tir::Expr, name: &str) -> bool {
             op.operand.as_ref().map_or(false, |e| expr_mentions(e, name))
         }),
         tir::ExprKind::IntLit(_)
+        | tir::ExprKind::BlockBox { .. }
         | tir::ExprKind::CharLit(_)
         | tir::ExprKind::FloatLit(_)
         | tir::ExprKind::StringLit(_)
@@ -2738,6 +2739,7 @@ fn footprint_expr(
         tir::ExprKind::Capture { .. }
         | tir::ExprKind::Ident(_)
         | tir::ExprKind::IntLit(_)
+        | tir::ExprKind::BlockBox { .. }
         | tir::ExprKind::CharLit(_)
         | tir::ExprKind::FloatLit(_)
         | tir::ExprKind::StringLit(_)
@@ -2936,7 +2938,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
-        tir::ExprKind::IntLit(_) | tir::ExprKind::CharLit(_) | tir::ExprKind::FloatLit(_) | tir::ExprKind::StringLit(_) | tir::ExprKind::BoolLit(_) => Ok(()),
+        tir::ExprKind::IntLit(_) | tir::ExprKind::BlockBox { .. } | tir::ExprKind::CharLit(_) | tir::ExprKind::FloatLit(_) | tir::ExprKind::StringLit(_) | tir::ExprKind::BoolLit(_) => Ok(()),
         tir::ExprKind::Unary { expr: sub, .. } => check_value(sub, ctx),
         tir::ExprKind::Binary { lhs, rhs, .. } => {
             check_value(lhs, ctx)?;

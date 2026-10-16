@@ -592,6 +592,13 @@ pub enum ExprKind {
         elem: Ty,
         body: Block,
     },
+    /// `name.box()` inside the block `name` (decision 139): one zeroed element
+    /// of the block's `elem`, typed `Result<Box<elem>, BlockError>`. The region
+    /// owns the element, so its box is never freed by the box's own drop.
+    BlockBox {
+        name: String,
+        elem: Ty,
+    },
 }
 
 /// The checked form of one `asm(...)` expression (kernel stage 5).

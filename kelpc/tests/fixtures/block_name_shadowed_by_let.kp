@@ -1,0 +1,14 @@
+// Manual memory blocks (decision 139, step 3): a `let` may not share a block's
+// name in its function, so the `let a` is refused by name.
+impl "std/result"
+
+fun main() {
+    val a = 3
+    when block a: i32 {
+        1
+    } {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+    print(a)
+}

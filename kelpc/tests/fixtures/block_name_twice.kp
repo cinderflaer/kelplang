@@ -1,0 +1,18 @@
+// Manual memory blocks (decision 139, step 3): a block's name is unique in its
+// function, so the second block named `a` is refused by name.
+impl "std/result"
+
+fun main() {
+    when block a: i32 {
+        1
+    } {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+    when block a: i32 {
+        2
+    } {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+}

@@ -1,0 +1,14 @@
+// Manual memory blocks (decision 139, slice 1): a block's element holds scalar
+// fields only, so a `String` element is refused by name.
+impl "std/result"
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: String {
+        "text"
+    }?
+    Ok(1)
+}
+
+fun main() {
+    print(0)
+}
