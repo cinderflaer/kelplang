@@ -93,14 +93,14 @@ pub enum TokenKind {
     If,
     Else,
     /// `elif cond { ... }` - the `else if` link spelled as one keyword. It
-    /// means exactly what `else if` means (`plan/syntax.md` 6.1 records both
+    /// means exactly what `else if` means (`design/syntax.md (kelp wiki)` 6.1 records both
     /// spellings, with `else if` the preferred one), so the parser hands it to
     /// the same function the `else if` link goes to. `kelpc lint` reads neither
     /// spelling.
     Elif,
     While,
     /// `for x in xs { ... }` - the indexed walk over a `List` (A-5,
-    /// `plan/syntax.md` §6.2). The parser desugars it to a `while`, so no pass
+    /// `design/syntax.md (kelp wiki)` §6.2). The parser desugars it to a `while`, so no pass
     /// after the parser knows this form exists. `in` is **not** a keyword; it
     /// is read contextually, exactly as `let` is after `if`.
     For,
@@ -110,20 +110,20 @@ pub enum TokenKind {
     /// before name resolution, so no later pass knows this form exists.
     Defer,
     /// `errdefer EXPR`: a `defer` that runs only on an error exit
-    /// (`plan/syntax.md`). `defer.rs` rewrites it away before name resolution.
+    /// (`design/syntax.md (kelp wiki)`). `defer.rs` rewrites it away before name resolution.
     Errdefer,
     Return,
     True,
     False,
     Datac,
     /// `enum Shape { Circle(val r: f64) Empty }` - a tagged union
-    /// (`plan/syntax.md` §9.2): exactly one variant is live, and `when` on a
+    /// (`design/syntax.md (kelp wiki)` §9.2): exactly one variant is live, and `when` on a
     /// scrutinee matches it (A-1).
     Enum,
     /// `pd val name = expr` / `pd var name = expr` - a passdown
-    /// (`plan/syntax.md` §9).
+    /// (`design/syntax.md (kelp wiki)` §9).
     Pd,
-    /// `impl "path/to/module"`: the import keyword (`plan/syntax.md` §8),
+    /// `impl "path/to/module"`: the import keyword (`design/syntax.md` (kelp wiki) §8),
     /// and `impl Trait for Type { ... }`: the trait-implementation form
     /// (A-12 slice 2). The parser tells them apart by the token that follows:
     /// a string literal is an import and an identifier is an impl block.
@@ -131,10 +131,10 @@ pub enum TokenKind {
     /// `trait Name { fun Self.m(...) ... }`: a named set of methods a
     /// `datac`/`enum` or a builtin implements (A-12 slices 2 and 3): a method
     /// with no body is a signature, one with a body is a default, and the
-    /// optional `: A + B` names supertraits (`plan/syntax.md` 9.5).
+    /// optional `: A + B` names supertraits (`design/syntax.md (kelp wiki)` 9.5).
     Trait,
     /// The `as` keyword. Nothing accepts it: `impl "path" as name` was removed
-    /// (`plan/syntax.md` 13.1), and the `impl` parser refuses the clause by name
+    /// (`design/syntax.md (kelp wiki)` 13.1), and the `impl` parser refuses the clause by name
     /// rather than letting a stale one read as something else.
     As,
     /// `const NAME: T = expr` - a top-level compile-time constant (M6.3).
@@ -148,7 +148,7 @@ pub enum TokenKind {
     /// `malloc`) to a body that is not `.kp` source.
     Extern,
     /// `pub`: a top-level item another module may reach (A-13,
-    /// `plan/syntax.md` 13.4). Items are private to their module by default;
+    /// `design/syntax.md (kelp wiki)` 13.4). Items are private to their module by default;
     /// `pub` on a `fun`, `extern fun`, `datac`, `enum` or `const` exports it.
     Pub,
 

@@ -267,7 +267,7 @@ struct TypeEnv {
     /// The canonical keys of the items each module exports (A-13). Private by
     /// default, so a key is here only for a declaration written `pub`, or for
     /// any declaration in a compiler-shipped module (the transitional rule
-    /// `plan/syntax.md` 13.4 records). Shared through the same `Rc` every
+    /// `design/syntax.md (kelp wiki)` 13.4 records). Shared through the same `Rc` every
     /// `Ctx` clone and every `TypeScope` see, since it is one answer for the
     /// whole program.
     exported: std::rc::Rc<std::collections::HashSet<String>>,
@@ -319,7 +319,7 @@ struct TypeEnv {
     /// a written type over the template's own parameters. Keyed by template
     /// name. `std/iter`'s adapters are such types (`TakeIter<I, T>`), and this is
     /// what lets one satisfy `I: Iterator` and name `I::Item` without a generic
-    /// trait impl (`plan/generic-trait-impls.md`).
+    /// trait impl (`kelp issue #243`).
     iter_nexts: std::rc::Rc<HashMap<String, IterNext>>,
     /// The generic impls (`impl<T: Bound> Trait for Type<T>`), by trait-instance
     /// key.
@@ -429,7 +429,7 @@ const BORROW_TEMP_PREFIX: &str = "#borrow";
 
 /// The name prefix of the local a destructuring binding takes its value apart
 /// from, and of the local a *nested* pattern takes an inner tuple into
-/// (`plan/syntax.md` 4). Same `#` trick as `WHEN_TEMP_PREFIX`: a synthesized
+/// (`design/syntax.md (kelp wiki)` 4). Same `#` trick as `WHEN_TEMP_PREFIX`: a synthesized
 /// name can never collide with one the user wrote.
 const TUPLE_TEMP_PREFIX: &str = "#tuple";
 
@@ -636,7 +636,7 @@ fn instance_key(name: &str, args: &[Ty]) -> String {
 /// The type of a tuple, and the one place its derived record is registered
 /// (MISSING-z2bB9).
 ///
-/// A tuple is a record with positional fields (`plan/syntax.md` 3) and v1's
+/// A tuple is a record with positional fields (`design/syntax.md (kelp wiki)` 3) and v1's
 /// record type is `Ty::Struct(<key>)`, keyed by the tuple as written. The
 /// record is *derived*: `types::tuple_struct_def` builds it and it goes into
 /// the same on-demand registry a generic instantiation uses (A-2), so every
@@ -749,7 +749,7 @@ struct Ctx {
     /// method call, when `circle` is one of these aliases.
     aliases: HashMap<String, String>,
     /// This module's passdowns, keyed by the bare name a function writes.
-    /// `plan/syntax.md` §9 leaves the cross-module question open; M5.2
+    /// `design/syntax.md (kelp wiki)` §9 leaves the cross-module question open; M5.2
     /// answers it the same way M5.1 answered imports - module-scoped, so
     /// only functions in the declaring module can name it.
     pds: HashMap<String, PdInfo>,
@@ -861,7 +861,7 @@ struct Ctx {
     /// Set while checking a receiver-form function whose receiver resolves
     /// to a `datac`: lets a bare identifier that isn't a local fall back to
     /// an implicit `self.field` (`fun Circle.area() => f64 = 3.14159 * r *
-    /// r` - no `self.` qualifier written, per `plan/syntax.md` §5's "no
+    /// r` - no `self.` qualifier written, per `design/syntax.md (kelp wiki)` §5's "no
     /// `self` keyword").
     receiver_struct: Option<String>,
     /// How many scrutinee temporaries a `when` has staged, so each one's
@@ -1679,7 +1679,7 @@ impl TypeScope<'_> {
                 trait_name: qualified,
             });
         }
-        // A tuple type (`plan/syntax.md` 3): `(A, B)`. Every element is stored
+        // A tuple type (`design/syntax.md (kelp wiki)` 3): `(A, B)`. Every element is stored
         // by value, exactly as a `datac` field is, so the element rules are the
         // field rules: an element may not be a borrow, and `unit` cannot be
         // stored either. `indirect` is passed through, because a tuple inside a
@@ -3357,7 +3357,7 @@ fn first_assoc_type<'a>(
 }
 
 /// Object safety for a trait object, `&dyn Name` (A-12 slice 4,
-/// `plan/traits.md` 9.2) or `Box<dyn Name>` (slice 7): no method may return
+/// `design/traits.md (kelp wiki)` 9.2) or `Box<dyn Name>` (slice 7): no method may return
 /// `Self`, no parameter other than the receiver may mention `Self`, and no two
 /// methods of the flattened list may share a name (the vtable holds one slot per
 /// name). A violation names the spelling the program wrote, the trait and the
@@ -4534,7 +4534,7 @@ fn is_shipped_module(module: &str) -> bool {
     crate::stdlib::source(module).is_some()
 }
 
-/// The canonical keys of the items each module exports (A-13, `plan/syntax.md`
+/// The canonical keys of the items each module exports (A-13, `design/syntax.md (kelp wiki)`
 /// 13.4). Private by default, so a key is present only for a declaration
 /// written `pub`. A key is a declaration's own lookup name, which is exactly
 /// what a cross-module lookup is keyed by.
@@ -4769,7 +4769,7 @@ fn handle_is_same_or_ancestor(
     false
 }
 
-/// The private-in-public rule (A-13, `plan/syntax.md` 13.4): a declaration
+/// The private-in-public rule (A-13, `design/syntax.md (kelp wiki)` 13.4): a declaration
 /// another module can reach must not name, anywhere in its signature, a type
 /// its module does not export. A private declaration may name anything,
 /// because nothing outside its module can name it either.
@@ -10730,7 +10730,7 @@ fn scan_pd_uses(
     used
 }
 
-/// Resolves a parameter's type per `plan/syntax.md` §5: a `datac` param is
+/// Resolves a parameter's type per `design/syntax.md (kelp wiki)` §5: a `datac` param is
 /// an implicit shared borrow unless `mut`-marked (exclusive); everything
 /// else (Copy types) stays a plain by-value type unless explicitly
 /// `mut`-marked, since borrowing a Copy scalar by default would add
@@ -11776,7 +11776,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             }])
         }
         // `val (lo, hi) = min_max(xs)`: a destructuring binding
-        // (MISSING-z2bB9, `plan/syntax.md` 4). One binding becomes one owning
+        // (MISSING-z2bB9, `design/syntax.md (kelp wiki)` 4). One binding becomes one owning
         // temporary plus one ordinary `let` per bound position, read out of
         // that temporary: the lowering is spelled here, in terms of the
         // record a tuple already is, so nothing downstream learns a new
@@ -12139,7 +12139,7 @@ fn desugar_map_for(
     })
 }
 
-/// The index desugar a `for x in <List<T>|[T; N]>` becomes (`plan/syntax.md`
+/// The index desugar a `for x in <List<T>|[T; N]>` becomes (`design/syntax.md (kelp wiki)`
 /// 6.2), unchanged from the parser's old one except that the index advances
 /// **before** the body runs. That is what makes a `continue` in the body jump
 /// to the next element instead of re-reading the same one: the desugared loop
@@ -12370,7 +12370,7 @@ fn desugar_iterator_for(
     }
 }
 
-/// One destructuring binding, lowered (`plan/syntax.md` 4): the whole value is
+/// One destructuring binding, lowered (`design/syntax.md (kelp wiki)` 4): the whole value is
 /// already bound to `base`, and every position the pattern binds is read out of
 /// it by name. A nested pattern binds the position to a temporary of its own
 /// first, so `val ((a, b), c) = ...` is two ordinary levels of the same
@@ -13271,7 +13271,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             }
             // Not a local or parameter - inside a receiver-form method,
             // fall back to the receiver's field of that name (no `self.`
-            // qualifier is ever written; see `plan/syntax.md` §5).
+            // qualifier is ever written; see `design/syntax.md (kelp wiki)` §5).
             if let Some(field_ty) = ctx.receiver_field_ty(name) {
                 let self_ty = ctx.lookup("self").expect("receiver binding exists whenever receiver_struct is set").ty.clone();
                 let base = tir::Expr { kind: tir::ExprKind::Ident("self".to_string()), ty: self_ty, span: *span };
@@ -13471,7 +13471,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 UnOp::Neg => {
                     if !sub_t.ty.is_numeric() {
                         // `-a` on a user type that implements `std/ops.Neg` is
-                        // `a.neg()` (`plan/traits.md` 13.2), with the operand
+                        // `a.neg()` (`design/traits.md (kelp wiki)` 13.2), with the operand
                         // borrowed rather than moved.
                         if let Some(owner) =
                             unary_operator_owner(&sub_t, crate::types::NEG_TRAIT, ctx)
@@ -13970,7 +13970,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 span: *span,
             })
         }
-        // `(lo, hi)`: a tuple value (MISSING-z2bB9, `plan/syntax.md` 3). Each
+        // `(lo, hi)`: a tuple value (MISSING-z2bB9, `design/syntax.md (kelp wiki)` 3). Each
         // element takes its own type, from the expected tuple's position when
         // the context named one and from the element expression otherwise. The
         // value is a `StructLit` of the derived record, whose fields are the
@@ -15090,7 +15090,7 @@ fn let_else_leaves(expr: &ast::Expr) -> bool {
     }
 }
 
-/// The let-else rules (`plan/syntax.md` 4.1) that are checked before the
+/// The let-else rules (`design/syntax.md (kelp wiki)` 4.1) that are checked before the
 /// desugared `when` is: the else block must end in a diverging statement, and
 /// the pattern's enum must be the expression's type. The variant lookup is
 /// left to `check_when`, which names the let-else rule in its own refusal.
@@ -15860,7 +15860,7 @@ fn lower_equality(
     }
     // `Ord` says nothing about equality, so a type that implements only the
     // order trait is refused `==`/`!=` with a message that says which
-    // declaration the operator actually needs (`plan/traits.md` 13.3).
+    // declaration the operator actually needs (`design/traits.md (kelp wiki)` 13.3).
     if let (Some(a), Some(b)) = (equality_owner(&l.ty), equality_owner(&r.ty)) {
         if a == b && implements_trait(&ctx.env, crate::types::ORD_TRAIT, a) {
             return Err(TypeError {
@@ -15928,7 +15928,7 @@ fn unary_operator_owner(operand: &tir::Expr, trait_key: &str, ctx: &Ctx) -> Opti
 }
 
 /// The trait, the trait's bare name and the method one arithmetic operator
-/// lowers through (`plan/traits.md` 13.2).
+/// lowers through (`design/traits.md (kelp wiki)` 13.2).
 fn arithmetic_operator(op: BinOp) -> Option<(&'static str, &'static str, &'static str)> {
     Some(match op {
         BinOp::Add => (crate::types::ADD_TRAIT, "Add", "add"),
@@ -16003,7 +16003,7 @@ fn lower_arithmetic_operator(
 }
 
 /// Lowers `a OP b` for a user type that implements `std/ops.Ord`: the `cmp`
-/// call's `i32` against zero (`plan/traits.md` 13.3).
+/// call's `i32` against zero (`design/traits.md (kelp wiki)` 13.3).
 fn lower_order_operator(
     op: BinOp,
     l: &tir::Expr,
@@ -16032,7 +16032,7 @@ fn lower_order_operator(
 }
 
 /// Lowers a `Display` value in `"${x}"` or `print(x)` to `x.to_text()`
-/// (`plan/traits.md` 13.4). `None` when the type does not implement `Display`,
+/// (`design/traits.md (kelp wiki)` 13.4). `None` when the type does not implement `Display`,
 /// which leaves the existing refusal in place.
 fn lower_display(value: &tir::Expr, span: Span, ctx: &Ctx) -> Result<Option<tir::Expr>> {
     let Some(owner) = unary_operator_owner(value, crate::types::DISPLAY_TRAIT, ctx) else {
@@ -16044,7 +16044,7 @@ fn lower_display(value: &tir::Expr, span: Span, ctx: &Ctx) -> Result<Option<tir:
 /// The refusal for an arithmetic operator whose operands are not a matching
 /// numeric pair. When both name the same `datac`/`enum`, the operator traits
 /// are the answer, so the message names the trait and the impl to write
-/// (`plan/traits.md` 13.2).
+/// (`design/traits.md (kelp wiki)` 13.2).
 fn arithmetic_error(op: BinOp, l: &tir::Expr, r: &tir::Expr) -> String {
     if let (Some(a), Some(b)) = (equality_owner(&l.ty), equality_owner(&r.ty)) {
         if a == b {
@@ -16077,7 +16077,7 @@ fn arithmetic_error(op: BinOp, l: &tir::Expr, r: &tir::Expr) -> String {
 }
 
 /// The refusal for a value `print` cannot format. A `datac`/`enum` names
-/// `Display`, which is what it has to implement (`plan/traits.md` 13.4).
+/// `Display`, which is what it has to implement (`design/traits.md (kelp wiki)` 13.4).
 fn print_error(callee: &str, ty: &Ty) -> String {
     match ty {
         Ty::Struct(_) => format!(
@@ -16185,7 +16185,7 @@ fn check_binary(
             if !l.ty.is_numeric() || l.ty != r.ty {
                 // A `datac`/`enum` that implements `std/ops`'s trait for this
                 // operator is lowered into the trait method here
-                // (`plan/traits.md` 13.2); a builtin numeric pair never reaches
+                // (`design/traits.md (kelp wiki)` 13.2); a builtin numeric pair never reaches
                 // this point, so the builtin operators are untouched.
                 if let Some(expr) = lower_arithmetic_operator(op, &l, &r, span, ctx)? {
                     return Ok(expr);
@@ -16278,7 +16278,7 @@ fn check_binary(
                 return Ok(expr);
             }
             // `Ord` gives the four order operators, through `cmp`
-            // (`plan/traits.md` 13.3). Equality already returned above.
+            // (`design/traits.md (kelp wiki)` 13.3). Equality already returned above.
             if let Some(expr) = lower_order_operator(op, &l, &r, span, ctx)? {
                 return Ok(expr);
             }
@@ -16425,7 +16425,7 @@ fn match_args_split<'a>(
 /// Checks one call-site argument against its matched parameter type. When
 /// the parameter is `Ty::Ref`, the caller never writes `&` - a plain place
 /// argument (`p`, `p.x`) is auto-borrowed here (the callee's signature is
-/// what decides shared vs exclusive), matching `plan/syntax.md`'s "shared
+/// what decides shared vs exclusive), matching `design/syntax.md (kelp wiki)`'s "shared
 /// borrow is implicit - write nothing." An argument that's already a borrow
 /// (an explicit `&expr`, or forwarding an existing `Ref`-typed parameter)
 /// type-matches directly instead of double-wrapping; a shared parameter
@@ -16499,7 +16499,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
 }
 
 /// What a `String` argument for a `str` parameter does at one call. `Implicit`
-/// borrows it exactly as `.as_str()` would (plan/syntax.md 11.2); `Refused`
+/// borrows it exactly as `.as_str()` would (design/syntax.md (kelp wiki) 11.2); `Refused`
 /// names the callee that takes no implicit borrow (a generic function, or a
 /// trait method) and asks for the explicit `.as_str()`.
 #[derive(Clone)]
@@ -16739,7 +16739,7 @@ fn dyn_target_name(ty: &Ty) -> Option<String> {
     }
 }
 
-/// The one coercion this slice adds (A-12 slice 4, `plan/traits.md` 9.3): a
+/// The one coercion this slice adds (A-12 slice 4, `design/traits.md (kelp wiki)` 9.3): a
 /// `&T` where `T` implements `Trait` becomes a `&dyn Trait`, and a `&mut T`
 /// becomes either spelling. The value is a fat pair, and the coercion records
 /// the `(trait, type)` pair so the vtable list knows to emit one.
@@ -17675,7 +17675,7 @@ fn check_call(
         if !printable {
             // A `datac`/`enum` that implements `Display` prints through
             // `x.to_text()`, which yields the owned `String` the ordinary
-            // print path already formats (`plan/traits.md` 13.4).
+            // print path already formats (`design/traits.md (kelp wiki)` 13.4).
             if let Some(text) = lower_display(&arg, span, ctx)? {
                 return Ok(tir::Expr {
                     kind: tir::ExprKind::Call {
@@ -19468,7 +19468,7 @@ fn check_template(
                     || is_printable_buffer(&value.ty);
                 if !printable {
                     // A `datac`/`enum` that implements `Display` interpolates
-                    // through `x.to_text()` (`plan/traits.md` 13.4).
+                    // through `x.to_text()` (`design/traits.md (kelp wiki)` 13.4).
                     if let Some(text) = lower_display(&value, e.span(), ctx)? {
                         pieces.push(tir::TemplatePiece::Value(text));
                         continue;
@@ -20520,7 +20520,7 @@ fn check_method_call(
 }
 
 /// A method call through a borrowed trait object (A-12 slice 4,
-/// `plan/traits.md` 9.4): resolve the method in the trait's flattened list, check
+/// `design/traits.md (kelp wiki)` 9.4): resolve the method in the trait's flattened list, check
 /// the receiver's mutability against the method's, check the arguments against
 /// the trait's own signature, and lower to a `tir::ExprKind::DynCall`.
 fn check_dyn_method_call(

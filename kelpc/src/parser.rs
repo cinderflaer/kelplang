@@ -22,7 +22,7 @@ pub struct Parser {
     when_temps: usize,
     /// True while parsing the head of an `if`/`elif`/`while`/`for`/`when`, where
     /// a `{` after an expression opens the body and not a trailing block
-    /// (`plan/trailing-closure.md`). A call's argument list and a block reset it.
+    /// (`kelp issue #242`). A call's argument list and a block reset it.
     no_trailing_block: bool,
     /// How many nesting constructs (expression, type, block, pattern) the parser
     /// is inside right now; `nest` refuses to go past `MAX_NESTING`.
@@ -1787,7 +1787,7 @@ impl Parser {
         let mut out = Vec::new();
         loop {
             // A negative bound (`T: !Name`) is excluded from this design
-            // (`plan/generic-trait-impls.md` 6): refused by name where it starts.
+            // (`kelp issue #243` 6): refused by name where it starts.
             if self.check(&TokenKind::Bang) {
                 return Err(ParseError {
                     help: None,
@@ -1935,7 +1935,7 @@ impl Parser {
     }
 
     /// Whether the `impl` at the cursor opens an **import** (`impl "path"`,
-    /// `plan/syntax.md` 13.1) rather than an `impl Trait for Type { ... }`
+    /// `design/syntax.md (kelp wiki)` 13.1) rather than an `impl Trait for Type { ... }`
     /// block (A-12 slice 2): the two are told apart by the token after the
     /// keyword, a string literal for the import and an identifier for the
     /// block.
@@ -1995,7 +1995,7 @@ impl Parser {
 
     /// `enum Shape { Circle(val r: f64) Rect(val w: f64, val h: f64) Empty }`
     /// - variants are newline-separated, and a variant's payload list is the
-    /// same one a `datac` uses (`plan/syntax.md` §9.2).
+    /// same one a `datac` uses (`design/syntax.md (kelp wiki)` §9.2).
     fn parse_enum_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<EnumDecl> {
         let start = self.expect(TokenKind::Enum, "'enum'")?.span;
         let (name, _) = self.expect_ident()?;
@@ -2606,7 +2606,7 @@ impl Parser {
             });
         }
         // A tuple type (MISSING-z2bB9): `(A, B)`, two or more element types.
-        // A tuple is a record with positional fields (`plan/syntax.md` 3), so
+        // A tuple is a record with positional fields (`design/syntax.md (kelp wiki)` 3), so
         // this is a *type* like any other. `(T)` is not a tuple: it is the
         // parenthesized type `T`, and `()` is refused by name because the
         // absent value's type is spelled `unit`.
@@ -3078,7 +3078,7 @@ impl Parser {
     /// A `let PATTERN = EXPR else { BLOCK }` takes every statement after it
     /// into its pattern arm, so the rest of the block is parsed here, by a
     /// recursive call, and the statement becomes a `when` whose pattern arm
-    /// is that rest and whose `else` arm is the else block (`plan/syntax.md`
+    /// is that rest and whose `else` arm is the else block (`design/syntax.md (kelp wiki)`
     /// 4.1). The `when` is the last statement of the block, so its value is
     /// the rest's value, and every existing rule for `when` arms, drops and
     /// divergence applies to the let-else unchanged.
@@ -3225,7 +3225,7 @@ impl Parser {
             self.expect(TokenKind::Val, "'val'")?.span
         };
         // `val (lo, hi) = min_max(xs)`: a destructuring binding takes one
-        // tuple value apart (`plan/syntax.md` 4). The pattern is a comma-
+        // tuple value apart (`design/syntax.md (kelp wiki)` 4). The pattern is a comma-
         // separated list in parentheses, so the one thing that tells it from
         // the ordinary `val name = ...` is the `(` right after the keyword.
         if self.check(&TokenKind::LParen) {
@@ -3268,7 +3268,7 @@ impl Parser {
     }
 
     /// `(lo, hi)` / `((a, b), c)`: the pattern a destructuring binding takes
-    /// its value apart with (`plan/syntax.md` 4). A position is a name, `_` to
+    /// its value apart with (`design/syntax.md (kelp wiki)` 4). A position is a name, `_` to
     /// ignore it, or a nested pattern, and there are two or more of them:
     /// `(x)` is not a pattern but the parenthesized name `x`, exactly as `(T)`
     /// is not a tuple type.
@@ -3582,7 +3582,7 @@ impl Parser {
 
     /// `for x in xs { BODY }`, desugared here into an indexed walk over the
     /// `List` - the same trick the boolean `when` and `if let` already use, so
-    /// nothing downstream learns a new form (A-5, `plan/syntax.md` §6.2):
+    /// nothing downstream learns a new form (A-5, `design/syntax.md (kelp wiki)` §6.2):
     ///
     /// ```text
     /// {
@@ -3608,7 +3608,7 @@ impl Parser {
         let start = self.expect(TokenKind::For, "'for'")?.span;
         // `for (k, v) in xs`: the element is bound to a hidden name and the
         // body starts with the ordinary destructuring `val (k, v) = <hidden>`
-        // (`plan/syntax.md` 4), so a pattern costs no pass anything.
+        // (`design/syntax.md (kelp wiki)` 4), so a pattern costs no pass anything.
         let pattern = if self.check(&TokenKind::LParen) {
             Some((self.peek().span, self.parse_binding_pattern()?))
         } else {
@@ -3962,7 +3962,7 @@ impl Parser {
             if self.check(&TokenKind::Dot) {
                 self.advance();
                 // `t.0`: a tuple position, the field a derived record names
-                // `f0` (`plan/syntax.md` 4).
+                // `f0` (`design/syntax.md (kelp wiki)` 4).
                 if let TokenKind::IntLit(n) = self.peek_kind().clone() {
                     let nspan = self.advance().span;
                     let span = expr.span().to(nspan);
@@ -4324,10 +4324,10 @@ impl Parser {
                 // A tuple literal `(a, b)` is the parenthesized form with a
                 // comma in it, so the first element decides which one this is:
                 // `(e)` stays the parenthesized expression it always was, and
-                // a tuple has two or more elements (`plan/syntax.md` 3).
+                // a tuple has two or more elements (`design/syntax.md (kelp wiki)` 3).
                 self.advance();
                 if self.check(&TokenKind::RParen) {
-                    // `()` is the absent value, of type `unit` (`plan/syntax.md`
+                    // `()` is the absent value, of type `unit` (`design/syntax.md (kelp wiki)`
                     // 3, 6.4). It is an empty block: a block with no tail
                     // evaluates to `unit`, so `Ok(value = ())` builds a
                     // `Result<unit, E>` whose payload occupies no storage.
@@ -4460,7 +4460,7 @@ impl Parser {
     }
 
     /// `elif cond { ... }`: the `else if` link written as one keyword
-    /// (`plan/syntax.md` 6.1). The token is consumed and the rest of the link
+    /// (`design/syntax.md (kelp wiki)` 6.1). The token is consumed and the rest of the link
     /// goes through `parse_if_link`, exactly as `else if` does, so the two
     /// spellings cannot mean two different things.
     fn parse_elif(&mut self) -> PResult<Expr> {
@@ -4546,7 +4546,7 @@ impl Parser {
         })
     }
 
-    /// `let PATTERN = EXPR else { BLOCK }` (`plan/syntax.md` 4.1), read up to
+    /// `let PATTERN = EXPR else { BLOCK }` (`design/syntax.md (kelp wiki)` 4.1), read up to
     /// and including the else block. The statement is only ever a `let` that
     /// starts a statement and is followed by a name or a parenthesis.
     fn at_let_else(&self) -> bool {
@@ -4864,7 +4864,7 @@ impl Parser {
     }
 
     /// `when (a, b) { (Some(x), _) -> ... (n, None) -> ... else -> ... }`: arms
-    /// whose heads are tuple patterns (`plan/syntax.md` 4). A position is a
+    /// whose heads are tuple patterns (`design/syntax.md (kelp wiki)` 4). A position is a
     /// name, `_`, or a variant pattern (a capitalized name, with a bind list in
     /// parentheses when it has a payload). Nothing below the parser learns
     /// about it: the scrutinee is bound once and the arms are rewritten into
@@ -5820,7 +5820,7 @@ mod tests {
     #[test]
     fn a_tuple_type_is_its_element_list() {
         // MISSING-z2bB9: `(A, B)` is a type, and `(A)` is not a tuple but the
-        // parenthesized type `A` (`plan/syntax.md` 3).
+        // parenthesized type `A` (`design/syntax.md (kelp wiki)` 3).
         let p = parse("fun f(p: (i32, String)) => (i32, i32) = (1, 2)");
         let param = &p.functions[0].params[0].ty;
         assert_eq!(param.display(), "(i32, String)");
@@ -5890,7 +5890,7 @@ mod tests {
     #[test]
     fn a_destructuring_binding_binds_every_position() {
         // MISSING-z2bB9: `val (lo, _) = p`, with `_` ignoring a position and a
-        // nested pattern allowed (`plan/syntax.md` 4).
+        // nested pattern allowed (`design/syntax.md (kelp wiki)` 4).
         let p = parse("fun f(p: (i32, i32)) {\n    val (lo, _) = p\n    var ((a, b), c) = ((1, 2), 3)\n}");
         let stmts = match &p.functions[0].body {
             FunctionBody::Block(b) => &b.stmts,
@@ -5966,7 +5966,7 @@ mod tests {
 
     /// The number of links in an `if` chain: one per `if`/`elif`, plus one for
     /// a trailing `else` block. Both spellings have to give the same number,
-    /// which is the whole claim `elif` makes (`plan/syntax.md` 6.1).
+    /// which is the whole claim `elif` makes (`design/syntax.md (kelp wiki)` 6.1).
     fn links(branch: &ElseBranch) -> usize {
         match branch {
             ElseBranch::If(e) => match e {
@@ -7094,7 +7094,7 @@ mod tests {
         assert!(matches!(expr, Expr::Block(b) if b.stmts.len() == 2));
     }
 
-    /// `break` and `continue` are not keywords (`plan/syntax.md` 2.3), so a
+    /// `break` and `continue` are not keywords (`design/syntax.md (kelp wiki)` 2.3), so a
     /// bare one is the loop control statement (`kelp wiki page language/iterators.md`) and a name
     /// used in an expression is still a name.
     #[test]

@@ -1,4 +1,4 @@
-/* std/convert, `From<T>` and `Into<T>` (A-12 slice 6, `plan/traits.md` 11).
+/* std/convert, `From<T>` and `Into<T>` (A-12 slice 6, `design/traits.md (kelp wiki)` 11).
 
    `From<T>` is the conversion `?` calls when an operand's failure payload type
    differs from the enclosing function's: `impl From<IoErr> for AppErr { fun

@@ -33,7 +33,7 @@ for `Bytes`, `String`, `List`, `Map`, `Box`. No `unsafe` in safe code, no except
 | --- | --- |
 | `kelpc/` | The compiler, `kelpc`, in Rust: lexer, preprocessor, parser, `infer.rs`, `borrowck.rs`, the backends, `driver.rs`. `kelpc/std/` ships inside the binary. |
 | `kelpc/tests/` | The fixture suite and the other test targets. |
-| `plan/` | Unfinished plans and the project's working records: `CHANGELOG.pending.md` and the plans still in progress. The language and design docs, and the open issues, live in the kelp wiki. |
+| `plan/` | Removed on 2026-10-16. Plans are Gitea issues labelled `plan`. The design records and the pending changelog are in the kelp wiki (`design/*`, `changelog-pending`). |
 
 Related projects live in their own repositories: the wiki, the `fpl` library
 collection, `coral` (build tool and package manager) and `lighthouse` (editor
@@ -44,12 +44,12 @@ tooling).
 - The kelp wiki is the language and design authority: `language/*.md` for the
   language, `compiler/*.md` for the compiler, `meta/roadmap.md` for the open
   items, the marks and the backlog, and `meta/milestones.md` for the shipped
-  record. `plan/syntax.md` and `plan/architecture.md` stay in `plan/` until
-  their rules are checked against the wiki, and they are not the authority
-  for anything the wiki already states.
+  record. The full design records (`design/syntax`, `design/architecture` and
+  the rest) are kept in the wiki's Design records section, and they are not the
+  authority for anything the wiki's language chapter already states.
 - The open issues list is the kelp wiki's `meta/open-issues` page. It is not a plan and does not outrank
   the wiki.
-- A README claim is not authority over the wiki or `plan/`.
+- A README claim is not authority over the wiki.
 
 ## Build and test
 
@@ -117,7 +117,7 @@ lands.
 
 ## Changelog and commits
 
-- Every user-visible change gets one line in `plan/CHANGELOG.pending.md`, however
+- Every user-visible change gets one line in the wiki's `changelog-pending` page, however
   small the change.
 - Commit with the owner's configured git identity. One sentence in the message,
   no trailers, staged by path.
@@ -138,7 +138,7 @@ spelling pads the month back. Never renumber a released version.
 
 ## Changelogs
 
-- **Pending**: `plan/CHANGELOG.pending.md`, tracked and always editable. Append a
+- **Pending**: the wiki's `changelog-pending` page (kelp wiki, `unreleased` branch), always editable. Append a
   short factual line in the same change that makes the user-visible difference.
 - **Published**: the wiki's changelog page, written at release only, from the
   pending file plus the tag's commits and release notes. Then wipe the pending file

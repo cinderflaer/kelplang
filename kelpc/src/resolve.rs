@@ -1454,7 +1454,7 @@ fn interface_api_hash(module: &str, text: &str) -> String {
         }
     }
     // A dependency's body can reach an importer's checked result through four
-    // routes the signature text does not show (`plan/front-end-incremental.md`,
+    // routes the signature text does not show (`kelp issue #244`,
     // design pass): generic templates, passdown modes, folded constants and the
     // drop set. The scan keeps no bodies, so a module that declares or touches
     // any of them contributes its whole text. That is conservative: it can only

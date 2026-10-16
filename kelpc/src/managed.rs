@@ -185,7 +185,7 @@ fn classify(ty: &Ty, walk: &mut Walk<'_>) -> ResourceKind {
         | Ty::Isize => Memory,
         // GC byte buffers and the length-carrying text view. A `View` is an
         // interior pointer, and it is refused as a field, element and key by the
-        // language itself (`plan/syntax.md` 11.5), not by this classifier.
+        // language itself (`design/syntax.md (kelp wiki)` 11.5), not by this classifier.
         Ty::Bytes | Ty::String | Ty::View => Memory,
         // A user or stdlib declaration. A golden name answers at once; any other
         // name is read from its declaration.

@@ -147,7 +147,7 @@ there. `severity` is `error`, `warning` or `outdated`. The front end stops at th
 first error, so `diagnostics` carries one error plus whatever findings came
 before it.
 
-`kelpc fmt` formats `.kp` source to the style rules in `plan/syntax.md` §19:
+`kelpc fmt` formats `.kp` source to the style rules in the syntax record (kelp wiki `design/syntax`, section 19):
 `kelpc fmt FILE` writes to stdout, `-w` rewrites in place, and `--check` exits
 nonzero when a file is not already formatted, which is what a CI job wants. It is
 idempotent, token-faithful and comment-preserving, a formatted file lexes to the
@@ -167,7 +167,6 @@ directory is not followed.
 | `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, the formatter corpus, and the corpus goldens |
 | `examples/` | `hello.kp`, `fib.kp`, `download.kp` |
 | `bench/speed/` | four workloads written in four languages, with checksums |
-| `plan/` | unfinished plans, the open-issue list and the pending changelog (see Documentation) |
 
 ## Requirements
 
@@ -216,8 +215,9 @@ the compiler; these two are the tooling around it.
 
 | file | what it is |
 | --- | --- |
-| `plan/syntax.md` | the syntax and style authority |
-| `plan/architecture.md` | the design: compiler layout, the capability model, the v1 surface, and the standard library's decisions |
+| `design/syntax` (kelp wiki) | the syntax and style authority (full record) |
+| `design/architecture` (kelp wiki) | the design: compiler layout, the capability model, the v1 surface, and the standard library's decisions |
+| plans | Gitea issues labelled `plan` |
 | `meta/roadmap.md` (kelp wiki) | the plan: the marks, the open items, and the backlog in its last part |
 | `meta/milestones.md` (kelp wiki) | the milestone record of what has shipped, including the whole MK7 LLVM backend record |
 | `bench/speed/README.md` | what the benchmark measures and how |

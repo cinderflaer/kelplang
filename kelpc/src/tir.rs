@@ -77,7 +77,7 @@ pub struct Program {
 
 /// One `(Trait, Type)` vtable (A-12 slice 4): the static, read-only table a
 /// `&dyn Trait` value points at. `slots` is the trait's flattened method list
-/// (`plan/traits.md` 9.4): the supertraits' methods first, recursively in
+/// (`design/traits.md (kelp wiki)` 9.4): the supertraits' methods first, recursively in
 /// declaration order, then the trait's own methods in source order. Every
 /// vtable of one trait has the same slots in the same order, so a call site
 /// names a slot index and the backend reads it out of whichever vtable the
@@ -255,7 +255,7 @@ pub struct ClosureEnv {
 }
 
 /// The place a `for` walks, for the borrow checker's mutation refusal
-/// (`plan/syntax.md` 6.2): the path is the iterable as written (`xs`,
+/// (`design/syntax.md (kelp wiki)` 6.2): the path is the iterable as written (`xs`,
 /// `self.items`) and the span is that place on the `for` line.
 #[derive(Debug, Clone)]
 pub struct IteratedPlace {
@@ -303,7 +303,7 @@ pub enum Stmt {
         /// The place a `for` loop walks, when it walks one (`xs`, `self.items`):
         /// the canonical path a body mutation is compared against, and the
         /// `for` line's span a refusal names. `None` for a written `while` and
-        /// for a `for` over a temporary (`plan/syntax.md` 6.2).
+        /// for a `for` over a temporary (`design/syntax.md (kelp wiki)` 6.2).
         iterating: Option<IteratedPlace>,
     },
     Return {

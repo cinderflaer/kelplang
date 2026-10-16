@@ -186,7 +186,7 @@ pub enum Ty {
     ///
     /// `Copy` **iff the element is**: an array of scalars is a value you can
     /// copy, while an array of `String` owns those strings and moves, which
-    /// is the rule `plan/syntax.md` 3 states for the type.
+    /// is the rule `design/syntax.md (kelp wiki)` 3 states for the type.
     Array(Box<Ty>, u64),
     /// The value of one **const type parameter** at one instantiation (A-20):
     /// `Buf<16>`'s `16`, or `Flags<true>`'s `true`. `value` is the folded
@@ -226,7 +226,7 @@ pub enum Ty {
     /// the argument moved into it. Stage C1 gives it a drop (`kelp_thread_drop`)
     /// that detaches a worker nobody joined and leaks that record, because the
     /// record cannot be freed while the worker may still write through it; the
-    /// decision is recorded in `plan/mk9-memory-model.md` section 5.
+    /// decision is recorded in `kelp issue #245` section 5.
     ///
     /// A handle is accepted as a local, a `datac`/`enum` field and a parameter,
     /// and refused as a `List`/`Map`/`Box`/array element for the reason the
@@ -1536,7 +1536,7 @@ pub fn struct_tag(name: &str) -> String {
 /// The name a tuple type's derived record is keyed by: the tuple as it is
 /// written, element by element in position order (`(i32, i32)`).
 ///
-/// A tuple is a record with positional fields (`plan/syntax.md` 3), and v1's
+/// A tuple is a record with positional fields (`design/syntax.md (kelp wiki)` 3), and v1's
 /// record type is `Ty::Struct(<key>)`, the same shape A-2 gives a generic
 /// instantiation (`Pair<i32, String>`). The key is the written form rather
 /// than a mangled identifier because a written form cannot be a declared name:

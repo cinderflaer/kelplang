@@ -187,7 +187,7 @@ pub struct ExternTypeDecl {
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
     pub name: String,
-    /// `pub const ...` (A-13, `plan/syntax.md` 13.4). Every top-level item is
+    /// `pub const ...` (A-13, `design/syntax.md (kelp wiki)` 13.4). Every top-level item is
     /// private to its module unless this is written, which is what
     /// `infer.rs`'s visibility gate reads.
     pub is_pub: bool,
@@ -230,7 +230,7 @@ pub struct StaticDecl {
 }
 
 /// One `pd val name = expr` / `pd var name: T = expr` - a passdown
-/// (`plan/syntax.md` §9): a top-level binding a function can name without
+/// (`design/syntax.md (kelp wiki)` §9): a top-level binding a function can name without
 /// being passed it.
 #[derive(Debug, Clone)]
 pub struct PdDecl {
@@ -572,7 +572,7 @@ impl FnTypeParam {
 #[derive(Debug, Clone)]
 pub struct TypeExpr {
     pub name: String,
-    /// The element types of a tuple type, `(A, B)` (`plan/syntax.md` 3):
+    /// The element types of a tuple type, `(A, B)` (`design/syntax.md (kelp wiki)` 3):
     /// `Some`, with two or more entries, exactly when the type was written in
     /// parentheses with a comma. `name` is empty in that case, because a tuple
     /// type has no name of its own: it is its element list. `(T)` is not a
@@ -765,7 +765,7 @@ pub struct Block {
     pub span: Span,
 }
 
-/// One binding position of a destructuring `val`/`var` (`plan/syntax.md` 4):
+/// One binding position of a destructuring `val`/`var` (`design/syntax.md (kelp wiki)` 4):
 /// a name, `_` to ignore the position, or a nested tuple pattern.
 #[derive(Debug, Clone)]
 pub enum BindingPattern {
@@ -809,7 +809,7 @@ pub enum Stmt {
         span: Span,
     },
     /// `val (lo, hi) = min_max(xs)`: a binding that takes one tuple value
-    /// apart into its positions (`plan/syntax.md` 4). A statement of its own
+    /// apart into its positions (`design/syntax.md (kelp wiki)` 4). A statement of its own
     /// rather than a second `Let` shape, because it binds several names.
     LetTuple {
         pattern: BindingPattern,
@@ -825,7 +825,7 @@ pub enum Stmt {
         /// The place a `for` loop walks, when it walks one (`xs`, `self.items`).
         /// `infer.rs` copies its path and span into the typed loop so
         /// `borrowck.rs` can refuse a mutation of it while the body runs
-        /// (`plan/syntax.md` 6.2). `None` for a written `while` and for a `for`
+        /// (`design/syntax.md (kelp wiki)` 6.2). `None` for a written `while` and for a `for`
         /// over a temporary, which nothing names.
         iterating: Option<Expr>,
         span: Span,
@@ -866,7 +866,7 @@ pub enum Stmt {
     },
     /// `errdefer EXPR` (kernel stage 6): like `defer`, but the action runs only
     /// when the block is left by an error exit, a `return` or a `?` whose value
-    /// is the failure variant (`plan/syntax.md`, errdefer). `defer.rs` rewrites
+    /// is the failure variant (`design/syntax.md (kelp wiki)`, errdefer). `defer.rs` rewrites
     /// it away before name resolution, as it does `Defer`.
     Errdefer {
         expr: Expr,
@@ -1172,7 +1172,7 @@ pub enum Expr {
         span: Span,
     },
     /// `when expr { Variant(bind) -> value ... }` - pattern matching over an
-    /// `enum` scrutinee (A-1, `plan/syntax.md` §6.3). Distinct from the
+    /// `enum` scrutinee (A-1, `design/syntax.md (kelp wiki)` §6.3). Distinct from the
     /// boolean `when`, which has no scrutinee and is desugared by the parser
     /// (see `parser::parse_when`); this form is checked by `infer.rs`, which
     /// is the first pass that knows the scrutinee's type.
@@ -1181,7 +1181,7 @@ pub enum Expr {
         arms: Vec<WhenArm>,
         span: Span,
         /// `true` for the `when` a `let PATTERN = EXPR else { BLOCK }` statement
-        /// desugars to (`plan/syntax.md` 4.1): arm one is the pattern over the
+        /// desugars to (`design/syntax.md (kelp wiki)` 4.1): arm one is the pattern over the
         /// rest of the block, arm two is the `else` block. `infer.rs` checks
         /// the form under the let-else rules, so its refusals name the rule.
         let_else: bool,
@@ -1201,7 +1201,7 @@ pub enum Expr {
         len: Box<Expr>,
         span: Span,
     },
-    /// `(lo, hi)`: a tuple value, two or more elements (`plan/syntax.md` 3).
+    /// `(lo, hi)`: a tuple value, two or more elements (`design/syntax.md (kelp wiki)` 3).
     /// The one-element form is not a tuple: `(e)` is `e` in parentheses, and
     /// `()` is not an expression at all, so a tuple literal always has at
     /// least two elements and its type is the elements' own, in order.
