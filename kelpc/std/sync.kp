@@ -129,6 +129,22 @@ extern fun chan_id_raw() => u64
 /// Wakes every select waiting on channel `chan`.
 extern fun chan_wake_raw(chan: u64)
 
+/// Monotonic milliseconds, the clock `waiter_wait_raw` deadlines are read on.
+extern fun chan_now_ms_raw() => i64
+
+/// A new select waiter in the registry (kelp-rt `stdlib/sync.rs`). Freed by `waiter_free_raw`.
+extern fun waiter_new_raw() => u64
+
+/// Frees a waiter and removes every registration it holds.
+extern fun waiter_free_raw(waiter: u64)
+
+/// Registers a waiter on channel `chan`: a wake of that channel reaches it.
+extern fun waiter_watch_raw(waiter: u64, chan: u64)
+
+/// Waits until the waiter is woken (`true`) or the monotonic deadline passes (`false`).
+/// A negative deadline waits without a limit.
+extern fun waiter_wait_raw(waiter: u64, deadline_ms: i64) => bool
+
 /// Why `recv` has no value: every sender is gone and the queue is empty.
 enum RecvErr {
     /// Every sender is gone and the queue is empty.
@@ -483,6 +499,142 @@ fun Receiver<T>.poll() => option.Option<result.Result<T, RecvErr>> {
     self.end.nf.notify_all()
     chan_wake_raw(self.end.id)
     return r
+}
+
+/// One `select` wait: the registry waiter it blocks on, and its deadline when
+/// the select has a timeout arm. Dropping it frees the waiter, which removes
+/// every registration the select made.
+datac Select(
+    /// The registry handle this select waits on.
+    val waiter: u64,
+    /// The monotonic deadline in milliseconds, or -1 for no limit.
+    val deadline: i64
+)
+
+/// Counts one select receive case out of its channel's waiting receivers when
+/// the select ends. `live` is false for a send case, which counts for nothing.
+datac Interest(
+    /// False for a send case, which holds no place among the waiting receivers.
+    val live: bool,
+    /// The channel state, so the count can be taken back.
+    val meta: Mutex<ChanMeta>
+)
+
+/// One case of a `select`: the value a receive case took or found closed, or the
+/// value a send case carries until it is sent.
+datac Slot<T>(
+    /// The value: taken by a receive case, or staged for a send case.
+    val items: Mutex<List<T>>,
+    /// Set when a receive case found its channel closed and empty.
+    val closed: Mutex<bool>,
+    /// Counts this case as a waiting receiver until the select ends.
+    val interest: Interest
+)
+
+/// Starts a select. With `timed`, the wait ends `millis` milliseconds from now
+/// (a negative `millis` ends it at once).
+fun select_begin(timed: bool, millis: i64) => Select {
+    var deadline: i64 = -1
+    if timed {
+        var ms = millis
+        if ms < 0 {
+            ms = 0
+        }
+        deadline = chan_now_ms_raw() + ms
+    }
+    return Select(waiter = waiter_new_raw(), deadline = deadline)
+}
+
+/// Frees the select's waiter and every registration it holds.
+fun mut Select.drop() {
+    waiter_free_raw(self.waiter)
+}
+
+/// Blocks until a case may have changed, or the deadline passes. `false` only
+/// for a deadline; a select without one always waits for a wake.
+fun Select.wait() => bool {
+    return waiter_wait_raw(self.waiter, self.deadline)
+}
+
+/// Releases the receiving count a select receive case held.
+fun mut Interest.drop() {
+    if !live {
+        return
+    }
+    meta.lock { s -> s.waiting -= 1 }
+}
+
+/// Registers a receive case on `rx` with the select `sel`. The case counts as a
+/// waiting receiver for as long as its slot lives, so a rendezvous send can see it.
+fun recv_case<T>(rx: &Receiver<T>, sel: &Select) => Slot<T> {
+    waiter_watch_raw(sel.waiter, rx.end.id)
+    rx.end.meta.lock { s -> s.waiting += 1 }
+    chan_wake_raw(rx.end.id)
+    val items: Mutex<List<T>> = Mutex.new(List.empty())
+    val closed: Mutex<bool> = Mutex.new(false)
+    return Slot<T>(items = items, closed = closed, interest = Interest(live = true, meta = rx.end.meta.share()))
+}
+
+/// Registers a send case on `tx` with the select `sel`, staging `value` until the case
+/// is sent. A send case that is not chosen drops its value when the select ends.
+fun send_case<T>(tx: &Sender<T>, sel: &Select, value: move T) => Slot<T> {
+    waiter_watch_raw(sel.waiter, tx.end.id)
+    val items: Mutex<List<T>> = Mutex.new(List.of(value))
+    val closed: Mutex<bool> = Mutex.new(false)
+    return Slot<T>(items = items, closed = closed, interest = Interest(live = false, meta = tx.end.meta.share()))
+}
+
+/// The value a receive case took, or the value a send case carries before it is sent.
+fun Slot<T>.take() => T {
+    var mine = self.items.swap(List.empty())
+    return mine.remove(0)
+}
+
+/// Whether a receive case found its channel closed and empty.
+fun Slot<T>.is_closed() => bool {
+    return self.closed.lock { c -> c }
+}
+
+/// One look at a receive case: `true` when it is ready, with its value (or its
+/// closed mark) left in `slot`. Never waits.
+fun Receiver<T>.select_poll(slot: &Slot<T>) => bool {
+    when self.poll() {
+        Some(r) -> {
+            when r {
+                Ok(v) -> {
+                    var got: List<T> = List.empty()
+                    got.push(v)
+                    val old = slot.items.swap(got)
+                    return true
+                }
+                Err(_) -> {
+                    val old = slot.closed.swap(true)
+                    return true
+                }
+            }
+        }
+        None -> {}
+    }
+    return false
+}
+
+/// One look at a send case: `true` when the value was sent now, `false` while the
+/// send cannot finish without waiting. The value stays in `slot` when it is not sent.
+fun Sender<T>.select_send(slot: &Slot<T>) => bool {
+    var mine = slot.items.swap(List.empty())
+    val r = self.try_send(mine.remove(0))
+    return when r {
+        Ok(ticket) -> {
+            val taken = self.await_take(ticket)
+            true
+        }
+        Err(v) -> {
+            var back: List<T> = List.empty()
+            back.push(v)
+            val old = slot.items.swap(back)
+            false
+        }
+    }
 }
 
 /// The `Pick` for case `index` once its poll has answered.

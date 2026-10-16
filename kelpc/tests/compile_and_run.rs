@@ -10729,6 +10729,13 @@ fn a_select_takes_whichever_channel_is_ready() {
     assert_compiles_and_runs("tests/fixtures/chan_select.kp", "1\n5\n1\n6\n0\nclosed\n");
 }
 
+/// The select engine under the `select` form: a receive case finds nothing, a send case
+/// queues its value, the receive case takes it, and a timed wait ends at its deadline.
+#[test]
+fn a_select_engine_polls_sends_and_times_out() {
+    assert_compiles_and_runs("tests/fixtures/chan_select_engine.kp", "false\ntrue\ntrue\n7\ntimed out\n");
+}
+
 /// `select3` with nothing ready waits for the one channel that sends.
 #[test]
 fn a_select_with_no_ready_case_blocks_until_one_is() {

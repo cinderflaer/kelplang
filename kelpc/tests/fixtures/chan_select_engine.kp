@@ -1,0 +1,23 @@
+// The select engine under the `select` form, used directly: a receive case
+// finds nothing queued, a send case queues its value, and the receive case then
+// takes it. A timed wait on an empty channel ends at its deadline.
+impl "std/option"
+impl "std/result"
+impl "std/sync"
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(2)
+    val sel = sync.select_begin(false, 0)
+    val recv = sync.recv_case(&rx, &sel)
+    val send = sync.send_case(&tx, &sel, 7)
+    print(rx.select_poll(&recv))
+    print(tx.select_send(&send))
+    print(rx.select_poll(&recv))
+    print(recv.take())
+
+    val wait = sync.select_begin(true, 20)
+    val idle = sync.recv_case(&rx, &wait)
+    while wait.wait() {
+    }
+    print("timed out")
+}
