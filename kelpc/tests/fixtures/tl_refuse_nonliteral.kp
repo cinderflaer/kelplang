@@ -1,0 +1,10 @@
+// Issue 234: a `tl` starts every thread's copy from a literal, so a call is refused.
+tl var counter: i64 = seed()
+
+fun seed() => i64 {
+    7
+}
+
+fun main() {
+    print(counter)
+}

@@ -1,0 +1,7 @@
+// Issue 234: a `tl` holds a scalar in this release. A heap-owning value is refused
+// by name, because it needs per-thread root registration first.
+tl var name: String = "x"
+
+fun main() {
+    print(name)
+}

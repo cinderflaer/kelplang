@@ -580,6 +580,15 @@ impl Parser {
                     });
                 }
                 pds.push(self.parse_pd_decl()?);
+            } else if self.check(&TokenKind::Tl) {
+                if !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
+                    return Err(ParseError {
+                        help: None,
+                        message: "'tl' lines must come before any 'datac', 'enum', 'trait' or 'fun' (canonical order: impl, const/pd/tl, datac/enum/trait/fun)".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                pds.push(self.parse_tl_decl()?);
             } else if self.check(&TokenKind::Datac) {
                 let mut d = self.parse_datac_decl(is_pub, repr)?;
                 d.order = type_order;
@@ -787,6 +796,11 @@ impl Parser {
                 message: "a 'pd' cannot be 'pub': a passdown is module-scoped by design, so another module cannot reach it; a 'fun' that reads it can be exported instead".to_string(),
                 span: pub_span.to(self.peek().span),
             }),
+            TokenKind::Tl => Err(ParseError {
+                help: None,
+                message: "a 'tl' cannot be 'pub': thread-local storage is module-scoped, the same as a 'pd'; a 'fun' that reads it can be exported instead".to_string(),
+                span: pub_span.to(self.peek().span),
+            }),
             _ => Err(ParseError {
                 help: None,
                 message: format!(
@@ -855,9 +869,19 @@ impl Parser {
         })
     }
 
+    /// `tl val name = literal` / `tl var name = literal`: thread-local storage.
+    fn parse_tl_decl(&mut self) -> PResult<PdDecl> {
+        let start = self.expect(TokenKind::Tl, "'tl'")?.span;
+        self.parse_decl_after_keyword(start, true)
+    }
+
     /// `pd val name = expr` / `pd var name = expr` / `pd val name: T = expr`.
     fn parse_pd_decl(&mut self) -> PResult<PdDecl> {
         let start = self.expect(TokenKind::Pd, "'pd'")?.span;
+        self.parse_decl_after_keyword(start, false)
+    }
+
+    fn parse_decl_after_keyword(&mut self, start: Span, thread_local: bool) -> PResult<PdDecl> {
         let mutable = if self.check(&TokenKind::Var) {
             self.advance();
             true
@@ -878,6 +902,7 @@ impl Parser {
         Ok(PdDecl {
             name,
             mutable,
+            thread_local,
             ty,
             init,
             module: String::new(),

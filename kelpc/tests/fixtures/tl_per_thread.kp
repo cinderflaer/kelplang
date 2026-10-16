@@ -1,0 +1,41 @@
+// Tidepool step 2 (issue 234): thread-local storage. Each thread has its own
+// copy of a `tl`, starting from its literal, so the workers below count without
+// a lock and the main thread's copy never moves. Each worker returns its own
+// count; main keeps its copy at 5 throughout.
+impl "std/thread"
+impl "std/result"
+
+tl var scratch: i64 = 0
+
+fun work(n: i64) => i64 {
+    var i: i64 = 0
+    while i < n {
+        scratch = scratch + 1
+        i = i + 1
+    }
+    scratch
+}
+
+fun probe(n: i64) => i64 {
+    scratch
+}
+
+fun main() {
+    scratch = 5
+    val a = thread.spawn(work, 1000)
+    val b = thread.spawn(work, 1000)
+    val p = thread.spawn(probe, 0)
+    when thread.join(a) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    when thread.join(b) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    when thread.join(p) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    print(scratch)
+}

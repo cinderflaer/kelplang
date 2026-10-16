@@ -1,0 +1,22 @@
+// Issue 234: a worker's copy of a `tl` starts from its literal on first access,
+// and the main thread's copy is not the worker's. Main prints 3 (its own copy
+// from the literal), then sets 5; the worker reads 3 from its own copy.
+impl "std/thread"
+impl "std/result"
+
+tl var x: i64 = 3
+
+fun get(n: i64) => i64 {
+    x
+}
+
+fun main() {
+    print(get(0))
+    x = 5
+    print(x)
+    val h = thread.spawn(get, 0)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

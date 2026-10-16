@@ -993,6 +993,9 @@ struct PdInfo {
     /// "read-only inside a function" diagnostic, and to tell a write that
     /// can be given an exclusive borrow from one that can never be allowed.
     mutable: bool,
+    /// Whether it was declared `tl`: each thread has its own copy, so a borrow of
+    /// it never crosses to a worker (issue 234).
+    thread_local: bool,
     module: String,
     /// Global initialization order (position in the merged program), used to
     /// keep hidden-parameter order and the generated init function stable.
@@ -9865,12 +9868,16 @@ fn check_program_pass(
         )
         .map_err(|e| e.in_module(&pd.module))?;
         initialized.insert(pd.hidden.clone());
+        if decl.thread_local {
+            check_thread_local(decl, &pd.value_ty, &init)?;
+        }
         checked_pds.push(tir::Pd {
             name: pd.hidden.clone(),
             qualified: pd.qualified.clone(),
             value_ty: pd.value_ty.clone(),
             init,
             module: decl.module.clone(),
+            thread_local: decl.thread_local,
         });
     }
 
@@ -10390,6 +10397,7 @@ fn collect_pds(
             hidden: format!("pd#{}", decl.name),
             value_ty,
             mutable: decl.mutable,
+            thread_local: decl.thread_local,
             module: decl.module.clone(),
             index,
         });
@@ -10399,6 +10407,49 @@ fn collect_pds(
 
 /// Checks one `pd` initializer for real, with every passdown that is already
 /// initialized visible and nothing else.
+/// The checks a `tl` declaration must pass (issue 234). Its type is a scalar, so
+/// no heap or destructor value is ever a thread's own copy, and its initializer
+/// is a literal (optionally negated), so every thread's copy starts from a
+/// constant. A refusal names the declaration and the reason.
+fn check_thread_local(decl: &ast::PdDecl, ty: &Ty, init: &tir::Expr) -> std::result::Result<(), Diagnostic> {
+    let scalar = matches!(
+        ty,
+        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::F32 | Ty::F64 | Ty::Bool | Ty::Char | Ty::U8 | Ty::U16 | Ty::Usize | Ty::Isize
+    );
+    if !scalar {
+        return Err(Diagnostic::new(
+            format!(
+                "'tl {}' has type '{}', and thread-local storage takes a scalar in this release: a heap-owning or 'Drop' value needs per-thread root registration first (issue 234)",
+                decl.name,
+                ty.display()
+            ),
+            decl.span,
+            decl.module.clone(),
+        ));
+    }
+    fn is_literal(e: &tir::Expr) -> bool {
+        match &e.kind {
+            tir::ExprKind::IntLit(_)
+            | tir::ExprKind::FloatLit(_)
+            | tir::ExprKind::BoolLit(_)
+            | tir::ExprKind::CharLit(_) => true,
+            tir::ExprKind::Unary { op: crate::ast::UnOp::Neg, expr } => is_literal(expr),
+            _ => false,
+        }
+    }
+    if !is_literal(init) {
+        return Err(Diagnostic::new(
+            format!(
+                "the initializer of 'tl {}' is not a literal: each thread's copy starts from the literal, so it cannot call or read anything (issue 234)",
+                decl.name
+            ),
+            decl.init.span(),
+            decl.module.clone(),
+        ));
+    }
+    Ok(())
+}
+
 fn check_pd_initializer(
     init: &ast::Expr,
     pd: &PdInfo,
@@ -10561,7 +10612,11 @@ fn scan_all(
             continue;
         }
         let visible = pd_map(all, &f.module, None);
-        let used = scan_pd_uses(f, &visible, structs);
+        let mut used = scan_pd_uses(f, &visible, structs);
+        // A `tl` is never passed as a hidden argument: each thread reads its own
+        // copy through the global, so a function value can name a function that
+        // reads one (issue 234).
+        used.retain(|p| !p.thread_local);
         if !used.is_empty() {
             wired.insert(decl_keys[i].clone(), used);
         }
@@ -17731,7 +17786,9 @@ fn borrows_a_pd(expr: &ast::Expr, ctx: &Ctx) -> bool {
     let ast::Expr::Ref { expr: place, .. } = expr else {
         return false;
     };
-    matches!(place_root_ident(place), Some(name) if ctx.pds.contains_key(name) && ctx.lookup(name).is_none())
+    // A `tl` is a different copy in each thread, so a borrow of one names the
+    // spawning thread's copy and never crosses.
+    matches!(place_root_ident(place), Some(name) if ctx.pds.get(name).is_some_and(|p| !p.thread_local) && ctx.lookup(name).is_none())
 }
 
 /// The identifier a place expression is rooted at: `counter`, `counter.field`

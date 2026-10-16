@@ -3217,6 +3217,27 @@ impl<'a> Gen<'a> {
             .collect();
         for pd in &self.program.pds {
             let lty = llvm_type(ctx, &self.structs, &self.containers, &pd.value_ty)?;
+            if pd.thread_local {
+                // Thread-local storage (issue 234): each thread's copy starts at
+                // the literal, so the global carries it as its initializer and no
+                // startup code stores into it. An external declaration names no
+                // initializer.
+                let initial = self.tl_initial_value(pd)?;
+                let global = if self.defines_helpers() {
+                    let global = self.module.add_global(&symbol_name(&pd.name), lty);
+                    global.set_initializer(initial);
+                    if self.unit.is_none() {
+                        global.set_internal_linkage();
+                    }
+                    global
+                } else {
+                    self.module.add_external_global(&symbol_name(&pd.name), lty)
+                };
+                global.set_thread_local_initial_exec();
+                self.pd_globals
+                    .insert(pd.name.clone(), (global, pd.value_ty.clone()));
+                continue;
+            }
             // The passdown storage and the two generated functions that fill
             // and free it are the `_support` unit's in the incremental mode
             // (roadmap A-14 slice 1): `main` and a pd's own initializer read the
@@ -3246,6 +3267,35 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// The constant every thread's copy of a `tl` starts from (issue 234). The
+    /// frontend admits only a literal, optionally negated, and a scalar type.
+    fn tl_initial_value(&self, pd: &crate::tir::Pd) -> Result<Value<'a>, String> {
+        fn literal(e: &crate::tir::Expr) -> Option<(i128, f64, bool, Option<bool>)> {
+            use crate::tir::ExprKind as K;
+            match &e.kind {
+                K::IntLit(v) => Some((*v, 0.0, false, None)),
+                K::CharLit(c) => Some((*c as i128, 0.0, false, None)),
+                K::FloatLit(f) => Some((0, *f, true, None)),
+                K::BoolLit(b) => Some((i128::from(*b), 0.0, false, Some(*b))),
+                K::Unary { op: crate::ast::UnOp::Neg, expr } => {
+                    let (i, f, is_float, b) = literal(expr)?;
+                    Some((-i, -f, is_float, b))
+                }
+                _ => None,
+            }
+        }
+        let (int, real, is_float, boolean) = literal(&pd.init)
+            .ok_or_else(|| no_value(&format!("the literal initializer of 'tl {}'", pd.qualified)))?;
+        let lty = llvm_type(self.ctx, &self.structs, &self.containers, &pd.value_ty)?;
+        if is_float {
+            return Ok(self.ctx.const_real(lty, real));
+        }
+        if let Some(b) = boolean {
+            return Ok(self.ctx.const_int(lty, u64::from(b), false));
+        }
+        Ok(self.ctx.const_int(lty, int as u64, false))
+    }
+
     /// Fill the two generated functions declared by [`Gen::declare_pd_globals`]:
     /// `kelp_drop_pds` frees every owned passdown in declaration order, and
     /// `kelp_init_pds` registers it with `atexit` and then runs each
@@ -3265,7 +3315,7 @@ impl<'a> Gen<'a> {
             let entry = drop_fn.append_block("entry");
             self.builder.position_at_end(entry);
             for pd in &self.program.pds {
-                if !self.owns_memory(&pd.value_ty) {
+                if pd.thread_local || !self.owns_memory(&pd.value_ty) {
                     continue;
                 }
                 let (global, _) = *self
@@ -3300,7 +3350,7 @@ impl<'a> Gen<'a> {
         // allocation's failure branch continues in `alloc.ok`), so the next
         // passdown continues where the previous one stopped, not in `entry`.
         let mut current = entry;
-        for pd in &self.program.pds {
+        for pd in self.program.pds.iter().filter(|pd| !pd.thread_local) {
             let (global, _) = *self
                 .pd_globals
                 .get(&pd.name)
@@ -6233,11 +6283,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
     fn place_of(&mut self, e: &Expr) -> Result<Value<'a>, String> {
         match &e.kind {
             ExprKind::Ident(name) => {
+                // A `pd` with no hidden parameter here is its own global, so the
+                // global is the place itself, whatever the expression's type says
+                // (a `tl` read in a function is typed as a borrow of its storage).
                 let slot = match self.lookup(name) {
                     Some(slot) => slot,
-                    None => self
-                        .pd_place(name)
-                        .ok_or_else(|| no_value(&format!("the local '{name}'")))?,
+                    None => {
+                        return self
+                            .pd_place(name)
+                            .ok_or_else(|| no_value(&format!("the local '{name}'")));
+                    }
                 };
                 if is_borrow_ty(&e.ty) {
                     // The binding holds the borrow: its own value is the pointer.
@@ -6508,6 +6563,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // own (`main`, or another `pd`'s initializer). Its storage outlives
             // every frame, so it is never a move source and is never cleared.
             None => match self.pd_place(name) {
+                // A borrow-typed read of a `pd` with no hidden parameter (a `tl`
+                // read in a function) is the global's address; any other is its value.
+                Some(global) if is_borrow_ty(&e.ty) => return Ok(global),
                 Some(global) => return Ok(self.g.builder.build_load(lty, global, name)),
                 None => return Err(no_value(&format!("the local '{name}'"))),
             },

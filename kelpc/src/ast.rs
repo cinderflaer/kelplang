@@ -241,6 +241,9 @@ pub struct PdDecl {
     /// keyword was written (and is what a future top-level statement form
     /// would consult).
     pub mutable: bool,
+    /// `true` for `tl`: thread-local storage. Each thread has its own copy, and
+    /// `init` is a literal every copy starts from (issue 234).
+    pub thread_local: bool,
     /// The `: T`, if written; otherwise inferred from `init`.
     pub ty: Option<TypeExpr>,
     pub init: Expr,

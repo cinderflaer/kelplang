@@ -123,6 +123,9 @@ pub enum TokenKind {
     /// `pd val name = expr` / `pd var name = expr` - a passdown
     /// (`design/syntax.md (kelp wiki)` §9).
     Pd,
+    /// `tl val name = literal` / `tl var name = literal` - thread-local storage:
+    /// each thread has its own copy, initialized to the literal.
+    Tl,
     /// `impl "path/to/module"`: the import keyword (`design/syntax.md` (kelp wiki) §8),
     /// and `impl Trait for Type { ... }`: the trait-implementation form
     /// (A-12 slice 2). The parser tells them apart by the token that follows:
@@ -259,6 +262,7 @@ impl TokenKind {
             TokenKind::Datac => "'datac'",
             TokenKind::Enum => "'enum'",
             TokenKind::Pd => "'pd'",
+            TokenKind::Tl => "'tl'",
             TokenKind::Impl => "'impl'",
             TokenKind::Trait => "'trait'",
             TokenKind::As => "'as'",
@@ -1019,6 +1023,7 @@ impl<'a> Lexer<'a> {
                         "datac" => TokenKind::Datac,
                         "enum" => TokenKind::Enum,
                         "pd" => TokenKind::Pd,
+                        "tl" => TokenKind::Tl,
                         "impl" => TokenKind::Impl,
                         "trait" => TokenKind::Trait,
                         "as" => TokenKind::As,

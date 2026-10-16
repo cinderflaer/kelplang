@@ -10927,6 +10927,49 @@ fn a_user_drop_value_passed_to_a_worker_is_dropped_by_the_worker() {
     );
 }
 
+/// Tidepool step 2 (issue 234): each thread has its own copy of a `tl`, starting
+/// from its literal, so the workers count without a lock and main keeps its own.
+#[test]
+fn thread_local_copies_are_per_thread() {
+    assert_compiles_and_runs("tests/fixtures/tl_per_thread.kp", "1000\n1000\n0\n5\n");
+}
+
+/// Tidepool step 2 (issue 234): a worker's copy starts from the literal on first
+/// access, whatever the main thread has stored in its own copy.
+#[test]
+fn a_worker_reads_its_own_copy_from_the_literal() {
+    assert_compiles_and_runs("tests/fixtures/tl_lazy_init.kp", "3\n5\n3\n");
+}
+
+/// Tidepool step 2 (issue 234): eight workers increment their own copies 100000
+/// times each, with no lock; each join sees its own count.
+#[test]
+fn eight_workers_increment_their_own_copies_without_a_lock() {
+    assert_compiles_and_runs(
+        "tests/fixtures/tl_stress.kp",
+        &format!("{}7\n", "100000\n".repeat(8)),
+    );
+}
+
+/// Tidepool step 2 (issue 234): a borrow of a `tl` names the spawning thread's
+/// copy, so it is refused as a thread argument.
+#[test]
+fn a_borrow_of_a_thread_local_does_not_cross_to_a_worker() {
+    assert_rejected_with("tests/fixtures/tl_refuse_borrow.kp", "cannot send '&i64'");
+}
+
+/// Tidepool step 2 (issue 234): a heap-owning `tl` is refused by name.
+#[test]
+fn a_heap_owning_thread_local_is_refused_by_name() {
+    assert_rejected_with("tests/fixtures/tl_refuse_heap.kp", "takes a scalar in this release");
+}
+
+/// Tidepool step 2 (issue 234): a `tl` initializer that is not a literal is refused.
+#[test]
+fn a_thread_local_initializer_that_is_not_a_literal_is_refused() {
+    assert_rejected_with("tests/fixtures/tl_refuse_nonliteral.kp", "is not a literal");
+}
+
 /// `MISSING-r7Wqb`: a worker that returns `unit` can be spawned *and* joined.
 /// `thread.join` on a `Thread<unit>` builds `Result<unit, ThreadErr>`, whose
 /// `Ok` variant now lays out payload-less rather than refusing `unit`.

@@ -1,0 +1,18 @@
+// Issue 234: a borrow of a `tl` names the spawning thread's copy, so it never
+// crosses to a worker.
+impl "std/thread"
+impl "std/result"
+
+tl var scratch: i64 = 0
+
+fun read(p: &i64) => i64 {
+    0
+}
+
+fun main() {
+    val h = thread.spawn(read, &scratch)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

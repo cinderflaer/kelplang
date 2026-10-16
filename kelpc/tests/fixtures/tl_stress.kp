@@ -1,0 +1,61 @@
+// Issue 234: eight workers each increment their own copy of a `tl` 100000 times
+// with no lock. Each returns its own count, so every join prints 100000, and the
+// main thread's copy stays at 7.
+impl "std/thread"
+impl "std/result"
+
+tl var hits: i64 = 0
+
+fun work(n: i64) => i64 {
+    var i: i64 = 0
+    while i < n {
+        hits = hits + 1
+        i = i + 1
+    }
+    hits
+}
+
+fun main() {
+    hits = 7
+    val a = thread.spawn(work, 100000)
+    val b = thread.spawn(work, 100000)
+    val c = thread.spawn(work, 100000)
+    val d = thread.spawn(work, 100000)
+    val e = thread.spawn(work, 100000)
+    val f = thread.spawn(work, 100000)
+    val g = thread.spawn(work, 100000)
+    val h = thread.spawn(work, 100000)
+    when thread.join(a) {
+        Ok(v) -> print(v)
+        Err(err) -> print(err.message)
+    }
+    when thread.join(b) {
+        Ok(v) -> print(v)
+        Err(err) -> print(err.message)
+    }
+    when thread.join(c) {
+        Ok(v) -> print(v)
+        Err(err) -> print(err.message)
+    }
+    when thread.join(d) {
+        Ok(v) -> print(v)
+        Err(err) -> print(err.message)
+    }
+    when thread.join(e) {
+        Ok(v) -> print(v)
+        Err(err) -> print(err.message)
+    }
+    when thread.join(f) {
+        Ok(v) -> print(v)
+        Err(err) -> print(err.message)
+    }
+    when thread.join(g) {
+        Ok(v) -> print(v)
+        Err(err) -> print(err.message)
+    }
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(err) -> print(err.message)
+    }
+    print(hits)
+}

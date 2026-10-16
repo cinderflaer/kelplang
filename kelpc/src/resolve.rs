@@ -1477,7 +1477,7 @@ fn leaks_body(text: &str, scan: &crate::doc::Scan) -> bool {
     generic
         || text
             .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .any(|word| matches!(word, "const" | "static" | "pd" | "drop"))
+            .any(|word| matches!(word, "const" | "static" | "pd" | "tl" | "drop"))
 }
 
 struct Loader<'a> {
@@ -4071,6 +4071,7 @@ pub(crate) fn is_keyword(s: &str) -> bool {
             | "impl"
             | "as"
             | "pd"
+            | "tl"
             | "pub"
             | "alias"
             | "print"

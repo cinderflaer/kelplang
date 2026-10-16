@@ -200,6 +200,9 @@ pub struct Pd {
     /// only carrier of the module whose grant a gated call inside it is
     /// checked against, and of the module the denial names.
     pub module: String,
+    /// `true` for a `tl` (issue 234): every thread has its own copy, starting
+    /// from `init`, which is a literal, so no initializer runs at startup.
+    pub thread_local: bool,
 }
 
 #[derive(Debug, Clone)]
