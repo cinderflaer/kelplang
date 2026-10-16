@@ -432,6 +432,40 @@ pub unsafe extern "C" fn kelp_gc_unregister_root_region(h: u64) -> i32 {
     if threads::unregister_root(h) { KELP_GC_ROOT_OK } else { KELP_GC_ROOT_STALE }
 }
 
+/// Create a manual block (decision 139): one zeroed element of `d`, whose
+/// address is written to `out_base` and whose root handle to `out_handle`.
+/// Returns `block::BLOCK_OK`, or the status of the refusal with both outputs
+/// left untouched.
+///
+/// # Safety
+/// `d` must describe a live type, and both outputs must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_gc_block_alloc(d: *const KelpGcType, out_base: *mut *mut u8, out_handle: *mut u64) -> i32 {
+    match block::alloc(d) {
+        Ok((base, h)) => {
+            *out_base = base;
+            *out_handle = h;
+            block::BLOCK_OK
+        }
+        Err(status) => status,
+    }
+}
+
+/// Free the manual block whose root is `h` and whose element is at `base`
+/// (the release at the block's end). A null `base` is a block that was never
+/// created, so nothing is freed. Returns KELP_GC_ROOT_OK, or KELP_GC_ROOT_STALE
+/// when `h` is not a live root.
+///
+/// # Safety
+/// `base` and `d` must be the values `kelp_gc_block_alloc` wrote and was called with.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_gc_block_free(h: u64, base: *mut u8, d: *const KelpGcType) -> i32 {
+    if base.is_null() {
+        return KELP_GC_ROOT_OK;
+    }
+    if block::free(h, base, d) { KELP_GC_ROOT_OK } else { KELP_GC_ROOT_STALE }
+}
+
 /// Fill `out` with the collector's counters. The counts are read
 /// under the registry lock.
 #[unsafe(no_mangle)]

@@ -142,3 +142,4 @@ empty on release.
 - A hosted build refuses an enum stored inside a `datac`: the collector does not describe that layout yet, so such a program is a compile error.
 - A `Map` whose value is an enum is refused by the checker at the `Map` type, with a sentence that names the type and says to keep the values in a `List`; the hosted build's codegen does not describe an enum inside a map's entry yet, and a `datac` holding the enum is refused the same way.
 - A-11 (full borrow checking) is not finished.
+- Adds the collector's C entry points for a manual block (`kelp_gc_block_alloc`, `kelp_gc_block_free`), and a hosted program with a block region links the collector and releases each region's block when the region ends. No program can write a region yet: the checker still refuses the surface form.

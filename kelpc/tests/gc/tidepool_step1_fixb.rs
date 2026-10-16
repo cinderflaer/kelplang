@@ -540,6 +540,8 @@ fn t78_the_export_names_are_pinned() {
     let pinned: std::collections::BTreeSet<&str> = [
         "kelp_gc_alloc",
         "kelp_gc_alloc_array",
+        "kelp_gc_block_alloc",
+        "kelp_gc_block_free",
         "kelp_gc_collect",
         "kelp_gc_enter_native",
         "kelp_gc_init",
@@ -556,7 +558,7 @@ fn t78_the_export_names_are_pinned() {
     ]
     .into_iter()
     .collect();
-    assert_eq!(pinned.len(), 15);
+    assert_eq!(pinned.len(), 17);
     assert_eq!(exported, pinned, "the exported collector surface changed");
 }
 

@@ -314,6 +314,13 @@ pub struct FnDrops {
 }
 
 impl DropPlan {
+    /// Whether any function of the program declares a manual block region. A
+    /// program that does links the collector, because a region's element is a
+    /// collector block.
+    pub fn has_regions(&self) -> bool {
+        self.functions.values().any(|f| !f.regions.is_empty())
+    }
+
     /// The manual block region `expr` is, when it is one. `function` is the
     /// function whose body holds `expr`.
     pub fn region(&self, function: &str, expr: &tir::Expr) -> Option<&RegionDrop> {

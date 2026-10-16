@@ -386,6 +386,9 @@ pub fn compile(
     if managed.is_some() && incremental {
         return Err("a managed build is not split per unit yet: the collector's descriptors and init are whole-program".to_string());
     }
+    if drops.has_regions() && incremental {
+        return Err("a build with a block region is not split per unit yet: the block runtime is whole-program".to_string());
+    }
     if let Some(fs) = freestanding {
         llvm_ffi::initialize_target_for(&fs.triple)?;
     } else {
@@ -477,11 +480,29 @@ pub fn compile(
         .then_some(externs_path);
 
     let link_start = Instant::now();
+    // A hosted build with a block region links the collector archive the
+    // managed build links, so the block entry points resolve.
+    let block_archive = match managed {
+        None if drops.has_regions() => Some(crate::driver::managed_archive().map_err(|e| e.message)?),
+        _ => None,
+    };
     let linked = match managed {
         Some(m) => crate::driver::link_managed_object(
             &object_path,
             program_object.as_deref(),
             &m.gc_archive,
+            out_path,
+            opt,
+            link_libs,
+            library_dirs,
+            pkg_config_flags,
+            crate::extern_object::uses_tls(program),
+            obfuscate_names,
+        ),
+        None if block_archive.is_some() => crate::driver::link_managed_object(
+            &object_path,
+            program_object.as_deref(),
+            block_archive.as_ref().expect("the guard checked the archive"),
             out_path,
             opt,
             link_libs,
@@ -2283,6 +2304,10 @@ impl<'a> Gen<'a> {
         // A program that spawns a worker gets the generated frames (MK9 move
         // tracking, decision 125). A program without one emits none of them.
         let spawn_frames = !collect_instantiations(program).spawns.is_empty();
+        // A program with a manual block region links the collector (decision
+        // 139), so it gets the block entry points and the descriptors. Every
+        // other program is lowered exactly as before.
+        let blocks = drops.has_regions();
         let runtime = declare_runtime(
             ctx,
             module,
@@ -2291,6 +2316,7 @@ impl<'a> Gen<'a> {
             view_ty,
             managed.is_some(),
             spawn_frames,
+            blocks,
         );
         let panic = *runtime
             .get("kelp_panic")
@@ -2361,7 +2387,7 @@ impl<'a> Gen<'a> {
             unit,
             managed: managed.is_some(),
             managed_heap: managed,
-            gc: managed.map(|_| crate::gc_descr::GcTypes::declare(ctx, module)),
+            gc: (managed.is_some() || blocks).then(|| crate::gc_descr::GcTypes::declare(ctx, module)),
             resources: if managed.is_some() { crate::gc_descr::resource_types(program) } else { HashSet::new() },
         })
     }
@@ -4086,6 +4112,19 @@ struct FnGen<'g, 'a> {
     /// `emit_while` compares it before and after a `while true` body to know
     /// whether the loop has an exit edge at all.
     breaks_emitted: usize,
+    /// The manual block regions being emitted, innermost last (decision 139).
+    /// Each one's release runs when its body ends.
+    regions: Vec<RegionSlot<'a>>,
+}
+
+/// One manual block region being emitted: its name (for the names of its
+/// instructions), and the two slots that hold the block's element address and
+/// its root handle. The slots are null and zero until a `name.box()` fills them.
+#[derive(Clone)]
+struct RegionSlot<'a> {
+    name: String,
+    base: Value<'a>,
+    handle: Value<'a>,
 }
 
 impl<'g, 'a> FnGen<'g, 'a> {
@@ -4129,6 +4168,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             naked: f.naked,
             loops: Vec::new(),
             breaks_emitted: 0,
+            regions: Vec::new(),
         })
     }
 
@@ -4174,6 +4214,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             naked: false,
             loops: Vec::new(),
             breaks_emitted: 0,
+            regions: Vec::new(),
         })
     }
 
@@ -4274,6 +4315,11 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let headroom = self.g.ctx.const_int(self.g.ctx.i64(), limits.headroom_pct, false);
                 let rule = self.g.ctx.const_int(self.g.ctx.i64(), limits.trigger_rule, false);
                 self.g.builder.build_call(init, ity, &[min, max, low, high, headroom, rule], "");
+            }
+            // A program with block regions attaches its main thread to the
+            // collector before the first block is made (`block::alloc` needs
+            // the thread attached); the heap keeps the runtime's defaults.
+            if let Some(gc) = &self.g.gc {
                 let (attach, aty) = gc.thread_attach;
                 self.g.builder.build_call(attach, aty, &[], "");
             }
@@ -4687,6 +4733,47 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(())
     }
 
+    /// A manual block region (`block name: T { ... }`, decision 139). Its two
+    /// slots start null and zero, the body is emitted as a block whose value
+    /// is the region's value, and the region's release runs after the body,
+    /// before the value is used. A `name.box()` in the body (lowered with the
+    /// block's entry points) fills the slots.
+    fn emit_region(&mut self, name: &str, elem: &Ty, body: &Block) -> Result<Option<Value<'a>>, String> {
+        let ptr = self.g.ctx.opaque_ptr();
+        let i64 = self.g.ctx.i64();
+        let base = self.entry_alloca_raw(ptr, &format!("block.{name}.base"));
+        let handle = self.entry_alloca_raw(i64, &format!("block.{name}.handle"));
+        self.g.builder.build_store(self.g.ctx.const_null(ptr), base);
+        self.g.builder.build_store(self.g.ctx.const_int(i64, 0, false), handle);
+        self.regions.push(RegionSlot {
+            name: name.to_string(),
+            base,
+            handle,
+        });
+        let value = self.emit_block_value(body);
+        let slot = self.regions.pop().expect("the region was pushed above");
+        let value = value?;
+        if !self.terminated {
+            self.release_region(&slot, elem)?;
+        }
+        Ok(value)
+    }
+
+    /// Free the block of one region: `kelp_gc_block_free(handle, base, descr)`.
+    /// The runtime does nothing for a null `base`, so a region whose box never
+    /// ran costs one call and no free.
+    fn release_region(&mut self, slot: &RegionSlot<'a>, elem: &Ty) -> Result<(), String> {
+        let ptr = self.g.ctx.opaque_ptr();
+        let i64 = self.g.ctx.i64();
+        let gc = self.g.gc.as_ref().ok_or_else(|| no_value("the collector for a block region"))?;
+        let descr = gc.descriptor(self.g.ctx, self.g.module, self.g, elem)?;
+        let rt = self.g.rt("kelp_gc_block_free")?;
+        let base = self.g.builder.build_load(ptr, slot.base, &format!("free.{}.base", slot.name));
+        let h = self.g.builder.build_load(i64, slot.handle, &format!("free.{}.handle", slot.name));
+        self.g.call(rt.func, rt.ty, &[h, base, descr], "");
+        Ok(())
+    }
+
     fn drops_at_block_end(&self, block: &Block) -> Vec<DropTarget> {
         self.g.drops.at_block_end(&self.fn_name, block).to_vec()
     }
@@ -4880,7 +4967,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 else_block,
             } => self.emit_if(cond, then_block, else_block.as_ref(), &e.ty),
             ExprKind::Block(block) => self.emit_block_value(block),
-            ExprKind::Region { .. } => unreachable!("a block region is not lowered yet: no checked program holds one"),
+            ExprKind::Region { name, elem, body } => self.emit_region(name, elem, body),
             ExprKind::FieldAccess { base, field } => {
                 Ok(Some(self.emit_field_read(e, base, field, &e.ty)?))
             }
@@ -15993,6 +16080,7 @@ fn declare_runtime<'a>(
     view: Type<'a>,
     managed: bool,
     spawn_frames: bool,
+    blocks: bool,
 ) -> HashMap<String, RtFn<'a>> {
     let ptr = ctx.opaque_ptr();
     let i1 = ctx.i1();
@@ -16026,6 +16114,14 @@ fn declare_runtime<'a>(
             },
         );
     };
+    if blocks {
+        // The manual block runtime (decision 139): a block is made by
+        // `kelp_gc_block_alloc(descr, &base, &handle)`, which returns a status,
+        // and released by `kelp_gc_block_free(handle, base, descr)`, which
+        // does nothing for a null `base` (a block whose box never ran).
+        decl(&mut out, "kelp_gc_block_alloc", ctx.i32(), &[ptr, ptr, ptr], false, false);
+        decl(&mut out, "kelp_gc_block_free", ctx.i32(), &[i64, ptr, ptr], false, false);
+    }
     // The panic path and the assertion: `kelp_panic` never returns, but the
     // module still terminates the block it is called from with `unreachable`.
     decl(&mut out, "kelp_panic", void, &[ptr], false, false);
@@ -16814,6 +16910,129 @@ fn no_value(what: &str) -> String {
     format!("internal error: the llvm backend has no value for {what} (MK7 S1)")
 }
 
+/// The block release at the end of a region (decision 139, step 1): one free
+/// per region, the inner region's before the outer's, and both before the
+/// function returns. The IR is read as text; nothing is linked or run.
+#[cfg(test)]
+mod region_release_tests {
+    use super::*;
+    use crate::diag::SourceMap;
+    use crate::lexer::Span;
+    use crate::tir;
+    use crate::types::Ty;
+    use std::collections::{HashMap, HashSet};
+
+    fn span() -> Span {
+        Span { start: 0, end: 0 }
+    }
+
+    fn region(name: &str, tail: tir::Expr) -> tir::Expr {
+        tir::Expr {
+            kind: tir::ExprKind::Region {
+                name: name.to_string(),
+                elem: Ty::I32,
+                body: tir::Block {
+                    stmts: Vec::new(),
+                    tail: Some(Box::new(tail)),
+                },
+            },
+            ty: Ty::I32,
+            span: span(),
+        }
+    }
+
+    fn one_function(body: tir::Block) -> tir::Program {
+        tir::Program {
+            structs: Vec::new(),
+            enums: Vec::new(),
+            pds: Vec::new(),
+            functions: vec![tir::Function {
+                name: "pick".to_string(),
+                params: vec![("x".to_string(), Ty::I32)],
+                ret: Ty::I32,
+                body,
+                span: span(),
+                module: "main".to_string(),
+                extern_: false,
+                env: None,
+                naked: false,
+                align: None,
+                section: None,
+            }],
+            caps: Vec::new(),
+            gated: HashMap::new(),
+            declared_keys: HashSet::new(),
+            drop_types: HashSet::new(),
+            extern_ffi_symbols: HashMap::new(),
+            const_data: Vec::new(),
+            statics: Vec::new(),
+            dyn_vtables: Vec::new(),
+            dyn_traits: Vec::new(),
+        }
+    }
+
+    fn lower(program: &tir::Program) -> String {
+        let drops = crate::borrowck::check_program(program).expect("the program checks");
+        let sources = SourceMap::new();
+        let dir = std::env::temp_dir().join(format!("kelpc-region-release-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a temp directory");
+        let name = format!("main-{}", std::thread::current().name().unwrap_or("t").replace("::", "-"));
+        compile_ir(
+            program,
+            &drops,
+            &sources,
+            None,
+            &dir.join(format!("{name}.ll")),
+            &dir.join(format!("{name}.o")),
+        )
+        .expect("the program lowers")
+    }
+
+    /// `pick` returns `x` from `block outer: i32 { block inner: i32 { x } }`:
+    /// the inner free comes first, then the outer, then the `ret`.
+    #[test]
+    fn nested_regions_release_inner_first_before_the_return() {
+        let x = tir::Expr {
+            kind: tir::ExprKind::Ident("x".to_string()),
+            ty: Ty::I32,
+            span: span(),
+        };
+        let program = one_function(tir::Block {
+            stmts: Vec::new(),
+            tail: Some(Box::new(region("outer", region("inner", x)))),
+        });
+        let ir = lower(&program);
+        let inner = ir
+            .find("@kelp_gc_block_free(i64 %free.inner.handle")
+            .unwrap_or_else(|| panic!("the inner region is freed:\n{ir}"));
+        let outer = ir
+            .find("@kelp_gc_block_free(i64 %free.outer.handle")
+            .unwrap_or_else(|| panic!("the outer region is freed:\n{ir}"));
+        let ret = ir.rfind("ret i32").expect("main returns");
+        assert!(inner < outer, "the inner region is freed first:\n{ir}");
+        assert!(outer < ret, "both regions are freed before the return:\n{ir}");
+        assert_eq!(ir.matches("call i32 @kelp_gc_block_free(").count(), 2, "one free per region:\n{ir}");
+        assert!(ir.contains("declare i32 @kelp_gc_block_free("), "the entry point is declared:\n{ir}");
+    }
+
+    /// A program with no region declares neither block entry point, so its IR
+    /// is the one every program had before the block runtime.
+    #[test]
+    fn a_program_without_a_region_declares_no_block_entry_point() {
+        let x = tir::Expr {
+            kind: tir::ExprKind::Ident("x".to_string()),
+            ty: Ty::I32,
+            span: span(),
+        };
+        let program = one_function(tir::Block {
+            stmts: Vec::new(),
+            tail: Some(Box::new(x)),
+        });
+        let ir = lower(&program);
+        assert!(!ir.contains("kelp_gc_block_"), "no block entry point is named:\n{ir}");
+    }
+}
+
 #[cfg(test)]
 mod layout_tests {
     use crate::llvm_ffi::{Context, Module};
@@ -16879,7 +17098,7 @@ mod layout_tests {
         ctx.struct_set_body(string, &[ptr, ctx.i64(), ctx.i64()]);
         let view = ctx.struct_type("kelp_View");
         ctx.struct_set_body(view, &[ptr, ctx.i64()]);
-        declare_runtime(&ctx, &module, bytes, string, view, false, false);
+        declare_runtime(&ctx, &module, bytes, string, view, false, false, false);
         declare_cap_fns(&ctx, &module);
 
         // `declare_extern`'s half of the rule, with the two narrow shapes a
