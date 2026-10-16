@@ -1856,3 +1856,54 @@ fn a_block_past_heap_max_runs_a_clearing_then_fails() {
         kelp_gc_thread_detach();
     }
 }
+
+/// R12 (pool side): while live blocks hold the budget, the shared pool may not
+/// take a run past heap_max, even after a clearing. Once the blocks are freed,
+/// the same request is served.
+#[test]
+fn a_pool_run_past_heap_max_is_refused_while_blocks_hold_the_budget() {
+    static BIG: KelpGcType = KelpGcType {
+        id: 201,
+        size: 1 << 20,
+        align: 8,
+        flags: 0,
+        n_ptrs: 0,
+        ptr_off: core::ptr::null(),
+        tag_off: 0,
+        n_variants: 0,
+        variants: core::ptr::null(),
+    };
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        crate::threads::collect();
+        let mut held = Vec::new();
+        loop {
+            match crate::block::alloc(&BIG) {
+                Ok(b) => held.push(b),
+                Err(e) => {
+                    assert_eq!(e, crate::block::BLOCK_OVER_BUDGET);
+                    break;
+                }
+            }
+            assert!(held.len() <= 256, "more than heap_max of blocks was granted");
+        }
+        let request = 64usize << 20;
+        crate::state::lock_heap();
+        let refused = crate::heap::try_alloc(request);
+        crate::state::unlock_heap();
+        assert!(refused.is_none(), "a pool run past heap_max was granted");
+        for (p, h) in held {
+            assert!(crate::block::free(h, p, &BIG));
+        }
+        // The same request goes through the allocator, which writes the header
+        // the verifier reads. 64 elements of 1 MiB make the 64 MiB run.
+        let served = kelp_gc_alloc_array(&BIG, 64);
+        assert!(!served.is_null(), "the freed budget does not serve the same run");
+        // The object is unrooted garbage now; one clearing frees it.
+        crate::threads::collect();
+        kelp_gc_thread_detach();
+    }
+}
+
