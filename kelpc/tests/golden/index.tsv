@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1136 ran=570 c_refused=533 excluded=33
+# counts candidates=1137 ran=571 c_refused=533 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -1133,7 +1133,8 @@ fixture_thread_arg_closure_value	c-refused		error: 'closure() => i64' cannot be 
 fixture_block_box_escapes	c-refused		error: 'cell' is a block box, and it cannot leave its block: it may only be read through a field	
 fixture_block_box_not_bound_by_let	c-refused		error: a block box from 'request.box()?' must be bound by a 'let' in its block	
 fixture_block_box_outside_its_block	c-refused		error: 'a.box()' is valid only inside the block 'a'	
-fixture_block_checks_and_waits_for_the_lowering	c-refused		error: the block 'request' is not lowered yet (step 4 of issue 194)	
 fixture_block_element_not_scalar	c-refused		error: the block 'request' cannot hold 'String': its element must be a scalar or a datac of scalars	
 fixture_block_name_shadowed_by_let	c-refused		error: the block 'a' shares its name with a 'let' in this function	
 fixture_block_name_twice	c-refused		error: the block 'a' is already declared in this function	
+fixture_block_box_twice	c-refused		error: the block 'request' already has a box: a second 'request.box()' would need a second slot (slice 1)	
+fixture_block_region_runs	ran	exit 0		430a731065ee38ac0baf8347ba922b00a9d27f1190956f27f1e6e1bbe1cdf566

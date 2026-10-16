@@ -1,0 +1,91 @@
+// Manual memory blocks (decision 139, step 4): a checked block runs. Its value
+// is `Ok(value)`, and each exit that leaves the block (the end, a loop, a
+// `return`, a `?`) releases it. The `defer` runs at the function's end.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        Node(value = 5)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun looped() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        var i = 0
+        while i < 3 {
+            val cell = request.box()?
+            i = i + 1
+        }
+        Node(value = i)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun early() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        return result.Result.Ok<i32, BlockError>(value = 7)
+        Node(value = 1)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun fails() => result.Result<i32, BlockError> {
+    return result.Result.Err<i32, BlockError>(error = BlockError.Full)
+}
+
+fun propagated() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        val k = fails()?
+        Node(value = k)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+// A block box leaves its function with `?`, and a `?` skips a `defer`, so the
+// block lives in `inner` and the `defer` is in the function that calls it.
+fun inner() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        Node(value = 5)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun deferred() => result.Result<i32, BlockError> {
+    defer print(2)
+    val n = when inner() {
+        Ok(v) -> v
+        Err(_) -> 0
+    }
+    print(1)
+    return result.Result.Ok<i32, BlockError>(value = n)
+}
+
+fun main() {
+    when make() {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+    when looped() {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+    when early() {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+    when propagated() {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+    when deferred() {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+}

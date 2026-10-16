@@ -4635,8 +4635,15 @@ fn a_block_element_holds_scalar_fields_only() {
 }
 
 #[test]
-fn a_valid_block_checks_and_is_refused_only_by_the_lowering() {
-    assert_rejected_with("tests/fixtures/block_checks_and_waits_for_the_lowering.kp", "not lowered yet (step 4 of issue 194)");
+fn a_block_region_runs_and_releases_on_every_exit() {
+    // The end of a block, a loop, a `return`, a `?` that leaves the function,
+    // and a `defer` in the caller (decision 139, step 4).
+    assert_compiles_and_runs("tests/fixtures/block_region_runs.kp", "5\n3\n7\n0\n1\n2\n5\n");
+}
+
+#[test]
+fn a_block_holds_one_box() {
+    assert_rejected_with("tests/fixtures/block_box_twice.kp", "already has a box");
 }
 
 #[test]

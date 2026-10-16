@@ -1,0 +1,18 @@
+// Manual memory blocks (decision 139, slice 1): a block holds one element, so a
+// second `name.box()` in the same block is refused by name.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val first = request.box()?
+        val second = request.box()?
+        Node(value = 5)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun main() {
+    print(0)
+}

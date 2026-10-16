@@ -709,6 +709,9 @@ struct Ctx {
     box_let_ok: bool,
     /// Set by a field access for its base, read by the identifier check.
     field_base_ok: bool,
+    /// How many `name.box()` calls each block has in this function. A block
+    /// holds one element, so a second box is refused (slice 1).
+    block_box_count: HashMap<String, usize>,
     field_base_here: bool,
     sigs: HashMap<String, FnSig>,
     structs: HashMap<String, StructDef>,
@@ -10465,6 +10468,7 @@ fn base_ctx(
         box_let_ok: false,
         field_base_ok: false,
         field_base_here: false,
+        block_box_count: HashMap::new(),
         sigs: sigs.clone(),
         structs: structs.clone(),
         enums: enums.clone(),
@@ -14274,6 +14278,10 @@ fn enum_path(expr: &ast::Expr, ctx: &Ctx) -> Option<String> {
     if ctx.is_enum(&path) {
         return Some(path);
     }
+    // The built-in `BlockError` is named with no import (decision 139).
+    if path == "BlockError" {
+        return ctx.is_enum(&block_error_name()).then(block_error_name);
+    }
     let qualified = match path.split_once('.') {
         Some((alias, item)) => format!("{}{}", ctx.aliases.get(alias)?, item),
         None => ctx.qualify_own(&path),
@@ -14981,6 +14989,15 @@ fn check_block_box(bname: &str, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> 
             span,
         });
     };
+    let boxes = ctx.block_box_count.entry(bname.to_string()).or_insert(0);
+    *boxes += 1;
+    if *boxes > 1 {
+        return Err(TypeError {
+            help: Some("a block holds one element: make the second box in another block".to_string()),
+            message: format!("the block '{bname}' already has a box: a second '{bname}.box()' would need a second slot (slice 1)"),
+            span,
+        });
+    }
     let key = block_result_key(ctx, span)?;
     let ty = ctx.instantiate_type(&key, &[Ty::Box(Box::new(elem.clone())), block_error_ty()], span)?;
     Ok(tir::Expr {

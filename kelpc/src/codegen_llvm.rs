@@ -4799,6 +4799,105 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(self.g.builder.build_load(lty, slot, "exit.val"))
     }
 
+    /// The index of variant `variant` of the enum `name`, from the program's tables.
+    fn variant_index(&self, name: &str, variant: &str) -> Result<usize, String> {
+        self.g
+            .program
+            .enums
+            .iter()
+            .find(|e| e.name == name)
+            .and_then(|e| e.variants.iter().position(|v| v.name == variant))
+            .ok_or_else(|| no_value(&format!("the variant '{variant}' of '{name}'")))
+    }
+
+    /// Write the enum `name`'s variant `variant` with `values` as its payload into
+    /// `slot`, the way `emit_enum_lit` writes a literal (a fresh slot per value).
+    fn store_enum_into(&mut self, slot: Value<'a>, name: &str, variant: usize, values: &[Value<'a>]) -> Result<(), String> {
+        let info = self
+            .g
+            .enums
+            .get(name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{name}'")))?;
+        self.g.builder.build_store(self.g.ctx.const_null(info.llvm_ty), slot);
+        let tag_ptr = self.g.builder.build_struct_gep(info.llvm_ty, slot, ENUM_TAG_FIELD, "tag");
+        let tag = self.g.ctx.const_int(info.tag_ty, variant as u64, false);
+        self.g.builder.build_store(tag, tag_ptr);
+        if values.is_empty() {
+            return Ok(());
+        }
+        let union_ptr = self.g.builder.build_struct_gep(info.llvm_ty, slot, ENUM_UNION_FIELD, "kelp_v");
+        let payload_ty = info
+            .variants
+            .get(variant)
+            .ok_or_else(|| no_value(&format!("the variant {variant} of '{name}'")))?
+            .payload_ty;
+        for (index, value) in values.iter().enumerate() {
+            let field_ptr = self.g.builder.build_struct_gep(payload_ty, union_ptr, index as u32, "field");
+            self.g.builder.build_store(*value, field_ptr);
+        }
+        Ok(())
+    }
+
+    /// `name.box()` (decision 139): one zeroed element of `elem` in the region
+    /// `name`, as `Ok(box)`, or `Err(BlockError.Full)` when the collector refuses.
+    /// A box made again in the same region (a loop body) first frees the element
+    /// the last one made: its `let` is dead by then, and the region holds one.
+    fn emit_block_box(&mut self, name: &str, elem: &Ty, ty: &Ty) -> Result<Value<'a>, String> {
+        let Ty::Struct(rname) = ty else {
+            return Err(format!("the box of the block '{name}' has no Result type"));
+        };
+        let rname = rname.clone();
+        let slot = self
+            .regions
+            .iter()
+            .rev()
+            .find(|r| r.name == name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the block '{name}'")))?;
+        let ptr = self.g.ctx.opaque_ptr();
+        let i64 = self.g.ctx.i64();
+        let i32 = self.g.ctx.i32();
+        self.release_region(&slot)?;
+        self.g.builder.build_store(self.g.ctx.const_null(ptr), slot.base);
+        self.g.builder.build_store(self.g.ctx.const_int(i64, 0, false), slot.handle);
+        let gc = self.g.gc.as_ref().ok_or_else(|| no_value("the collector for a block box"))?;
+        let descr = gc.descriptor(self.g.ctx, self.g.module, self.g, elem)?;
+        let alloc = self.g.rt("kelp_gc_block_alloc")?;
+        let status = self.g.call(alloc.func, alloc.ty, &[descr, slot.base, slot.handle], "block.status");
+        let zero = self.g.ctx.const_int(i32, 0, false);
+        let made = self.g.builder.build_icmp(IntCmp::Eq, status, zero, "block.made");
+        let res_lty = self.lty(ty)?;
+        let res = self.temp_alloca(res_lty, "box.res");
+        let made_bb = self.cur_fn.append_block("box.made");
+        let full_bb = self.cur_fn.append_block("box.full");
+        let join = self.cur_fn.append_block("box.join");
+        self.g.builder.build_cond_br(made, made_bb, full_bb);
+
+        self.g.builder.position_at_end(made_bb);
+        self.cur = made_bb;
+        let base = self.g.builder.build_load(ptr, slot.base, "box.base");
+        let ok = self.variant_index(&rname, "Ok")?;
+        self.store_enum_into(res, &rname, ok, &[base])?;
+        self.g.builder.build_br(join);
+
+        self.g.builder.position_at_end(full_bb);
+        self.cur = full_bb;
+        let be_name = crate::infer::block_error_name();
+        let be_lty = self.lty(&Ty::Struct(be_name.clone()))?;
+        let be_slot = self.temp_alloca(be_lty, "block.error");
+        self.store_enum_into(be_slot, &be_name, 0, &[])?;
+        let be = self.g.builder.build_load(be_lty, be_slot, "block.full");
+        let err = self.variant_index(&rname, "Err")?;
+        self.store_enum_into(res, &rname, err, &[be])?;
+        self.g.builder.build_br(join);
+
+        self.g.builder.position_at_end(join);
+        self.cur = join;
+        self.terminated = false;
+        Ok(self.g.builder.build_load(res_lty, res, "box.val"))
+    }
+
     /// Free the block of one region: `kelp_gc_block_free(handle, base, descr)`.
     /// The runtime does nothing for a null `base`, so a region whose box never
     /// ran costs one call and no free.
@@ -4964,7 +5063,6 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     fn emit_expr(&mut self, e: &Expr) -> Result<Option<Value<'a>>, String> {
         match &e.kind {
-            ExprKind::BlockBox { name, .. } => Err(format!("the box of the block '{name}' is not lowered yet (step 4 of issue 194)")),
             ExprKind::IntLit(v) => Ok(Some(self.int_const(&e.ty, *v)?)),
             ExprKind::CharLit(v) => Ok(Some(self.int_const(&e.ty, *v as i128)?)),
             ExprKind::FloatLit(v) => Ok(Some(self.float_const(&e.ty, *v)?)),
@@ -5023,11 +5121,32 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // then a checked region is refused by name; a region typed as its
             // element (or as a statement) is lowered as it always was.
             ExprKind::Region { name, elem, body } => {
+                // A checked region is typed `Result<T, BlockError>`: its value is
+                // `Ok(value)`, because a block's failures come from `name.box()`.
                 if e.ty != *elem && e.ty != Ty::Unit {
-                    return Err(format!("the block '{name}' is not lowered yet (step 4 of issue 194)"));
+                    let Ty::Struct(rname) = &e.ty else {
+                        return Err(format!("the block '{name}' has no Result type"));
+                    };
+                    let rname = rname.clone();
+                    let lty = self.lty(&e.ty)?;
+                    let res = self.temp_alloca(lty, "region.res");
+                    let Some(value) = self.emit_region(name, elem, body)? else {
+                        // The body returned, broke or failed: the code after the
+                        // region is unreachable, so it goes into a block of its
+                        // own, with a zero value standing in for the result.
+                        let dead = self.cur_fn.append_block("region.dead");
+                        self.g.builder.position_at_end(dead);
+                        self.cur = dead;
+                        self.terminated = false;
+                        return self.zero_const(&e.ty).map(Some);
+                    };
+                    let ok = self.variant_index(&rname, "Ok")?;
+                    self.store_enum_into(res, &rname, ok, &[value])?;
+                    return Ok(Some(self.g.builder.build_load(lty, res, "region.ok")));
                 }
                 self.emit_region(name, elem, body)
             }
+            ExprKind::BlockBox { name, elem } => self.emit_block_box(name, elem, &e.ty).map(Some),
             ExprKind::FieldAccess { base, field } => {
                 Ok(Some(self.emit_field_read(e, base, field, &e.ty)?))
             }

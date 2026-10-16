@@ -131,6 +131,11 @@ use crate::lexer::Span;
 use crate::tir;
 use crate::types::{EnumDef, Ty};
 
+/// Whether `init` is `name.box()?`: a block box, which its region owns.
+fn is_block_box_init(init: &tir::Expr) -> bool {
+    matches!(&init.kind, tir::ExprKind::Try { expr, .. } if matches!(expr.kind, tir::ExprKind::BlockBox { .. }))
+}
+
 /// One owned local (or, for `at_assign`, one owned *place*) that has to be
 /// freed at a particular point.
 #[derive(Debug, Clone)]
@@ -2405,7 +2410,9 @@ fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx)
             } else if ctx.scopes.len() == mark {
                 ctx.release_borrows_since(at);
             }
-            if crate::types::needs_drop(ty, &ctx.owned_structs) {
+            // A block box (`let x = name.box()?`) is owned by its region, which
+            // releases the element, so the binding is not freed on its own.
+            if crate::types::needs_drop(ty, &ctx.owned_structs) && !is_block_box_init(init) {
                 ctx.define_owned(BindingId::Local(stmt_id(stmt)), name, ty);
             }
             Ok(())
