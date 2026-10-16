@@ -4115,6 +4115,9 @@ struct FnGen<'g, 'a> {
     /// The manual block regions being emitted, innermost last (decision 139).
     /// Each one's release runs when its body ends.
     regions: Vec<RegionSlot<'a>>,
+    /// The `regions` depth at each loop being emitted, parallel to `loops`: a
+    /// `break` or `continue` releases the regions opened inside its loop.
+    loop_regions: Vec<usize>,
 }
 
 /// One manual block region being emitted: its name (for the names of its
@@ -4123,6 +4126,7 @@ struct FnGen<'g, 'a> {
 #[derive(Clone)]
 struct RegionSlot<'a> {
     name: String,
+    elem: Ty,
     base: Value<'a>,
     handle: Value<'a>,
 }
@@ -4169,6 +4173,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             loops: Vec::new(),
             breaks_emitted: 0,
             regions: Vec::new(),
+            loop_regions: Vec::new(),
         })
     }
 
@@ -4215,6 +4220,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             loops: Vec::new(),
             breaks_emitted: 0,
             regions: Vec::new(),
+            loop_regions: Vec::new(),
         })
     }
 
@@ -4676,14 +4682,15 @@ impl<'g, 'a> FnGen<'g, 'a> {
                         if e.ty == Ty::Unit {
                             self.emit_expr(e)?;
                             if !self.terminated {
+                                self.release_regions_from(0)?;
                                 self.emit_drops(&drops)?;
                                 self.emit_fallthrough_return()?;
                             }
                         } else {
-                            let v = if drops.is_empty() {
+                            let v = if drops.is_empty() && self.regions.is_empty() {
                                 self.value_of(e)?
                             } else {
-                                self.value_of_then_drops(e, &drops)?
+                                self.value_of_then_exit(e, &drops, 0)?
                             };
                             if !self.terminated {
                                 self.leave_frame()?;
@@ -4692,6 +4699,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                         }
                     }
                     None => {
+                        self.release_regions_from(0)?;
                         self.emit_drops(&drops)?;
                         self.emit_fallthrough_return()?;
                     }
@@ -4703,6 +4711,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // stops the rest of the block, exactly as a `return` does.
             Stmt::Break { span } => {
                 let drops = self.drops_at_break(*span);
+                let from = self.loop_region_depth()?;
+                self.release_regions_from(from)?;
                 self.emit_drops(&drops)?;
                 self.breaks_emitted += 1;
                 if !self.terminated {
@@ -4716,6 +4726,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
             Stmt::Continue { span } => {
                 let drops = self.drops_at_continue(*span);
+                let from = self.loop_region_depth()?;
+                self.release_regions_from(from)?;
                 self.emit_drops(&drops)?;
                 if !self.terminated {
                     let (header, _) = *self
@@ -4747,6 +4759,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g.builder.build_store(self.g.ctx.const_int(i64, 0, false), handle);
         self.regions.push(RegionSlot {
             name: name.to_string(),
+            elem: elem.clone(),
             base,
             handle,
         });
@@ -4754,24 +4767,58 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let slot = self.regions.pop().expect("the region was pushed above");
         let value = value?;
         if !self.terminated {
-            self.release_region(&slot, elem)?;
+            self.release_region(&slot)?;
         }
         Ok(value)
+    }
+
+    /// Release the regions opened at or after depth `from`, innermost first, on
+    /// the way out of a `return`, `break`, `continue` or `?`.
+    fn release_regions_from(&mut self, from: usize) -> Result<(), String> {
+        let slots: Vec<RegionSlot<'a>> = self.regions[from..].iter().rev().cloned().collect();
+        for slot in &slots {
+            self.release_region(slot)?;
+        }
+        Ok(())
+    }
+
+    /// Evaluate `e`, store it, release the regions from depth `from`, then run
+    /// `drops`: the exit-path form of `value_of_then_drops`. Regions go first,
+    /// because a region's element never refers to an owned local.
+    fn value_of_then_exit(&mut self, e: &Expr, drops: &[DropTarget], from: usize) -> Result<Value<'a>, String> {
+        let value = self.value_of(e)?;
+        if self.terminated {
+            return Ok(value);
+        }
+        let lty = self.lty(&e.ty)?;
+        let slot = self.temp_alloca(lty, "exit.tmp");
+        self.g.builder.build_store(value, slot);
+        self.release_regions_from(from)?;
+        self.emit_drops(drops)?;
+        Ok(self.g.builder.build_load(lty, slot, "exit.val"))
     }
 
     /// Free the block of one region: `kelp_gc_block_free(handle, base, descr)`.
     /// The runtime does nothing for a null `base`, so a region whose box never
     /// ran costs one call and no free.
-    fn release_region(&mut self, slot: &RegionSlot<'a>, elem: &Ty) -> Result<(), String> {
+    fn release_region(&mut self, slot: &RegionSlot<'a>) -> Result<(), String> {
         let ptr = self.g.ctx.opaque_ptr();
         let i64 = self.g.ctx.i64();
         let gc = self.g.gc.as_ref().ok_or_else(|| no_value("the collector for a block region"))?;
-        let descr = gc.descriptor(self.g.ctx, self.g.module, self.g, elem)?;
+        let descr = gc.descriptor(self.g.ctx, self.g.module, self.g, &slot.elem)?;
         let rt = self.g.rt("kelp_gc_block_free")?;
         let base = self.g.builder.build_load(ptr, slot.base, &format!("free.{}.base", slot.name));
         let h = self.g.builder.build_load(i64, slot.handle, &format!("free.{}.handle", slot.name));
         self.g.call(rt.func, rt.ty, &[h, base, descr], "");
         Ok(())
+    }
+
+    /// The region depth of the innermost loop being emitted.
+    fn loop_region_depth(&self) -> Result<usize, String> {
+        self.loop_regions
+            .last()
+            .copied()
+            .ok_or_else(|| "a 'break' or 'continue' outside a loop".to_string())
     }
 
     fn drops_at_block_end(&self, block: &Block) -> Vec<DropTarget> {
@@ -4880,8 +4927,10 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // A `continue` branches to the condition and a `break` to the exit;
         // both run their loop's own drops first (see `emit_stmt`).
         self.loops.push((header, exit_bb));
+        self.loop_regions.push(self.regions.len());
         let breaks_before = self.breaks_emitted;
         let body = self.emit_block_value(body);
+        self.loop_regions.pop();
         self.loops.pop();
         body?;
         if !self.terminated {
@@ -5928,6 +5977,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             self.g.builder.build_store(stored, dst_field);
         }
         let drops = self.drops_at_try(span);
+        self.release_regions_from(0)?;
         self.emit_drops(&drops)?;
         let ret = self.g.builder.build_load(dst_ty, dst_slot, "try.ret");
         self.leave_frame()?;
@@ -17030,6 +17080,99 @@ mod region_release_tests {
         });
         let ir = lower(&program);
         assert!(!ir.contains("kelp_gc_block_"), "no block entry point is named:\n{ir}");
+    }
+
+    fn int(value: i128) -> tir::Expr {
+        tir::Expr {
+            kind: tir::ExprKind::IntLit(value),
+            ty: Ty::I32,
+            span: span(),
+        }
+    }
+
+    /// `return` inside a region releases it before the `ret`, and the region's
+    /// own end does not release it a second time (the body diverged).
+    #[test]
+    fn a_return_inside_a_region_releases_it_before_the_return() {
+        let ret = tir::Stmt::Return {
+            value: Some(int(7)),
+            span: span(),
+        };
+        let inner = tir::Expr {
+            kind: tir::ExprKind::Region {
+                name: "arena".to_string(),
+                elem: Ty::I32,
+                body: tir::Block {
+                    stmts: vec![ret],
+                    tail: None,
+                },
+            },
+            ty: Ty::Unit,
+            span: span(),
+        };
+        let program = one_function(tir::Block {
+            stmts: vec![tir::Stmt::Expr(inner)],
+            tail: None,
+        });
+        let ir = lower(&program);
+        assert_eq!(ir.matches("call i32 @kelp_gc_block_free(").count(), 1, "one release:\n{ir}");
+        let free = ir.find("call i32 @kelp_gc_block_free(").expect("the release");
+        let ret = ir.rfind("ret i32").expect("the return");
+        assert!(free < ret, "the release comes before the return:\n{ir}");
+    }
+
+    /// `break` inside a region inside a loop releases the region on the way out
+    /// of the loop, and the region that encloses the loop is released after it.
+    #[test]
+    fn a_break_releases_only_the_regions_inside_its_loop() {
+        let brk = tir::Stmt::Break { span: span() };
+        let inner = tir::Expr {
+            kind: tir::ExprKind::Region {
+                name: "inner".to_string(),
+                elem: Ty::I32,
+                body: tir::Block {
+                    stmts: vec![brk],
+                    tail: None,
+                },
+            },
+            ty: Ty::Unit,
+            span: span(),
+        };
+        let looping = tir::Stmt::While {
+            cond: tir::Expr {
+                kind: tir::ExprKind::BoolLit(true),
+                ty: Ty::Bool,
+                span: span(),
+            },
+            body: tir::Block {
+                stmts: vec![tir::Stmt::Expr(inner)],
+                tail: None,
+            },
+            iterating: None,
+        };
+        let outer = tir::Expr {
+            kind: tir::ExprKind::Region {
+                name: "outer".to_string(),
+                elem: Ty::I32,
+                body: tir::Block {
+                    stmts: vec![looping],
+                    tail: Some(Box::new(int(3))),
+                },
+            },
+            ty: Ty::I32,
+            span: span(),
+        };
+        let program = one_function(tir::Block {
+            stmts: Vec::new(),
+            tail: Some(Box::new(outer)),
+        });
+        let ir = lower(&program);
+        let inner_free = ir.find("@kelp_gc_block_free(i64 %free.inner.handle").expect("the inner release");
+        let exit = ir.find("while.exit:").expect("the loop exit");
+        let outer_free = ir.find("@kelp_gc_block_free(i64 %free.outer.handle").expect("the outer release");
+        assert!(inner_free < exit, "the break releases the inner region on its way out:\n{ir}");
+        assert!(exit < outer_free, "the outer region is released after the loop:\n{ir}");
+        assert!(!ir[..exit].contains("%free.outer.handle"), "the loop does not release the outer region:\n{ir}");
     }
 }
 

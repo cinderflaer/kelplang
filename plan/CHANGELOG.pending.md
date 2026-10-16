@@ -145,3 +145,4 @@ empty on release.
 - Manual block regions are out of scope for this release; the design is held until its open questions are answered.
 - A-11 (full borrow checking) is not finished.
 - Adds the collector's C entry points for a manual block (`kelp_gc_block_alloc`, `kelp_gc_block_free`), and a hosted program with a block region links the collector and releases each region's block when the region ends. No program can write a region yet: the checker still refuses the surface form.
+- A `return`, `break`, `continue` or `?` inside a manual block region releases the region's block before it leaves the region, innermost first, so no exit path keeps a block alive.
