@@ -518,6 +518,10 @@ impl<'a> Cx<'a> {
                 let c = self.block(b);
                 keep(c, &e.ty)
             }
+            ExprKind::Region { body, .. } => {
+                let c = self.block(body);
+                keep(c, &e.ty)
+            }
             ExprKind::ClosureLit { captures, .. } => {
                 let id = self.site(e.span, SiteKind::Closure, "closure literal");
                 for cap in captures {

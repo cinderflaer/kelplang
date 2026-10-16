@@ -2529,6 +2529,7 @@ fn expr_mentions(expr: &tir::Expr, name: &str) -> bool {
                 || else_block.as_ref().map_or(false, |b| block_mentions(b, name))
         }
         tir::ExprKind::Block(b) => block_mentions(b, name),
+        tir::ExprKind::Region { body, .. } => block_mentions(body, name),
         tir::ExprKind::ClosureLit { captures, .. }
         | tir::ExprKind::ScopedClosureLit { captures, .. } => {
             captures.iter().any(|c| expr_mentions(c, name))
@@ -2682,6 +2683,7 @@ fn footprint_expr(
             }
         }
         tir::ExprKind::Block(b) => footprint_block(b, index, whole, paths),
+        tir::ExprKind::Region { body, .. } => footprint_block(body, index, whole, paths),
         tir::ExprKind::ClosureLit { captures, .. } | tir::ExprKind::ScopedClosureLit { captures, .. } => {
             for c in captures {
                 go(c);
@@ -3212,6 +3214,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             check_if(then_block, else_block, ctx)
         }
         tir::ExprKind::Block(b) => check_block(b, ctx),
+        tir::ExprKind::Region { body, .. } => check_block(body, ctx),
         tir::ExprKind::Ref { mutable, expr: inner } => {
             // A borrow reached generically here (not via a `val`/`var`
             // initializer, a call argument, or an assignment to a reference
@@ -3611,5 +3614,48 @@ fn capture_roots(roots: Vec<String>, key: &str, index: usize, ctx: &Ctx) -> Vec<
 fn release_call_borrows(taken: &[String], ctx: &mut Ctx) {
     for root in taken {
         ctx.end_borrow(root);
+    }
+}
+
+#[cfg(test)]
+mod region_walk_tests {
+    use super::*;
+    use crate::types::Ty;
+
+    fn span() -> Span {
+        Span { start: 0, end: 0 }
+    }
+
+    fn ident(name: &str) -> tir::Expr {
+        tir::Expr {
+            kind: tir::ExprKind::Ident(name.to_string()),
+            ty: Ty::I32,
+            span: span(),
+        }
+    }
+
+    fn region(name: &str, tail: tir::Expr) -> tir::Expr {
+        tir::Expr {
+            kind: tir::ExprKind::Region {
+                name: name.to_string(),
+                elem: Ty::I32,
+                body: tir::Block {
+                    stmts: Vec::new(),
+                    tail: Some(Box::new(tail)),
+                },
+            },
+            ty: Ty::I32,
+            span: span(),
+        }
+    }
+
+    /// A region's body is part of the expression, so a name used inside it is
+    /// seen by the walkers the same way a plain block's name is (the arms
+    /// added with the `Region` node).
+    #[test]
+    fn a_name_used_inside_a_region_body_is_seen() {
+        let e = region("arena", ident("x"));
+        assert!(expr_mentions(&e, "x"));
+        assert!(!expr_mentions(&e, "y"));
     }
 }

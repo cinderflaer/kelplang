@@ -1071,6 +1071,7 @@ impl Checker<'_> {
                 }
             }
             ExprKind::Block(block) => self.block(block, module),
+            ExprKind::Region { .. } => unreachable!("a block region is not lowered yet: no checked program holds one"),
             ExprKind::ClosureLit { captures, .. } => {
                 for capture in captures {
                     self.expr(capture, module)?;

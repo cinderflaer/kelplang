@@ -34,6 +34,7 @@ empty on release.
 
 ## changed
 
+- The checked program has a node for a manual block region (`tir::ExprKind::Region`). No checked program holds one yet: the surface form is still refused, and the lowering comes later.
 - The collector's tests cover the shared pool's refusal of a run past `heap_max` while live blocks hold the budget (R12).
 - The collector's block runtime (not reachable from source yet) charges each block's chunk against `heap_max`, the shared pool refills only within what the live blocks leave, and a block creation past the budget runs one clearing before it fails.
 - The standard library, the examples and the tests no longer write `.as_str()` at call arguments whose parameter is `str` or `&str`, such as `str.concat(a, b)` or `out.push_str(...)`: the checker takes the same borrow implicitly. Sites that still need the explicit form (`String.from_str`, generic `Children` methods, trait methods, function-typed parameters and `Bytes` values) keep it.

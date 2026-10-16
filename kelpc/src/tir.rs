@@ -581,6 +581,17 @@ pub enum ExprKind {
     /// target's own assembler. The template's `{k}` placeholders are still the
     /// source spelling; each backend maps them to its own operand numbers.
     Asm(AsmBlock),
+    /// `block name: T { ... }` (manual memory blocks, decision 139): a named
+    /// region whose `name.box()` calls take elements of `elem` from the block.
+    /// No checked program holds this node yet: `infer.rs` still refuses the
+    /// surface form ("blocks are not built yet"), and the lowering that builds
+    /// it comes with the block runtime's codegen. The drop plan (`borrowck.rs`)
+    /// reads it, so the node exists before the lowering does.
+    Region {
+        name: String,
+        elem: Ty,
+        body: Block,
+    },
 }
 
 /// The checked form of one `asm(...)` expression (kernel stage 5).

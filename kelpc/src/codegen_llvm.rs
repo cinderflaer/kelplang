@@ -1483,6 +1483,7 @@ fn collect_expr_refs(expr: &Expr, from: &str, note: &mut impl FnMut(&str, &str))
             }
         }
         ExprKind::Block(block) => collect_block_refs(block, from, note),
+        ExprKind::Region { body, .. } => collect_block_refs(body, from, note),
         ExprKind::FnToClosure { func } => collect_expr_refs(func, from, note),
         ExprKind::IndirectCall { callee, args } => {
             collect_expr_refs(callee, from, note);
@@ -4879,6 +4880,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 else_block,
             } => self.emit_if(cond, then_block, else_block.as_ref(), &e.ty),
             ExprKind::Block(block) => self.emit_block_value(block),
+            ExprKind::Region { .. } => unreachable!("a block region is not lowered yet: no checked program holds one"),
             ExprKind::FieldAccess { base, field } => {
                 Ok(Some(self.emit_field_read(e, base, field, &e.ty)?))
             }
