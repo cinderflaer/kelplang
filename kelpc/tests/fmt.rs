@@ -35,7 +35,7 @@
 //!      be read at all and a symbolic link whose target cannot be read;
 //!      `unreadable-file`, `lex-error`, `syntax-error` and `unresolvable-alias`
 //!      are an unreadable or non-UTF-8 file, a source that does not lex, a
-//!      preprocessed source that does not parse, and a `%*name*%` reference that
+//!      preprocessed source that does not parse, and a `_name` reference that
 //!      neither the file's own declarations nor the project's alias table can
 //!      supply, declined with the alias named rather than formatted with a
 //!      placeholder for it.
@@ -668,7 +668,7 @@ impl Trees {
     ///
     /// A lone copy is not the same input: `kelpc fmt` asks the compiler's
     /// resolver for the project's alias table when the file's own declarations
-    /// cannot resolve a `%*name*%`, and a copy with no `util.kp` beside it is a
+    /// cannot resolve a `_name`, and a copy with no `util.kp` beside it is a
     /// file whose alias table really is incomplete, fmt refuses it, and that
     /// refusal says nothing about formatting. Copying the tree gives the copy
     /// the module graph the original has, so the assertions below stay
@@ -1005,8 +1005,8 @@ fn an_alias_file_with_a_syntax_error_is_refused_and_unchanged() {
     let dir = fresh_scratch("alias_syntax_error");
     let file = dir.join("alias_bad.kp");
     // The exact reproduction: the alias line is fine, `print("oops"` is not,
-    // and the raw stream cannot be parsed because `%*greeting*%` is an alias.
-    let src = "alias %*greeting*% = \"hi\"\n\nfun main() {\n    print(%*greeting*%)\n    print(\"oops\"\n}\n";
+    // and the raw stream cannot be parsed because `_greeting` is an alias.
+    let src = "alias _greeting = \"hi\"\n\nfun main() {\n    print(_greeting)\n    print(\"oops\"\n}\n";
     fs::write(&file, src).expect("writing the broken alias file");
 
     let out = fmt_write(&file);
@@ -1028,7 +1028,7 @@ fn an_alias_file_with_a_syntax_error_is_refused_and_unchanged() {
     // The same file with the error fixed formats, and keeps the alias line and
     // reference verbatim.
     let ok = dir.join("alias_ok.kp");
-    let fixed = "alias %*greeting*% = \"hi\"\n\nfun main() {\n   print(%*greeting*%)\n   print(\"oops\")\n}\n";
+    let fixed = "alias _greeting = \"hi\"\n\nfun main() {\n   print(_greeting)\n   print(\"oops\")\n}\n";
     fs::write(&ok, fixed).expect("writing the fixed alias file");
     let out = fmt_stdout(&ok);
     assert!(
@@ -1038,11 +1038,11 @@ fn an_alias_file_with_a_syntax_error_is_refused_and_unchanged() {
     );
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
-        text.contains("alias %*greeting*% = \"hi\""),
+        text.contains("alias _greeting = \"hi\""),
         "the alias declaration changed:\n{text}"
     );
     assert!(
-        text.contains("print(%*greeting*%)"),
+        text.contains("print(_greeting)"),
         "the alias reference stopped being atomic:\n{text}"
     );
 }
@@ -2116,38 +2116,31 @@ fn build_verdict(entry: &Path, out: &Path) -> (Option<i32>, String) {
     )
 }
 
-/// An undefined alias is a refusal, in the compiler's own words. `fmt` used to
-/// substitute a placeholder identifier for the reference and format the file
-/// `kelpc build` rejects: the gate checked the layout around the reference and
-/// never the reference itself. The alias table fmt can see is a file's own
-/// declarations, so an undefined name is knowable, and must be reported, not
-/// papered over.
+/// An undeclared `_name` is an ordinary identifier, so `fmt` formats it the way
+/// it formats any other unknown name; the type check in `kelpc build` is what
+/// refuses it, and `fmt` never runs that check.
 #[test]
-fn an_undefined_alias_is_refused_with_the_compilers_own_diagnostic() {
+fn an_undeclared_underscore_name_is_formatted_like_any_other_name() {
     let dir = fresh_scratch("undefined_alias");
     let file = dir.join("undefined.kp");
-    let src = "fun main() {\n    print(%*undefined*%)\n}\n";
+    let src = "fun main() {\n    print(_undefined)\n}\n";
     write_file(&file, src);
 
     let (code, build_stderr) = build_verdict(&file, &dir.join("undefined.out"));
-    assert_ne!(code, Some(0), "kelpc build accepted an undefined alias");
+    assert_ne!(code, Some(0), "kelpc build accepted an undefined name");
     assert!(
-        build_stderr.contains("unknown alias '%*undefined*%'"),
+        build_stderr.contains("_undefined"),
         "kelpc build's diagnostic changed:\n{build_stderr}"
     );
 
     for (mode, out) in three_modes(&file) {
         assert!(
-            !out.status.success(),
-            "kelpc fmt {mode} accepted an undefined alias"
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stderr),
-            build_stderr,
-            "kelpc fmt {mode} did not report what kelpc build reports"
+            out.status.success(),
+            "kelpc fmt {mode} refused an ordinary identifier: {}",
+            String::from_utf8_lossy(&out.stderr)
         );
     }
-    assert_eq!(fs::read_to_string(&file).unwrap(), src, "a refused file was rewritten");
+    assert_eq!(fs::read_to_string(&file).unwrap(), src);
     assert_eq!(entries(&dir), vec!["undefined.kp".to_string()]);
 }
 
@@ -2157,20 +2150,20 @@ fn an_undefined_alias_is_refused_with_the_compilers_own_diagnostic() {
 /// the resolver's own diagnostic. Without that, the file formatted cleanly and
 /// then failed to build.
 #[test]
-fn an_alias_from_another_module_that_expands_to_bad_syntax_is_refused() {
+fn an_alias_from_another_module_that_supplies_a_bad_module_path_is_refused() {
     let dir = fresh_scratch("cross_file_alias");
     let project = dir.join("proj");
     fs::create_dir_all(project.join("src")).expect("creating the scratch project");
     write_file(&project.join("coral.toml"), "name = \"proj\"\n");
-    write_file(&project.join("src/util.kp"), "alias %*bad*% = )))\n");
+    write_file(&project.join("src/util.kp"), "alias _bad = no/such/module\n");
     let main = project.join("src/main.kp");
-    let src = "impl \"util\"\n\nfun main() {\n   print(%*bad*%)\n}\n";
+    let src = "impl \"util\"\nimpl \"_bad\"\n\nfun main() {\n    print(1)\n}\n";
     write_file(&main, src);
 
     let (code, build_stderr) = build_verdict(&project, &dir.join("proj.out"));
     assert_ne!(code, Some(0), "kelpc build accepted a bad alias expansion");
     assert!(
-        build_stderr.contains("expected a newline or '}'"),
+        build_stderr.contains("cannot find module 'no/such/module'"),
         "kelpc build's diagnostic changed:\n{build_stderr}"
     );
 
@@ -2193,7 +2186,8 @@ fn an_alias_from_another_module_that_expands_to_bad_syntax_is_refused() {
 
     // The same project with a usable alias formats: the resolver is what makes
     // the difference, so this is not a blanket refusal of cross-file aliases.
-    write_file(&project.join("src/util.kp"), "alias %*bad*% = 41\n");
+    write_file(&project.join("src/util.kp"), "alias _bad = helper\n");
+    write_file(&project.join("src/helper.kp"), "fun helper() => i32 = 1\n");
     let out = fmt_write(&main);
     assert!(
         out.status.success(),
@@ -2202,12 +2196,12 @@ fn an_alias_from_another_module_that_expands_to_bad_syntax_is_refused() {
     );
     assert_eq!(
         fs::read_to_string(&main).unwrap(),
-        "impl \"util\"\n\nfun main() {\n    print(%*bad*%)\n}\n",
-        "the alias line or reference was not preserved"
+        "impl \"util\"\nimpl \"_bad\"\n\nfun main() {\n    print(1)\n}\n",
+        "the alias reference was not preserved"
     );
     assert_eq!(
         entries(&project.join("src")),
-        vec!["main.kp".to_string(), "util.kp".to_string()]
+        vec!["helper.kp".to_string(), "main.kp".to_string(), "util.kp".to_string()]
     );
 }
 

@@ -3,6 +3,7 @@ backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: unknown alias '%*nope*%'
+error: undefined variable '_nope'
   --> <root>/kelpc/tests/fixtures/alias_unknown.kp:3:11
+  help: declare it with val or var before this line, or check the spelling.
 run-status: not run

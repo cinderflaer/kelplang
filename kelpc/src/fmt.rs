@@ -4,7 +4,7 @@
 //! raw source with comments kept as tokens ([`Lexer::tokenize_with_trivia`])
 //! and re-emits every token's own source slice, changing only the whitespace
 //! *between* tokens and the indentation at the start of a line. No token's
-//! text is ever rewritten, so a literal's spelling, a `%*alias*%`'s macro
+//! text is ever rewritten, so a literal's spelling, a `_alias`'s macro
 //! text and a template's contents survive byte-for-byte by construction.
 //!
 //! Why not an AST printer: the information a formatter needs is information
@@ -74,7 +74,7 @@
 //! - **no-space-after-open-paren** - `(` and `[` attach to a token that ends an expression (`f(x)`, `a[i]`) and take a space after one that does not (`= (a + b)`), and nothing follows `(` `[` `.` or `::` with a space.
 //! - **prefix-operator-binds** - A prefix operator (`!`, `~`, and `-` `+` `*` `&` with nothing that ends an expression before them) binds to its operand with no space.
 //! - **space-suppression-never-relexes** - A space is dropped only where the two atoms re-lex to exactly their own tokens, so `& &` keeps its space instead of becoming `&&`.
-//! - **alias-declaration-and-reference-atomic** - An inline `alias %*n*% = …` declaration is one atom copied to the end of its line, and a `%*name*%` reference is one atom whose five tokens stay adjacent.
+//! - **alias-declaration-and-reference-atomic** - An inline `alias _n = …` declaration is one atom copied to the end of its line, and a `_name` reference is an ordinary identifier.
 //! - **template-run-atomic** - A string template run is one atom, copied verbatim, so its `StrChunk` text and the layout inside it are never re-spaced.
 //! - **angle-brackets-keep-author-spacing** - `<` `>` `<=` and `>=` keep the author's spacing, attached in `List<T>` and spaced in `a > b`, because a token-level formatter cannot tell a generic from a comparison.
 //! - **default-one-space-between-atoms** - Two atoms that share a line get one space between them unless another rule here removes it, so no pair outside these rules is ever run together.
@@ -87,7 +87,7 @@
 //! surrounding project is broken. Two checks stand behind that:
 //!
 //! - [`format`], this module's own gate, parses the file after expanding the
-//!   `alias %*n*% = ...` declarations *the file itself* holds. It decides every
+//!   `alias _n = ...` declarations *the file itself* holds. It decides every
 //!   file that declares what it uses, and its verdict is the only one many
 //!   files need.
 //! - the compiler's resolver, which `main.rs` puts to a file that gate refuses
@@ -142,7 +142,7 @@
 //! - **`unreadable-file`** - the bytes cannot be read, or are not UTF-8 text
 //! - **`lex-error`** - the source does not lex
 //! - **`syntax-error`** - the preprocessed source does not parse, by this module's own gate or by the resolver that `main.rs` consults after that gate refuses
-//! - **`unresolvable-alias`** - a `%*name*%` reference that neither the file's own declarations nor the project's alias table defines
+//! - **`unresolvable-alias`** - an alias that cannot be expanded: a duplicate or invalid definition, a cycle, or replacement text that does not lex
 //! - **`lone-carriage-return`** - a carriage return in the whitespace between tokens that is not part of a CRLF pair
 //! - **`token-fidelity-internal-error`** - the emitted text's significant tokens differ from the input's
 //! - **`write-failed`** - the temporary could not be written, or the rename over the target failed
@@ -213,10 +213,11 @@
 //! corrupt text that is never type-checked (the rules
 //! `alias-declaration-and-reference-atomic` and `template-run-atomic`):
 //!
-//! - an inline `alias %*name*% = <raw text to end of line>` declaration, whose
+//! - an inline `alias _name = <raw text to end of line>` declaration, whose
 //!   right-hand side is macro text spliced in later (`preprocess.rs`);
-//! - a `%*name*%` reference, whose five tokens must stay adjacent or
-//!   `preprocess` stops reading it as a reference.
+//! - a `_name` reference, which is an ordinary identifier: the formatter
+//!   needs no special case for it, and `preprocess` replaces it only when a
+//!   declared alias has that name.
 //!
 //! A string template run is copied verbatim for the same reason: its inner
 //! `StrChunk` text is decoded, so it cannot be safely re-emitted from tokens.
@@ -357,9 +358,8 @@ const RULES: &[Rule] = &[
     },
     Rule {
         name: "alias-declaration-and-reference-atomic",
-        statement: "An inline `alias %*n*% = …` declaration is one atom copied to the end \
-                    of its line, and a `%*name*%` reference is one atom whose five tokens \
-                    stay adjacent.",
+        statement: "An inline `alias _n = …` declaration is one atom copied to the end \
+                    of its line, and a `_name` reference is an ordinary identifier.",
         pins: &["alias_atomic"],
     },
     Rule {
@@ -457,8 +457,8 @@ const REFUSALS: &[Refusal] = &[
     },
     Refusal {
         kind: RefusalKind::UnresolvableAlias,
-        reason: "a `%*name*%` reference that neither the file's own declarations nor the \
-                 project's alias table defines",
+        reason: "an alias that cannot be expanded: a duplicate or invalid definition, a \
+                 cycle, or replacement text that does not lex",
         build_accepts: false,
         raised_by: "`expand_own_aliases`, then the resolver",
     },
@@ -744,19 +744,16 @@ fn lone_cr_error(src: &str, at: usize) -> FmtError {
 /// runs for every file, whether it uses aliases or not.
 ///
 /// The parser reads a *preprocessed* copy, because `preprocess` strips every
-/// inline `alias %*n*% = ...` declaration and expands every `%*n*%` reference
+/// inline `alias _n = ...` declaration and expands every `_n` reference
 /// before a real compile parses; the raw stream is never what the parser sees.
 /// Gating on a preprocessed copy is what makes an alias-using file obey the
 /// same rule as every other file instead of bypassing the gate.
 ///
 /// The table built here holds this file's inline declarations and nothing
-/// else, so a reference they cannot resolve is a refusal - the diagnostic is
-/// `preprocess`'s own `unknown alias '%*n*%'`, the one `kelpc build` prints -
-/// and never a substitution of placeholder text. That substitution is what used
-/// to let two files through: one whose alias was undefined, and one whose alias
-/// another module declares with an expansion that does not parse. In both, the
-/// layout around the reference was checked and the reference itself was not; the
-/// resolver is what decides the second case now (see `fmt_text` in `main.rs`).
+/// else. A `_name` identifier no declaration names is an ordinary name and is
+/// formatted like any other. A string that is exactly one undeclared `_name`
+/// (a module path, as in `impl "_util"`) is refused here, so `fmt_text` in
+/// `main.rs` puts the file to the resolver, which has the project's table.
 fn parse_gate(src: &str) -> Result<(), FmtError> {
     let trivia = Lexer::new(src)
         .tokenize_with_trivia()
@@ -785,7 +782,34 @@ fn expand_own_aliases(src: &str, raw: &[Token]) -> Result<Vec<Token>, FmtError> 
     for def in defs {
         table.define(def).map_err(as_fmt_error)?;
     }
-    table.expand_file(raw, FMT_MODULE).map_err(as_fmt_error)
+    let expanded = table.expand_file(raw, FMT_MODULE).map_err(as_fmt_error)?;
+    // A `_name` this file does not declare may be one another module declares.
+    // The gate cannot see that module, so it hands the file to the resolver
+    // (see `fmt_text` in `main.rs`) rather than accept it as a plain name.
+    // Only a string that is exactly one undeclared `_name`, as in
+    // `impl "_util"`, is handed to the resolver: that is a module path an
+    // alias from another module may supply. An ordinary `_name` identifier is
+    // a plain name here (it may be a local), so it is formatted like any other.
+    // The expanded stream is checked, so an alias declaration's own text is
+    // never looked at.
+    for token in &expanded {
+        let undeclared = match &token.kind {
+            TokenKind::StringLit(name)
+                if crate::preprocess::is_alias_name(name) && !table.declares(name) =>
+            {
+                Some(name.clone())
+            }
+            _ => None,
+        };
+        if let Some(name) = undeclared {
+            return Err(FmtError::refusal(
+                RefusalKind::UnresolvableAlias,
+                format!("'{name}' is not declared in this file"),
+                token.span,
+            ));
+        }
+    }
+    Ok(expanded)
 }
 
 /// The whole-output post-condition. A formatter that can change the token
@@ -851,7 +875,7 @@ fn token_text(token: Option<&Token>, src: &str) -> String {
     }
 }
 
-/// How an emitted atom behaves for spacing. A template run and a `%*name*%`
+/// How an emitted atom behaves for spacing. A template run and a `_name`
 /// reference behave like a primary expression (`Value`); the other two are
 /// themselves.
 enum Lead {
@@ -934,19 +958,6 @@ fn atom<'a>(src: &'a str, tokens: &[Token], i: usize) -> Atom<'a> {
             lead: Lead::Value,
             first: i,
             next: end_tok + 1,
-            end,
-        };
-    }
-
-    // `%*name*%` - copied verbatim, so its five tokens stay adjacent.
-    if let Some(len) = alias_ref_len(tokens, i) {
-        let start = tokens[i].span.start;
-        let end = tokens[i + len - 1].span.end;
-        return Atom {
-            text: &src[start..end],
-            lead: Lead::Value,
-            first: i,
-            next: i + len,
             end,
         };
     }
@@ -1193,33 +1204,9 @@ fn needs_space(prev: &Lead, prev_prefix: bool, cur: &Lead, gap_ws: bool) -> bool
     true
 }
 
-/// Length in tokens of a contiguous `%*name*%` starting at `i`, or `None`.
-/// Adjacency is by span, so `a % *b * %` is arithmetic and stays arithmetic.
-fn alias_ref_len(tokens: &[Token], i: usize) -> Option<usize> {
-    let t = |k: usize| tokens.get(i + k);
-    let (pct, star, name, star2, pct2) = (t(0)?, t(1)?, t(2)?, t(3)?, t(4)?);
-    if !matches!(pct.kind, TokenKind::Percent) || !matches!(star.kind, TokenKind::Star) {
-        return None;
-    }
-    let TokenKind::Ident(n) = &name.kind else {
-        return None;
-    };
-    if n.is_empty() {
-        return None;
-    }
-    if !matches!(star2.kind, TokenKind::Star) || !matches!(pct2.kind, TokenKind::Percent) {
-        return None;
-    }
-    let adjacent = pct.span.end == star.span.start
-        && star.span.end == name.span.start
-        && name.span.end == star2.span.start
-        && star2.span.end == pct2.span.start;
-    adjacent.then_some(5)
-}
-
-/// True when `tokens[i]` begins an inline `alias %*name*% = ...` declaration,
+/// True when `tokens[i]` begins an inline `alias _name = ...` declaration,
 /// mirroring `preprocess::alias_decl_shape`: the keyword `alias` at the start
-/// of a line, a contiguous `%*name*%`, then `=`.
+/// of a line, a contiguous `_name`, then `=`.
 fn is_alias_decl(tokens: &[Token], i: usize) -> bool {
     if !matches!(&tokens[i].kind, TokenKind::Ident(n) if n == "alias") {
         return false;
@@ -1232,18 +1219,20 @@ fn is_alias_decl(tokens: &[Token], i: usize) -> bool {
     {
         return false;
     }
-    let Some(len) = alias_ref_len(tokens, i + 1) else {
+    let Some(TokenKind::Ident(name)) = tokens.get(i + 1).map(|t| &t.kind) else {
         return false;
     };
-    matches!(tokens.get(i + 1 + len).map(|t| &t.kind), Some(TokenKind::Eq))
+    if !crate::preprocess::is_alias_name(name) {
+        return false;
+    }
+    matches!(tokens.get(i + 2).map(|t| &t.kind), Some(TokenKind::Eq))
 }
 
 /// Index of the token that ends an inline alias declaration's right-hand side,
 /// mirroring `preprocess::alias_decl_shape`: a newline, a `}`, or EOF. The
 /// declaration's text runs from its `alias` up to this token.
 fn alias_decl_end(tokens: &[Token], i: usize) -> usize {
-    let len = alias_ref_len(tokens, i + 1).expect("alias declaration without a name");
-    let mut j = i + 1 + len + 1;
+    let mut j = i + 3;
     while j < tokens.len()
         && !matches!(
             tokens[j].kind,
@@ -1375,7 +1364,7 @@ mod tests {
                 Ok(text) => text,
                 // A file the gate refuses is exercised by the refusal tests
                 // instead: a deliberate error fixture in one of these dirs, or
-                // a file whose `%*alias*%` another module declares - this gate
+                // a file whose `_alias` another module declares - this gate
                 // reads one file's text, so it cannot see that module and is
                 // right to refuse rather than substitute a placeholder.
                 Err(_) => continue,
@@ -1416,13 +1405,13 @@ mod tests {
     #[test]
     fn an_alias_declaration_and_reference_are_atomic() {
         // The declaration's right-hand side is macro text and is copied
-        // verbatim (the double space survives); the five tokens of the
-        // reference stay adjacent, so `preprocess` still reads it.
-        let src = "alias %*a*% = 1 +  2\n\nfun main() {\n    print( %*a*% )\n}\n";
+        // verbatim (the double space survives); the reference is an
+        // ordinary identifier and is formatted like any other name.
+        let src = "alias _a = 1 +  2\n\nfun main() {\n    print( _a )\n}\n";
         let out = format(src).unwrap();
         assert_eq!(
             out,
-            "alias %*a*% = 1 +  2\n\nfun main() {\n    print(%*a*%)\n}\n"
+            "alias _a = 1 +  2\n\nfun main() {\n    print(_a)\n}\n"
         );
     }
 
@@ -1450,28 +1439,16 @@ mod tests {
     fn an_alias_file_with_a_syntax_error_is_refused() {
         // The preprocessed copy is what the parser sees, so the alias does not
         // turn the syntax gate off.
-        let src = "alias %*greeting*% = \"hi\"\n\nfun main() {\n    print(%*greeting*%)\n    print(\"oops\"\n}\n";
+        let src = "alias _greeting = \"hi\"\n\nfun main() {\n    print(_greeting)\n    print(\"oops\"\n}\n";
         let err = format(src).unwrap_err();
         assert!(err.message.contains("expected ')'"), "{}", err.message);
     }
 
     #[test]
     fn an_unresolvable_alias_is_refused_rather_than_papered_over() {
-        // The gate has no table beyond this file's own declarations, so a
-        // reference they cannot resolve is a refusal that names it. This used
-        // to be a placeholder identifier, which formatted a file `kelpc build`
-        // rejects; the resolver decides the project case instead (see
-        // `fmt_text` in `main.rs`).
-        let src = "fun main() {\n    print(%*undefined*%)\n}\n";
-        let err = format(src).unwrap_err();
-        assert_eq!(err.kind, RefusalKind::UnresolvableAlias);
-        assert!(
-            err.message.contains("unknown alias '%*undefined*%'"),
-            "{}",
-            err.message
-        );
-        // `format_after_resolve` is the emission half the CLI uses once the
-        // resolver has accepted the file, and it does not re-run the gate.
+        // An undeclared `_name` identifier is a plain name to the gate.
+        let src = "fun main() {\n    print(_undefined)\n}\n";
+        assert_eq!(format(src).unwrap(), src);
         assert_eq!(format_after_resolve(src).unwrap(), src);
     }
 

@@ -1,4 +1,4 @@
-alias %*b*% = %*a*%
+alias _b = _a
 
 fun main() {
     print("unreachable")

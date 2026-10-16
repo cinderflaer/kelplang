@@ -1,16 +1,21 @@
-// M5.3: `%*alias*%` substitution. Inline declarations, a chain (one alias's
-// text referencing another), and a reference inside a plain string literal.
+// M5.3: `_alias` substitution. Inline declarations, a chain (one alias's
+// text referencing another), a reference inside a plain string literal, a
+// longer name that starts with a shorter one, and a `%` that is still modulo.
 //
-// `%*doubled*%` prints 44, not 84: substitution is pure text, so
-// `%*answer*% * 2` becomes `40 + 2 * 2`. That is the tradeoff the plan
+// `_doubled` prints 44, not 84: substitution is pure text, so
+// `_answer * 2` becomes `40 + 2 * 2`. That is the tradeoff the plan
 // states explicitly (no hygiene, no parameters), write the parens into the
 // alias text if you want the other grouping.
-alias %*answer*% = 40 + 2
-alias %*doubled*% = %*answer*% * 2
-alias %*word*% = aliasword
+alias _answer = 40 + 2
+alias _doubled = _answer * 2
+alias _word = aliasword
+alias _ans = 1
 
 fun main() {
-    print(%*answer*%)
-    print(%*doubled*%)
-    print("say %*word*%")
+    print(_answer)
+    print(_doubled)
+    print("say _word")
+    print(_answer + _ans)
+    print("_ans and _answer")
+    print(17 % 5)
 }

@@ -802,7 +802,7 @@ fn default_out_path(source_path: &str) -> PathBuf {
 ///
 /// Formatting is per-file: the file is lexed and parsed on its own and no
 /// `coral.toml` is required. The one thing one file cannot carry is the alias
-/// table - a `%*name*%` may be declared by a module this file imports - so
+/// table - a `_name` may be declared by a module this file imports - so
 /// when a file's own declarations cannot resolve its references, the file is
 /// put to the compiler's own resolver, which reads the project exactly as
 /// `kelpc build` does; see `fmt_text`.
@@ -918,7 +918,7 @@ fn read_source(path: &Path) -> Result<String, ()> {
 ///
 /// `fmt`'s own gate parses the file against the `alias` declarations *the file
 /// itself* holds, which is enough for every file that declares what it uses.
-/// It is not enough for a `%*name*%` another module declares: the gate cannot
+/// It is not enough for a `_name` another module declares: the gate cannot
 /// see that module, so it cannot tell an undefined alias from a project one,
 /// and it refuses both.
 ///

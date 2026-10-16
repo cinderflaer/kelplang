@@ -1,5 +1,5 @@
 impl "util"
 
 fun main() {
-    print(%*greeting*%)
+    print(_greeting)
 }

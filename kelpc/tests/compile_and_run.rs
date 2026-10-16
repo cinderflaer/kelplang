@@ -1149,16 +1149,21 @@ fn a_passdown_is_not_visible_from_another_module() {
 }
 
 // ---------------------------------------------------------------------------
-// M5.3: `%*alias*%` text substitution (`[alias]` in coral.toml + inline `alias`).
+// M5.3: `_alias` text substitution (`[alias]` in coral.toml + inline `alias`).
 // ---------------------------------------------------------------------------
 
 #[test]
 fn aliases_substitute_text_in_expressions_and_strings() {
-    // Also pins the pure-text semantics: `%*doubled*%` is `40 + 2 * 2`.
+    // Also pins the pure-text semantics: `_doubled` is `40 + 2 * 2`.
     assert_compiles_and_runs(
         "tests/fixtures/aliases.kp",
-        "42\n44\nsay aliasword\n",
+        "42\n44\nsay aliasword\n43\n1 and 40 + 2\n2\n",
     );
+}
+
+#[test]
+fn an_underscore_name_nobody_declares_is_a_plain_identifier() {
+    assert_compiles_and_runs("tests/fixtures/alias_plain_ident.kp", "3\n");
 }
 
 #[test]
@@ -1168,7 +1173,7 @@ fn an_alias_in_the_manifest_can_be_an_impl_path() {
 
 #[test]
 fn an_alias_from_an_imported_module_is_visible() {
-    // The table is flat and global: `%*greeting*%` is declared in `util.kp`
+    // The table is flat and global: `_greeting` is declared in `util.kp`
     // and used in `main.kp`.
     assert_project_runs(
         "alias_cross_file",
@@ -1189,7 +1194,7 @@ fn an_unknown_alias_is_rejected() {
 
 #[test]
 fn an_alias_cycle_across_two_files_names_both_sites() {
-    // `a` is defined in coral.toml's [alias], `b` in `main.kp`; the diagnostic points
+    // `_a` is defined in coral.toml's [alias], `_b` in `main.kp`; the diagnostic points
     // at the reference that closed the cycle and notes the definition, so
     // both files appear.
     let bin = out_path("alias_kpconf_cycle");
@@ -1202,7 +1207,7 @@ fn an_alias_cycle_across_two_files_names_both_sites() {
         .expect("failed to spawn kelpc");
     assert!(!build.status.success(), "expected a rejection");
     let stderr = String::from_utf8_lossy(&build.stderr);
-    for needle in ["alias cycle: a -> b -> a", "coral.toml:", "main.kp:"] {
+    for needle in ["alias cycle: _a -> _b -> _a", "coral.toml:", "main.kp:"] {
         assert!(
             stderr.contains(needle),
             "expected the error to mention '{needle}', got:\n{stderr}"

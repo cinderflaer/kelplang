@@ -13,7 +13,7 @@ use crate::lexer::Span;
 
 /// A secondary location attached to a diagnostic. Used where an error has a
 /// natural second site that lives in *another* file - an alias's definition
-/// versus the `%*name*%` that used it (M5.3), which is the case that stops a
+/// versus the `_name` that used it (M5.3), which is the case that stops a
 /// single `(module, span)` pair from being enough.
 #[derive(Debug, Clone)]
 pub struct DiagnosticNote {

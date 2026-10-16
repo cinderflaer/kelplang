@@ -355,7 +355,7 @@ pub struct LexError {
 /// Whether a line that ends in this token continues onto the next one: a binary
 /// or assignment operator, a comma, a `.`, or a `when` arrow. `<` and `>` are
 /// left out because they also close and open type argument lists, `%` because an
-/// alias pattern (`%*name*%`) ends in one, `&` and `|`
+/// alias pattern (`_name`) ends in one, `&` and `|`
 /// because a bare one can end a pattern or a type, and `?` because it is a
 /// complete postfix.
 fn continues_line(kind: &TokenKind) -> bool {

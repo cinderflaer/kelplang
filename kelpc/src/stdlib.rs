@@ -130,7 +130,7 @@ pub const DEFAULT_HTTP_POOL: usize = 4;
 
 /// The placeholder `std/http.kp` carries instead of a literal pool ceiling.
 /// Substitution happens on the source text *before* lexing, so this spelling
-/// never reaches the parser - and it deliberately avoids `%*name*%`, which is
+/// never reaches the parser - and it deliberately avoids `_name`, which is
 /// the alias sigil and would be expanded by `preprocess.rs` first.
 const HTTP_POOL_PLACEHOLDER: &str = "__KELP_HTTP_POOL__";
 

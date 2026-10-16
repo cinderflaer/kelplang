@@ -1,26 +1,26 @@
-//! `%*alias*%` text substitution (M5.3).
+//! `_alias` text substitution (M5.3).
 //!
 //! A flat, global, purely-textual substitution pass, exactly as specified in
 //! the plan's "Imports & project structure": no parameters, no hygiene, no
 //! scoping. Two definition sites feed one table:
 //!
 //! - an `[alias]` table in the project's `coral.toml`, one
-//!   `name = "module/path"` per line. The value is a relative module path,
+//!   `_name = "module/path"` per line. The value is a relative module path,
 //!   validated when the manifest is read (`resolve.rs`).
-//! - an inline `alias %*name*% = <raw text to end of line>` declaration in
+//! - an inline `alias _name = <raw text to end of line>` declaration in
 //!   any `.kp` file. The declaration gets its own keyword precisely because
 //!   the right-hand side is *macro text*, not an expression: it is never
 //!   type-checked, just spliced in.
 //!
 //! The pass runs on the token stream, before the parser, and does three
-//! things: strips alias declarations, expands every `%*name*%` reference
+//! things: strips alias declarations, expands every `_name` reference
 //! (including one inside an `impl "..."` path string, which is the main
 //! reason import-path aliasing needs no separate mechanism), and rejects
 //! cycles.
 //!
 //! Spans are the fiddly part. A replacement's tokens are lexed from the
 //! alias's text, where offsets are meaningless in the file being compiled -
-//! so every replacement token gets remapped onto the `%*name*%` occurrence
+//! so every replacement token gets remapped onto the `_name` occurrence
 //! the user actually wrote, which keeps `file:line:col` useful. The one
 //! exception is an error *at* the reference itself: those carry the use site
 //! as the primary span and the definition as a note (`Diagnostic::with_note`),
@@ -44,12 +44,12 @@ pub const MANIFEST_MODULE: &str = "coral.toml";
 
 /// The note text that points at where an alias was defined. An entry from
 /// the manifest names its table; an inline declaration is named by its own
-/// `%*name*%`.
+/// `_name`.
 fn defined_here(def: &AliasDef) -> String {
     if def.module == MANIFEST_MODULE {
         format!("alias '{}' in coral.toml [alias] is defined here", def.name)
     } else {
-        format!("'%*{}*%' is defined here", def.name)
+        format!("'{}' is defined here", def.name)
     }
 }
 
@@ -82,6 +82,11 @@ impl AliasTable {
         AliasTable::default()
     }
 
+    /// Whether a definition of `name` is in the table.
+    pub fn declares(&self, name: &str) -> bool {
+        self.defs.contains_key(name)
+    }
+
     #[allow(dead_code)] // introspection used by tests/diagnostics only.
     pub fn is_empty(&self) -> bool {
         self.defs.is_empty()
@@ -102,6 +107,13 @@ impl AliasTable {
                 def.module,
             ));
         }
+        if !is_alias_name(&def.name) {
+            return Err(Diagnostic::new(
+                format!("'{}' is not a valid alias name: it must start with '_' and name something after it", def.name),
+                def.span,
+                def.module,
+            ));
+        }
         if is_keyword(&def.name) {
             return Err(Diagnostic::new(
                 format!("'{}' is a language keyword and cannot be an alias name", def.name),
@@ -116,7 +128,7 @@ impl AliasTable {
             } else {
                 format!("module '{}'", previous.module)
             };
-            let message = format!("alias '%*{}*%' is already defined in {where_}", def.name);
+            let message = format!("alias '{}' is already defined in {where_}", def.name);
             return Err(Diagnostic::new(message, def.span, def.module.clone()).with_note(
                 defined_here(&previous),
                 previous.span,
@@ -142,7 +154,7 @@ impl AliasTable {
     }
 
     /// `from` is the reference that led here: `(module, span)` of the
-    /// `%*name*%` occurrence inside the previous alias's *text*, already
+    /// `_name` occurrence inside the previous alias's *text*, already
     /// mapped to its own file's offset - so the two spans of a cycle can land
     /// in two different files.
     fn visit_alias(
@@ -178,7 +190,7 @@ impl AliasTable {
         for (referenced, offset) in text_alias_refs(&def.text) {
             if self.defs.contains_key(&referenced) {
                 let abs = def.text_offset + offset;
-                let span = Span::new(abs, abs + referenced.len() + 4);
+                let span = Span::new(abs, abs + referenced.len());
                 self.visit_alias(&referenced, Some((&def.module, span)), state, stack)?;
             }
         }
@@ -187,7 +199,7 @@ impl AliasTable {
         Ok(())
     }
 
-    /// Expands every `%*name*%` reference in one file's token stream and drops
+    /// Expands every `_name` reference in one file's token stream and drops
     /// its inline `alias` declarations, leaving a stream the parser accepts.
     pub fn expand_file(&self, tokens: &[Token], module: &str) -> Result<Vec<Token>, Diagnostic> {
         let mut out = Vec::with_capacity(tokens.len());
@@ -205,10 +217,10 @@ impl AliasTable {
     ) -> Result<(), Diagnostic> {
         let mut i = 0;
         while i < tokens.len() {
-            if let Some((name, end)) = alias_ref_at(tokens, i) {
-                let use_span = tokens[i].span.to(tokens[end].span);
+            if let Some(name) = self.reference_at(tokens, i) {
+                let use_span = tokens[i].span;
                 self.expand_name(&name, use_span, module, stack, out)?;
-                i = end + 1;
+                i += 1;
                 continue;
             }
             if let Some(shape) = alias_decl_shape(tokens, i) {
@@ -241,7 +253,7 @@ impl AliasTable {
         Ok(())
     }
 
-    /// Appends the expansion of `%*name*%` (and, transitively, of any
+    /// Appends the expansion of `_name` (and, transitively, of any
     /// references inside the definition) to `out`.
     fn expand_name(
         &self,
@@ -251,19 +263,19 @@ impl AliasTable {
         stack: &mut Vec<String>,
         out: &mut Vec<Token>,
     ) -> Result<(), Diagnostic> {
-        let def = self.lookup(name, use_span, module)?;
+        let def = self.defs[name].clone();
         if stack.iter().any(|n| n == name) {
             return Err(self.cycle_error(name, stack, use_span, module, &def));
         }
         // The replacement is expanded with the spans it lexed to, so nested
-        // `%*name*%` references are still visible as adjacent tokens; only
-        // then is everything remapped onto the `%*name*%` the user wrote.
+        // `_name` references are still visible as adjacent tokens; only
+        // then is everything remapped onto the `_name` the user wrote.
         let lexed: Vec<Token> = Lexer::new(&def.text)
             .tokenize()
             .map_err(|e| {
                 Diagnostic::new(
                     format!(
-                        "alias '%*{name}*%' expands to text that is not valid Kelp: {}",
+                        "alias '{name}' expands to text that is not valid Kelp: {}",
                         e.message
                     ),
                     use_span,
@@ -294,10 +306,20 @@ impl AliasTable {
         Ok(())
     }
 
+    /// Whether `tokens[i]` is a plain identifier naming a declared alias. The
+    /// reference is an ordinary identifier, so a `_name` that no alias declares
+    /// is left alone and stays an ordinary name.
+    fn reference_at(&self, tokens: &[Token], i: usize) -> Option<String> {
+        let TokenKind::Ident(name) = &tokens.get(i)?.kind else {
+            return None;
+        };
+        self.defs.contains_key(name).then(|| name.clone())
+    }
+
     /// Textual expansion inside a string literal (or template chunk): an
-    /// `impl "%*shared*%"` path is the case this exists for. The replacement
-    /// is spliced in as raw text - no re-lexing, so a `$` in the replacement
-    /// stays a literal `$`.
+    /// `impl "_shared"` path is the case this exists for. The replacement is
+    /// spliced in as raw text - no re-lexing, so a `$` in the replacement stays
+    /// a literal `$`. A reference must start a word: `my_shared` is not one.
     fn expand_text(
         &self,
         text: &str,
@@ -305,28 +327,28 @@ impl AliasTable {
         module: &str,
         stack: &mut Vec<String>,
     ) -> Result<String, Diagnostic> {
+        let bytes = text.as_bytes();
         let mut out = String::new();
         let mut i = 0;
         while i < text.len() {
-            let Some(relative_start) = text[i..].find("%*") else {
+            let Some(relative) = text[i..].find('_') else {
                 out.push_str(&text[i..]);
                 break;
             };
-            let after = i + relative_start + 2;
-            let Some(relative_end) = text[after..].find("*%") else {
-                // Unterminated sigil: literal text, so `"$100%*"` needs no
-                // escaping.
-                out.push_str(&text[i..]);
-                break;
-            };
-            out.push_str(&text[i..after - 2]);
-            let name = &text[after..after + relative_end];
-            if !is_ident(name) {
-                out.push_str("%*");
-                i = after;
+            let start = i + relative;
+            out.push_str(&text[i..start]);
+            let mut end = start + 1;
+            while end < bytes.len() && is_word_byte(bytes[end]) {
+                end += 1;
+            }
+            let name = &text[start..end];
+            let starts_word = start == 0 || !is_word_byte(bytes[start - 1]);
+            if !starts_word || !self.defs.contains_key(name) {
+                out.push_str(name);
+                i = end;
                 continue;
             }
-            let def = self.lookup(name, span, module)?;
+            let def = self.defs[name].clone();
             if stack.iter().any(|n| n == name) {
                 return Err(self.cycle_error(name, stack, span, module, &def));
             }
@@ -334,15 +356,9 @@ impl AliasTable {
             let result = self.expand_text(&def.text, span, module, stack);
             stack.pop();
             out.push_str(&result?);
-            i = after + relative_end + 2;
+            i = end;
         }
         Ok(out)
-    }
-
-    fn lookup(&self, name: &str, span: Span, module: &str) -> Result<AliasDef, Diagnostic> {
-        self.defs.get(name).cloned().ok_or_else(|| {
-            Diagnostic::new(format!("unknown alias '%*{name}*%'"), span, module)
-        })
     }
 
     fn cycle_error(
@@ -365,46 +381,20 @@ impl AliasTable {
     }
 }
 
-/// Matches a contiguous `%*name*%` starting at `i`; returns the name and the
-/// index of the closing `%`.
-fn alias_ref_at(tokens: &[Token], i: usize) -> Option<(String, usize)> {
-    let token = |k: usize| tokens.get(i + k);
-    let (first, second, name_tok, fourth, fifth) = (
-        token(0)?,
-        token(1)?,
-        token(2)?,
-        token(3)?,
-        token(4)?,
-    );
-    if !matches!(first.kind, TokenKind::Percent) || !matches!(second.kind, TokenKind::Star) {
-        return None;
-    }
-    let TokenKind::Ident(name) = &name_tok.kind else {
-        return None;
-    };
-    if !matches!(fourth.kind, TokenKind::Star) || !matches!(fifth.kind, TokenKind::Percent) {
-        return None;
-    }
-    // Require the five tokens to be adjacent in the source, so `a % * b * %`
-    // is arithmetic rather than an alias reference.
-    if first.span.end != second.span.start
-        || second.span.end != name_tok.span.start
-        || name_tok.span.end != fourth.span.start
-        || fourth.span.end != fifth.span.start
-    {
-        return None;
-    }
-    if !is_ident(name) {
-        return None;
-    }
-    Some((name.clone(), i + 4))
+/// An alias name: an underscore and at least one more identifier character.
+pub fn is_alias_name(name: &str) -> bool {
+    name.len() > 1 && name.starts_with('_') && is_ident(name)
 }
 
-/// The token span of one `alias %*name*% = <text>` declaration.
+fn is_word_byte(b: u8) -> bool {
+    b == b'_' || b.is_ascii_alphanumeric()
+}
+
+/// The token span of one `alias _name = <text>` declaration.
 struct DeclShape {
     /// Index of the `alias` keyword itself.
     start: usize,
-    /// Index of the closing `%` of the name.
+    /// Index of the name token.
     name_end: usize,
     /// Index of the `=` token.
     eq: usize,
@@ -422,7 +412,7 @@ impl DeclShape {
     }
 }
 
-/// Recognizes `alias %*name*% = <raw text to end of line>` at `i`. The
+/// Recognizes `alias _name = <raw text to end of line>` at `i`. The
 /// declaration may only start where a statement could (start of file, after a
 /// newline, or after `{`/`}`), which is what keeps a user identifier named
 /// `alias` usable everywhere else.
@@ -438,39 +428,16 @@ fn alias_decl_shape(tokens: &[Token], i: usize) -> Option<DeclShape> {
     {
         return None;
     }
-    let opening = tokens.get(i + 1)?;
-    let star = tokens.get(i + 2)?;
-    if !matches!(opening.kind, TokenKind::Percent) || !matches!(star.kind, TokenKind::Star) {
+    let TokenKind::Ident(name) = &tokens.get(i + 1)?.kind else {
+        return None;
+    };
+    if !is_alias_name(name) {
         return None;
     }
-    let name_start = tokens.get(i + 3)?;
-    if star.span.end != name_start.span.start {
+    let eq = i + 2;
+    if !matches!(tokens.get(eq)?.kind, TokenKind::Eq) {
         return None;
     }
-    // Scan forward for the closing `*%` on one line.
-    let mut name_end = None;
-    let mut j = i + 3;
-    while let Some(token) = tokens.get(j) {
-        if matches!(token.kind, TokenKind::Newline | TokenKind::Eof) {
-            return None;
-        }
-        if matches!(token.kind, TokenKind::Star) {
-            if let Some(percent) = tokens.get(j + 1) {
-                if matches!(percent.kind, TokenKind::Percent)
-                    && token.span.end == percent.span.start
-                {
-                    name_end = Some(j + 1);
-                    break;
-                }
-            }
-        }
-        j += 1;
-    }
-    let name_end = name_end?;
-    if !matches!(tokens.get(name_end + 1)?.kind, TokenKind::Eq) {
-        return None;
-    }
-    let eq = name_end + 1;
     let mut end = eq + 1;
     while end < tokens.len()
         && !matches!(
@@ -487,7 +454,7 @@ fn alias_decl_shape(tokens: &[Token], i: usize) -> Option<DeclShape> {
     };
     Some(DeclShape {
         start: i,
-        name_end,
+        name_end: i + 1,
         eq,
         rhs,
         end,
@@ -510,11 +477,14 @@ pub fn scan_inline_aliases(
             i += 1;
             continue;
         };
-        let name = src[tokens[i + 3].span.start..tokens[shape.name_end - 1].span.start].to_string();
+        let TokenKind::Ident(name) = &tokens[shape.name_end].kind else {
+            unreachable!("alias_decl_shape checks for the name token")
+        };
+        let name = name.clone();
         let span = shape.span(tokens);
         let Some((rhs_start, rhs_end)) = shape.rhs else {
             return Err(Diagnostic::new(
-                format!("alias '%*{name}*%' has no replacement text"),
+                format!("alias '{name}' has no replacement text"),
                 span,
                 module,
             ));
@@ -532,25 +502,25 @@ pub fn scan_inline_aliases(
     Ok(defs)
 }
 
-/// Every `%*name*%` reference inside a piece of alias text, as
-/// `(name, byte offset within the text)`.
-fn text_alias_refs(text: &str) -> Vec<(String, usize)> {
+/// Every `_name` reference inside a piece of alias text, as
+/// `(name, byte offset within the text)`. Only the start of a word counts.
+pub(crate) fn text_alias_refs(text: &str) -> Vec<(String, usize)> {
+    let bytes = text.as_bytes();
     let mut refs = Vec::new();
     let mut i = 0;
-    while i < text.len() {
-        let Some(relative_start) = text[i..].find("%*") else {
-            break;
-        };
-        let start = i + relative_start;
-        let after = start + 2;
-        let Some(relative_end) = text[after..].find("*%") else {
-            break;
-        };
-        let name = &text[after..after + relative_end];
-        if is_ident(name) {
-            refs.push((name.to_string(), start));
+    while i < bytes.len() {
+        if bytes[i] == b'_' && (i == 0 || !is_word_byte(bytes[i - 1])) {
+            let mut end = i + 1;
+            while end < bytes.len() && is_word_byte(bytes[end]) {
+                end += 1;
+            }
+            if end > i + 1 {
+                refs.push((text[i..end].to_string(), i));
+            }
+            i = end;
+        } else {
+            i += 1;
         }
-        i = after + relative_end + 2;
     }
     refs
 }
@@ -599,7 +569,7 @@ mod tests {
     #[test]
     fn expands_a_reference_to_its_text() {
         assert_eq!(
-            expand(&table(&[("answer", "40 + 2")]), "print(%*answer*%)"),
+            expand(&table(&[("_answer", "40 + 2")]), "print(_answer)"),
             kinds("print(40 + 2)")
         );
     }
@@ -607,7 +577,7 @@ mod tests {
     #[test]
     fn expands_a_reference_inside_a_string() {
         assert_eq!(
-            expand(&table(&[("shared", "../shared/utils")]), "impl \"%*shared*%\""),
+            expand(&table(&[("_shared", "../shared/utils")]), "impl \"_shared\""),
             kinds("impl \"../shared/utils\"")
         );
     }
@@ -616,8 +586,8 @@ mod tests {
     fn keeps_the_text_around_a_reference() {
         assert_eq!(
             expand(
-                &table(&[("who", "world"), ("greet", "hello")]),
-                "print(\"say %*greet*%, %*who*%\")"
+                &table(&[("_who", "world"), ("_greet", "hello")]),
+                "print(\"say _greet, _who\")"
             ),
             kinds("print(\"say hello, world\")")
         );
@@ -626,50 +596,79 @@ mod tests {
     #[test]
     fn expands_a_chain_of_aliases() {
         assert_eq!(
-            expand(&table(&[("a", "%*b*% + 1"), ("b", "41")]), "print(%*a*%)"),
+            expand(&table(&[("_a", "_b + 1"), ("_b", "41")]), "print(_a)"),
             kinds("print(41 + 1)")
         );
     }
 
     #[test]
     fn strips_an_inline_declaration() {
-        let src = "alias %*answer*% = 40 + 2\nprint(%*answer*%)";
+        let src = "alias _answer = 40 + 2\nprint(_answer)";
         assert_eq!(
-            expand(&table(&[("answer", "40 + 2")]), src),
+            expand(&table(&[("_answer", "40 + 2")]), src),
             kinds("\nprint(40 + 2)")
         );
     }
 
     #[test]
-    fn a_spaced_sigil_is_not_a_reference() {
+    fn a_longer_name_wins_over_its_prefix() {
+        let t = table(&[("_ans", "1"), ("_answer", "40 + 2")]);
         assert_eq!(
-            expand(&table(&[("answer", "1")]), "a % * answer * % b"),
-            kinds("a % * answer * % b")
+            expand(&t, "print(_answer + _ans)"),
+            kinds("print(40 + 2 + 1)")
+        );
+        assert_eq!(
+            expand(&t, "print(\"_answer _ans\")"),
+            kinds("print(\"40 + 2 1\")")
         );
     }
 
     #[test]
-    fn an_unknown_alias_is_rejected() {
-        let tokens = Lexer::new("print(%*nope*%)").tokenize().unwrap();
-        let d = table(&[]).expand_file(&tokens, "main").unwrap_err();
-        assert!(d.message.contains("unknown alias '%*nope*%'"), "{}", d.message);
+    fn an_undeclared_underscore_name_stays_an_identifier() {
+        assert_eq!(
+            expand(&table(&[("_answer", "1")]), "print(_nope + _x_answer)"),
+            kinds("print(_nope + _x_answer)")
+        );
+    }
+
+    #[test]
+    fn a_name_inside_a_longer_word_is_not_a_reference_in_a_string() {
+        assert_eq!(
+            expand(&table(&[("_answer", "9")]), "\"my_answer _answer\""),
+            kinds("\"my_answer 9\"")
+        );
+    }
+
+    #[test]
+    fn a_modulo_expression_is_untouched() {
+        assert_eq!(
+            expand(&table(&[("_answer", "9")]), "x = a % b + a%b"),
+            kinds("x = a % b + a%b")
+        );
+    }
+
+    #[test]
+    fn an_unknown_alias_is_left_for_the_resolver() {
+        let tokens = Lexer::new("print(_nope)").tokenize().unwrap();
+        let out = table(&[]).expand_file(&tokens, "main").unwrap();
+        assert_eq!(out.len(), tokens.len());
     }
 
     #[test]
     fn a_cycle_is_rejected_by_the_eager_check() {
-        let d = table(&[("a", "%*b*%"), ("b", "%*a*%")])
+        let d = table(&[("_a", "_b"), ("_b", "_a")])
             .check_cycles()
             .unwrap_err();
-        assert!(d.message.contains("alias cycle: a -> b -> a"), "{}", d.message);
+        assert!(d.message.contains("alias cycle: _a -> _b -> _a"), "{}", d.message);
         assert_eq!(d.notes.len(), 1);
     }
 
     #[test]
     fn a_duplicate_definition_is_rejected() {
-        let mut table = table(&[("a", "1")]);
+        let mut table = table(&[("_a", "1")]);
         let d = table
             .define(AliasDef {
-                name: "a".to_string(),
+                name: "_a".to_string(),
                 text: "2".to_string(),
                 text_offset: 0,
                 module: "util".to_string(),
@@ -684,12 +683,27 @@ mod tests {
     }
 
     #[test]
+    fn a_name_without_an_underscore_is_not_an_alias() {
+        let mut table = AliasTable::new();
+        let d = table
+            .define(AliasDef {
+                name: "answer".to_string(),
+                text: "1".to_string(),
+                text_offset: 0,
+                module: "main".to_string(),
+                span: Span::new(0, 1),
+            })
+            .unwrap_err();
+        assert!(d.message.contains("must start with '_'"), "{}", d.message);
+    }
+
+    #[test]
     fn scans_inline_declarations_with_raw_text() {
-        let src = "alias %*c*% = http.new(timeout = 30)\n";
+        let src = "alias _c = http.new(timeout = 30)\n";
         let tokens = Lexer::new(src).tokenize().unwrap();
         let defs = scan_inline_aliases(&tokens, src, "main").unwrap();
         assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0].name, "c");
+        assert_eq!(defs[0].name, "_c");
         assert_eq!(defs[0].text, "http.new(timeout = 30)");
     }
 }

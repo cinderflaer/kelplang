@@ -1,0 +1,6 @@
+// A `_name` that no alias declares is an ordinary identifier: the alias
+// pass leaves it alone. `_count` here is a plain local, not a reference.
+fun main() {
+    val _count = 2
+    print(_count + 1)
+}

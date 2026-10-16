@@ -1,6 +1,6 @@
 // The alias table is flat and global: a declaration in an imported module is
 // visible in the importing one, and a `[alias]` entry in coral.toml is not the
 // only way to share a substitution.
-alias %*greeting*% = "hello from an imported alias"
+alias _greeting = "hello from an imported alias"
 
 fun double(n: i32) => i32 = n * 2

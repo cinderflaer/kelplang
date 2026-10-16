@@ -3,8 +3,8 @@ backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: alias cycle: a -> b -> a
+error: alias cycle: _a -> _b -> _a
   --> <root>/kelpc/tests/fixtures/alias_cycle.kp:5:15
-  note: '%*a*%' is defined here
+  note: '_a' is defined here
   --> <root>/kelpc/tests/fixtures/alias_cycle.kp:4:1
 run-status: not run

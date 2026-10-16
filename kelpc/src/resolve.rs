@@ -1565,7 +1565,7 @@ impl Loader<'_> {
     /// then loads it for real.
     ///
     /// Two phases, because the two halves of M5.3 need each other: an `impl`
-    /// path may contain `%*alias*%`, so the file graph is only knowable after
+    /// path may contain `_alias`, so the file graph is only knowable after
     /// expansion, while the alias table is only complete once every file is
     /// known. Discovery therefore tolerates what it cannot yet resolve - a
     /// file that fails to expand or parse is skipped, an unresolvable import
@@ -1893,7 +1893,7 @@ fn raw_imports(tokens: &[Token]) -> Vec<(String, Span)> {
 }
 
 /// One `name = "path"` line of the `[alias]` section. The path is the module
-/// an `impl "%*name*%"` resolves to, so it must name a module below `src/`:
+/// an `impl "_name"` resolves to, so it must name a module below `src/`:
 /// a relative path with no leading `/` and no `..` component. The name itself
 /// is checked by `AliasTable::define`, which also reports a duplicate across
 /// the whole project.
