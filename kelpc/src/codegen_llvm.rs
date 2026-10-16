@@ -4094,8 +4094,9 @@ struct FnGen<'g, 'a> {
     /// spawns a worker, and for `naked` and `pd` initializer walks.
     frame: Option<Value<'a>>,
     /// The owned binding slots registered with the frame, in declaration order,
-    /// with their types. The handler drops each one that still holds a value.
-    registered: Vec<(Value<'a>, Ty)>,
+    /// with their types and their liveness flags (an `i8`, 1 while the slot holds
+    /// a value the frame owns). The handler drops each one whose flag is set.
+    registered: Vec<(Value<'a>, Ty, Value<'a>)>,
     /// The most recently entry-hoisted `alloca`, so the next one chains in
     /// right after it (`alloca`'s own doc comment) instead of always at the
     /// block's absolute start. `None` before the first one.
@@ -4418,16 +4419,36 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let registered = std::mem::take(&mut self.registered);
         let ptr = self.g.pty();
 
-        // The handler: one drop per registered slot, read through the registry.
+        // The handler: one drop per registered slot whose flag is set, read
+        // through the registry. The registry holds a pair per slot: the slot's
+        // address, then the address of its flag.
         let handler_ty = self.g.ctx.fn_type(self.g.ctx.void(), &[ptr], false);
         let handler = self.g.module.add_function(&format!("{}.unwind", self.fn_name), handler_ty);
         let handler_entry = handler.append_block("entry");
         self.g.builder.position_at_end(handler_entry);
         let registry = handler.get_param(0);
-        for (i, (_, ty)) in registered.iter().enumerate() {
-            let at = self.g.builder.build_gep(ptr, registry, self.g.v_i64(i as u64), "slot.at");
+        // Newest first, as on normal scope exit: the registry index is the
+        // registration index, so the reversed walk keeps each slot's address.
+        for (i, (_, ty, _)) in registered.iter().enumerate().rev() {
+            let at = self.g.builder.build_gep(ptr, registry, self.g.v_i64(2 * i as u64), "slot.at");
             let slot = self.g.builder.build_load(ptr, at, "slot");
+            let flag_at =
+                self.g.builder.build_gep(ptr, registry, self.g.v_i64(2 * i as u64 + 1), "flag.at");
+            let flag_ptr = self.g.builder.build_load(ptr, flag_at, "flag.ptr");
+            let flag = self.g.builder.build_load(self.g.ctx.i8(), flag_ptr, "flag");
+            let live = self.g.builder.build_icmp(
+                IntCmp::Ne,
+                flag,
+                self.g.ctx.const_int(self.g.ctx.i8(), 0, false),
+                "live",
+            );
+            let drop_block = handler.append_block("drop.live");
+            let next_block = handler.append_block("drop.next");
+            self.g.builder.build_cond_br(live, drop_block, next_block);
+            self.g.builder.position_at_end(drop_block);
             self.g.call_drop(slot, ty)?;
+            self.g.builder.build_br(next_block);
+            self.g.builder.position_at_end(next_block);
         }
         self.g.builder.build_ret_void();
 
@@ -4440,11 +4461,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let registry_value = if registered.is_empty() {
             self.g.ctx.const_null(ptr)
         } else {
-            let table_ty = self.g.ctx.array_type(ptr, registered.len() as u64);
+            let table_ty = self.g.ctx.array_type(ptr, 2 * registered.len() as u64);
             let table = self.g.builder.build_alloca(table_ty, "cleanup.slots");
-            for (i, (slot, _)) in registered.iter().enumerate() {
-                let at = self.g.builder.build_gep(ptr, table, self.g.v_i64(i as u64), "slot.at");
+            for (i, (slot, _, flag)) in registered.iter().enumerate() {
+                let at = self.g.builder.build_gep(ptr, table, self.g.v_i64(2 * i as u64), "slot.at");
                 self.g.builder.build_store(*slot, at);
+                let flag_at =
+                    self.g.builder.build_gep(ptr, table, self.g.v_i64(2 * i as u64 + 1), "flag.at");
+                self.g.builder.build_store(*flag, flag_at);
             }
             table
         };
@@ -4959,8 +4983,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // A spawning program clears the slot the drop freed, so the frame
             // finds nothing there on a panic (decision 125).
             if self.g.spawn_frames && self.g.owns_memory(&t.ty) {
-                let lty = self.lty(&t.ty)?;
-                self.g.builder.build_store(self.g.ctx.const_null(lty), slot);
+                self.clear_owned(slot, &t.ty)?;
             }
         }
         Ok(())
@@ -6496,7 +6519,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let moved = self.g.drops.moves_at(&self.fn_name, e)
             || (self.g.spawn_frames && self.g.drops.moves_any(&self.fn_name, e));
         if self.g.owns_memory(&e.ty) && moved {
-            self.g.builder.build_store(self.g.ctx.const_null(lty), slot);
+            self.clear_owned(slot, &e.ty)?;
         }
         Ok(value)
     }
@@ -6582,7 +6605,39 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g.builder.position_after(slot, self.entry);
         self.g.builder.build_store(null, slot);
         self.g.builder.position_at_end(self.cur);
-        self.registered.push((slot, ty.clone()));
+        self.register_flagged(ty, slot);
+        Ok(())
+    }
+
+    /// Records a registered slot with a fresh liveness flag, cleared in the entry
+    /// block and set at the current point: the value is about to be stored there.
+    /// A zero value can be a live one (a `datac` whose fields are all zero), so
+    /// the null of the slot alone cannot tell the handler what is still owned.
+    fn register_flagged(&mut self, ty: &Ty, slot: Value<'a>) {
+        let flag = self.entry_alloca_raw(self.g.ctx.i8(), "live.flag");
+        let off = self.g.ctx.const_int(self.g.ctx.i8(), 0, false);
+        self.g.builder.position_after(flag, self.entry);
+        self.g.builder.build_store(off, flag);
+        self.g.builder.position_at_end(self.cur);
+        let on = self.g.ctx.const_int(self.g.ctx.i8(), 1, false);
+        self.g.builder.build_store(on, flag);
+        self.registered.push((slot, ty.clone(), flag));
+    }
+
+    /// The liveness flag of a slot the frame registered, if it has one.
+    fn flag_of(&self, slot: Value<'a>) -> Option<Value<'a>> {
+        self.registered.iter().find(|(s, _, _)| s.as_raw() == slot.as_raw()).map(|(_, _, f)| *f)
+    }
+
+    /// Clears an owned slot after its value has been moved out or dropped: the
+    /// slot's null, and its flag off, so the frame does not drop it again.
+    fn clear_owned(&mut self, slot: Value<'a>, ty: &Ty) -> Result<(), String> {
+        let lty = self.lty(ty)?;
+        self.g.builder.build_store(self.g.ctx.const_null(lty), slot);
+        if let Some(flag) = self.flag_of(slot) {
+            let off = self.g.ctx.const_int(self.g.ctx.i8(), 0, false);
+            self.g.builder.build_store(off, flag);
+        }
         Ok(())
     }
 
@@ -6601,7 +6656,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g.builder.position_after(slot, self.entry);
         self.g.builder.build_store(null, slot);
         self.g.builder.position_at_end(self.cur);
-        self.registered.push((slot, ty.clone()));
+        self.register_flagged(ty, slot);
         Ok(())
     }
 
@@ -6622,8 +6677,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         for (slot, ty) in held {
             self.g.call_drop(slot, &ty)?;
             if self.frame_owns(&ty) {
-                let lty = self.lty(&ty)?;
-                self.g.builder.build_store(self.g.ctx.const_null(lty), slot);
+                self.clear_owned(slot, &ty)?;
             }
         }
         Ok(())
@@ -6654,6 +6708,11 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let drops = self.drops_at_assign(span);
                 self.emit_drops(&drops)?;
                 self.g.builder.build_store(v, slot);
+                // The slot holds a new value the frame owns from now on.
+                if let Some(flag) = self.flag_of(slot) {
+                    let on = self.g.ctx.const_int(self.g.ctx.i8(), 1, false);
+                    self.g.builder.build_store(on, flag);
+                }
                 Ok(())
             }
             // A field write: the field's address, then a store of the new
@@ -8754,8 +8813,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // its entry on, so the caller's slots are cleared first: a panic in
             // the callee must not drop a value twice.
             for (slot, ty) in &moved {
-                let lty = self.lty(ty)?;
-                self.g.builder.build_store(self.g.ctx.const_null(lty), *slot);
+                self.clear_owned(*slot, ty)?;
             }
             // A call that yields `void` must not be given a name: an instruction
             // with a name has to have a value, and the verifier rejects a named

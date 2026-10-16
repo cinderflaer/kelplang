@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1150 ran=574 c_refused=543 excluded=33
+# counts candidates=1154 ran=578 c_refused=543 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -599,6 +599,10 @@ fixture_owned_rebind	ran	exit 0		62be4935b357e23806c8f448cfc9f627a277e3f9d4cbce1
 fixture_owned_return_endless_loop	ran	exit 0		b417376a9a864c37a4809c4d5f01c60751b271fc35b58297ad0fd52fd4306e09
 fixture_owned_statement	c-refused		error: this expression produces an owned 'String' value that is never used — bind it to a 'val' or 'var', print it, or pass it to something that takes it by value	
 fixture_panic_bound_message	ran	exit 1	panic: bound message	9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb
+fixture_panic_drop_arg	ran	exit 0		2a5831a91a557d78e2123d587dba0a3cf859b890289b66481ce1e264bc55c2bc
+fixture_panic_drop_handle	ran	exit 0		fc861f2f897319aa3c0d8345ac872085b7fa74e3c2194ca9ed4c08e6b15fffd0
+fixture_panic_drop_moved	ran	exit 0		cfb378f229728ae7c05df65c87f510d047facf34d1b99e8daaa8e679de194542
+fixture_panic_drop_order	ran	exit 0		af43271d593fe6cc8014e89be4b123a4f221aa3630c2389e6d87b2a0ed43e27d
 fixture_panic_msg	ran	exit 1	panic: deliberate failure	9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb
 fixture_panic_not_a_message	c-refused		error: cannot pass a value of type 'i32' to 'panic'	
 fixture_panic_owned_message	ran	exit 1	panic: 7	9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb

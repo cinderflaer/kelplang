@@ -163,6 +163,11 @@ fn join(a: ResourceKind, b: ResourceKind) -> ResourceKind {
 struct Walk<'a> {
     decls: &'a dyn Fn(&str) -> Option<DeclFacts>,
     path: Vec<String>,
+    /// Whether a user destructor is allowed to cross. Only a thread argument
+    /// lifts the rule (issue 233): the worker owns the value and its frame runs
+    /// the destructor. A closure environment or a thread result keeps it out
+    /// (decision 21).
+    user_drop_crosses: bool,
 }
 
 fn classify(ty: &Ty, walk: &mut Walk<'_>) -> ResourceKind {
@@ -260,7 +265,7 @@ fn struct_kind(name: &str, walk: &mut Walk<'_>) -> ResourceKind {
 /// which reads the declarations.
 pub fn resource_kind(ty: &Ty) -> ResourceKind {
     let none = |_: &str| -> Option<DeclFacts> { None };
-    let mut walk = Walk { decls: &none, path: Vec::new() };
+    let mut walk = Walk { decls: &none, path: Vec::new(), user_drop_crosses: false };
     classify(ty, &mut walk)
 }
 
@@ -268,7 +273,7 @@ pub fn resource_kind(ty: &Ty) -> ResourceKind {
 /// declaration with a destructor is a resource, and so is one with a resource
 /// field. A declaration that `decls` does not know stays `Declared`.
 pub fn resolve(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>) -> ResourceKind {
-    let mut walk = Walk { decls, path: Vec::new() };
+    let mut walk = Walk { decls, path: Vec::new(), user_drop_crosses: false };
     classify(ty, &mut walk)
 }
 
@@ -352,9 +357,8 @@ pub fn check_heap_uses(
     ordered.sort_by_key(|u| u.span.start);
     for u in ordered {
         let kind = match u.slot {
-            HeapSlot::ThreadArgument | HeapSlot::ThreadResult | HeapSlot::SpawnEntryCapture => {
-                crossing_kind(&u.ty, decls)
-            }
+            HeapSlot::ThreadArgument => thread_argument_kind(&u.ty, decls),
+            HeapSlot::ThreadResult | HeapSlot::SpawnEntryCapture => crossing_kind(&u.ty, decls),
             _ => resolve(&u.ty, decls),
         };
         check_heap_slot(u.slot, &u.ty.display(), kind, u.span)?;
@@ -408,7 +412,10 @@ fn struct_crosses(name: &str, walk: &mut Walk<'_>) -> bool {
     let Some(facts) = (walk.decls)(name) else {
         return false;
     };
-    if facts.has_user_drop {
+    // A user destructor keeps a value from crossing, except as a thread argument:
+    // there the worker owns it and its frame runs the destructor on every exit,
+    // panic included (issue 233). Its fields still have to cross.
+    if facts.has_user_drop && !walk.user_drop_crosses {
         return false;
     }
     fields_cross(&facts.fields, name, walk)
@@ -429,7 +436,17 @@ fn fields_cross(fields: &[Ty], name: &str, walk: &mut Walk<'_>) -> bool {
 /// `Memory` when it crosses, otherwise the heap verdict, so the refusal names the
 /// reason. Heap slots other than the two thread slots keep `resolve`.
 pub fn crossing_kind(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>) -> ResourceKind {
-    let mut walk = Walk { decls, path: Vec::new() };
+    crossing_kind_with(ty, decls, false)
+}
+
+/// The crossing verdict for a thread argument: as [`crossing_kind`], except that
+/// a user destructor whose fields cross is let in (issue 233).
+pub fn thread_argument_kind(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>) -> ResourceKind {
+    crossing_kind_with(ty, decls, true)
+}
+
+fn crossing_kind_with(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>, user_drop_crosses: bool) -> ResourceKind {
+    let mut walk = Walk { decls, path: Vec::new(), user_drop_crosses };
     // A closure value itself never crosses as an argument or result: its environment
     // is a heap object the start record does not root (decision 131). A closure held
     // inside a crossing declaration, such as the pool's `Job`, is unchanged.
@@ -885,6 +902,27 @@ mod tests {
                 "{label} should stay refused"
             );
         }
+    }
+
+    /// Issue 233: a user destructor whose fields cross is let in as a thread
+    /// argument only. A closure environment and a thread result keep the rule of
+    /// decision 21, so the same type is still refused there.
+    #[test]
+    fn a_user_destructor_crosses_as_a_thread_argument_only() {
+        let decls = |name: &str| -> Option<DeclFacts> {
+            match name {
+                "Guard" => Some(DeclFacts { has_user_drop: true, fields: vec![Ty::I32] }),
+                "Holder" => Some(DeclFacts { has_user_drop: true, fields: vec![Ty::String] }),
+                _ => None,
+            }
+        };
+        let guard = Ty::Struct("Guard".into());
+        assert_eq!(thread_argument_kind(&guard, &decls), ResourceKind::Memory);
+        assert_eq!(crossing_kind(&guard, &decls), ResourceKind::Resource);
+        // A destructor over a String field crosses as a String does: the worker
+        // owns the value, and the start record holds it the way it holds a String.
+        assert_eq!(thread_argument_kind(&Ty::Struct("Holder".into()), &decls), ResourceKind::Memory);
+        assert_eq!(crossing_kind(&Ty::Struct("Holder".into()), &decls), ResourceKind::Resource);
     }
 
     /// A value a direct `thread.spawn` literal captures (decision 127) takes the

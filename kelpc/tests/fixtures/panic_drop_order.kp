@@ -1,0 +1,26 @@
+// Tidepool step 1 (issue 233): a worker that panics runs the user `Drop` of every
+// owned local it holds, newest first, as normal scope exit does. The drops print
+// before the joiner sees the panic, and each runs once.
+impl "std/thread"
+impl "std/result"
+
+datac Noisy(val tag: i32)
+
+fun mut Noisy.drop() {
+    print("drop")
+    print(self.tag)
+}
+
+fun worker(n: i64) => i64 {
+    val a = Noisy(tag = 1)
+    val b = Noisy(tag = 2)
+    panic("boom")
+}
+
+fun main() {
+    val h = thread.spawn(worker, 7)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

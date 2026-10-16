@@ -10893,6 +10893,40 @@ fn a_panicking_worker_is_seen_as_an_error_by_its_joiner() {
     );
 }
 
+/// Tidepool step 1 (issue 233): a panicking worker runs the user `Drop` of each
+/// owned local, newest first, before its joiner sees the panic.
+#[test]
+fn a_panicking_worker_drops_its_owned_locals_newest_first() {
+    assert_compiles_and_runs("tests/fixtures/panic_drop_order.kp", "drop\n2\ndrop\n1\nboom\n");
+}
+
+/// Tidepool step 1 (issue 233): a value moved out on one branch is not dropped
+/// again on the panic path; the branch that does not move keeps both drops.
+#[test]
+fn a_value_moved_out_on_one_branch_is_not_dropped_twice_on_panic() {
+    assert_compiles_and_runs(
+        "tests/fixtures/panic_drop_moved.kp",
+        "drop\n2\ndrop\n1\nboom\nkeep\ndrop\n2\ndrop\n1\nboom\n",
+    );
+}
+
+/// Tidepool step 1 (issue 233): a file held by a worker's owned wrapper is closed
+/// on panic, because the wrapper's user `Drop` closes it.
+#[test]
+fn a_file_held_by_a_panicking_worker_is_closed_by_its_wrapper() {
+    assert_compiles_and_runs("tests/fixtures/panic_drop_handle.kp", "closed\nboom\n");
+}
+
+/// Tidepool step 4 (issue 233): a user `Drop` value is a thread argument. The
+/// worker's frame drops it on panic, and the worker's drop runs once on return.
+#[test]
+fn a_user_drop_value_passed_to_a_worker_is_dropped_by_the_worker() {
+    assert_compiles_and_runs(
+        "tests/fixtures/panic_drop_arg.kp",
+        "drop\n5\nboom\nok\ndrop\n6\n0\n",
+    );
+}
+
 /// `MISSING-r7Wqb`: a worker that returns `unit` can be spawned *and* joined.
 /// `thread.join` on a `Thread<unit>` builds `Result<unit, ThreadErr>`, whose
 /// `Ok` variant now lays out payload-less rather than refusing `unit`.

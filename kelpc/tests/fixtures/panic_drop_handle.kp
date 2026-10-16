@@ -1,0 +1,28 @@
+// Tidepool step 1 (issue 233): a file held in a worker is closed on panic when
+// the worker owns a user `Drop` that closes it. `io.File` itself has no drop
+// (its close is explicit by design), so the `Handle` wrapper is the owner. The
+// file is /dev/null, so nothing is written anywhere.
+impl "std/thread"
+impl "std/result"
+impl "std/fs"
+impl "std/io"
+
+datac Handle(val f: io.File)
+
+fun mut Handle.drop() {
+    self.f.close()
+    print("closed")
+}
+
+fun worker(n: i64) => i64 {
+    val h = Handle(f = fs.open("/dev/null", "w"))
+    panic("boom")
+}
+
+fun main() {
+    val t = thread.spawn(worker, 0)
+    when thread.join(t) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

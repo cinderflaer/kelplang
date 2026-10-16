@@ -1,0 +1,40 @@
+// Tidepool step 1 (issue 233): a value moved out on one branch is not dropped
+// again on the panic path. The worker gets `flag` from its argument; on the
+// moving branch `b` goes to `keep`, which drops it when `keep` returns. The
+// frame then drops only what the worker still owns: `a`, and `b` only when it
+// was not moved.
+impl "std/thread"
+impl "std/result"
+
+datac Noisy(val tag: i32)
+
+fun mut Noisy.drop() {
+    print("drop")
+    print(self.tag)
+}
+
+fun keep(n: move Noisy) {
+    print("keep")
+}
+
+fun worker(flag: i64) => i64 {
+    val a = Noisy(tag = 1)
+    val b = Noisy(tag = 2)
+    if flag == 1 {
+        keep(b)
+    }
+    panic("boom")
+}
+
+fun run(flag: i64) {
+    val h = thread.spawn(worker, flag)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}
+
+fun main() {
+    run(0)
+    run(1)
+}

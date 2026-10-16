@@ -1,0 +1,35 @@
+// Tidepool step 4 (issue 233): a user `Drop` value passed as a thread argument.
+// The worker owns the value it receives, so its frame drops it when the worker
+// panics, and the worker's own drop runs once when it returns normally. The
+// spawning side does not drop it again.
+impl "std/thread"
+impl "std/result"
+
+datac Noisy(val tag: i32)
+
+fun mut Noisy.drop() {
+    print("drop")
+    print(self.tag)
+}
+
+fun boom(n: move Noisy) => i64 {
+    panic("boom")
+}
+
+fun ok(n: move Noisy) => i64 {
+    print("ok")
+    0
+}
+
+fun main() {
+    val h1 = thread.spawn(boom, Noisy(tag = 5))
+    when thread.join(h1) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    val h2 = thread.spawn(ok, Noisy(tag = 6))
+    when thread.join(h2) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}
