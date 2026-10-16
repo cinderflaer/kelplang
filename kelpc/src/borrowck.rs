@@ -11,7 +11,7 @@
 //!
 //! ## Borrowing (M4)
 //!
-//! Per `plan/syntax.md` §5, a `datac`-typed function parameter is an
+//! Per `design/syntax.md (kelp wiki)` §5, a `datac`-typed function parameter is an
 //! implicit shared borrow unless `mut`-marked (exclusive) - `infer.rs`
 //! resolves this into `Ty::Ref` and, at call sites, synthesizes the
 //! `tir::ExprKind::Ref` node itself (callers never write `&`). There is no
@@ -666,7 +666,7 @@ struct Ctx {
     /// site a move could double up with, so only their move sites are recorded
     /// as clears.
     maybe_moved: std::collections::HashSet<BindingId>,
-    /// The lists a `for` in this frame is currently walking (`plan/syntax.md`
+    /// The lists a `for` in this frame is currently walking (`design/syntax.md (kelp wiki)`
     /// 6.2), innermost last. A mutation of one is refused while its body runs;
     /// a written `while` over an index pushes nothing, which is the supported
     /// way to mutate a list a loop walks.
@@ -1390,7 +1390,7 @@ impl Ctx {
     }
 
     /// Refuses a mutation of `place` while a `for` in this frame is walking it
-    /// (`plan/syntax.md` 6.2). The comparison is on the canonical path, so
+    /// (`design/syntax.md (kelp wiki)` 6.2). The comparison is on the canonical path, so
     /// `for x in self.items { self.other.push(x) }` is legal and naming the
     /// iterated list is refused. The span is the `for` line's iterable, not the
     /// mutation, because the rule is about the loop.

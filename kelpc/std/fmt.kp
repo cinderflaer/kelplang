@@ -11,7 +11,7 @@ impl "std/str"
 
 /// A value that has a text form. The front end lowers `"${x}"` and the
 /// argument of `print`/`print!` to `x.to_text()` (language-completeness 5,
-/// `plan/traits.md` 13), so the call returns an owned `String` the ordinary
+/// `design/traits.md (kelp wiki)` 13), so the call returns an owned `String` the ordinary
 /// print path already formats.
 pub trait Display {
     /// The text form of the value, as an owned `String`.

@@ -984,7 +984,7 @@ fn first_try_in_expr(expr: &Expr) -> Option<Span> {
 
 /// The first `return` inside a deferred action, not descending into a `fun`
 /// literal, whose `return` belongs to the closure. `break`/`continue` are not
-/// statements in the language (`plan/syntax.md` 11), so `return` is the only
+/// statements in the language (`design/syntax.md (kelp wiki)` 11), so `return` is the only
 /// exit an action could write today.
 fn first_return_in_expr(expr: &Expr) -> Option<Span> {
     match expr {

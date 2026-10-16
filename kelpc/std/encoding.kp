@@ -599,7 +599,7 @@ fun percent_decode(text: &str) => result.Result<String, DecodeErr> {
 /* ----- SHA-1 (RFC 3174) ----- */
 
 /// One left rotation by `n` bits. The call sites never pass 0, and the branch is
-/// here because a shift by 32 is undefined in v1 (`plan/syntax.md` 5), which is
+/// here because a shift by 32 is undefined in v1 (`design/syntax.md (kelp wiki)` 5), which is
 /// what `rotl32(x, 0)` would otherwise be.
 fun rotl32(x: u32, n: u32) => u32 {
     if n == 0 {

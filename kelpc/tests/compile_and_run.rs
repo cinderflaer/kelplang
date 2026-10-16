@@ -848,7 +848,7 @@ fn a_public_datac_may_not_name_a_private_type_inside_a_function_type() {
 fn an_exported_signature_may_not_name_a_private_type_declared_after_it() {
     // The check runs over the merged program with the whole export set in
     // hand, so the order of two declarations in one file does not decide the
-    // answer (A-13, `plan/syntax.md` 13.4).
+    // answer (A-13, `design/syntax.md (kelp wiki)` 13.4).
     assert_rejected_with(
         "tests/fixtures/visibility_pub_late_type.kp",
         "'describe' is exported but its signature names 'Hidden'",
@@ -5039,7 +5039,7 @@ fn the_equality_operator_is_refused_without_a_declared_eq() {
 }
 
 // ---------------------------------------------------------------------------
-// Language-completeness 5: operator traits and `Display` (`plan/traits.md` 13).
+// Language-completeness 5: operator traits and `Display` (`design/traits.md (kelp wiki)` 13).
 // `std/ops` declares `Add`/`Sub`/`Mul`/`Div`/`Rem`/`Neg`/`Ord` and `std/fmt`
 // declares `Display`, and the front end lowers each operator and each
 // interpolation into the method it names, so both backends run the ordinary
@@ -8754,7 +8754,7 @@ fn carriage_return_is_an_escape_like_any_other() {
 
 #[test]
 fn a_block_comment_spans_and_nests_and_an_escape_writes_several_lines() {
-    // `/* ... */` is new syntax (`plan/syntax.md` §2.1): it may span lines, it
+    // `/* ... */` is new syntax (`design/syntax.md (kelp wiki)` §2.1): it may span lines, it
     // nests, and it may sit inline before a statement. The fixture also pins
     // one `print` writing two lines through `\n`, and `print!` with no
     // terminating newline.
@@ -8766,7 +8766,7 @@ fn a_block_comment_spans_and_nests_and_an_escape_writes_several_lines() {
 
 #[test]
 fn a_documentation_comment_is_a_comment_to_the_compiler() {
-    // `//!` starts a documentation block (`plan/syntax.md` §2.1). The compiler
+    // `//!` starts a documentation block (`design/syntax.md (kelp wiki)` §2.1). The compiler
     // reads it as a comment, so the fixture has to build and run like any
     // other program; what is refused is the trailing spelling, below.
     assert_compiles_and_runs("tests/fixtures/documentation_comment.kp", "7\n");
@@ -9169,7 +9169,7 @@ fn if_let_else_chain_reads_its_scrutinee_more_than_once() {
 
 #[test]
 fn let_else_binds_through_option_and_enum() {
-    // plan/syntax.md 4.1: a matched let-else binds for the rest of the block,
+    // design/syntax.md (kelp wiki) 4.1: a matched let-else binds for the rest of the block,
     // and a missed one runs its else block (return, or continue in a loop).
     assert_compiles_and_runs(
         "tests/fixtures/let_else.kp",
@@ -10832,7 +10832,7 @@ fn a_thread_handle_cannot_be_a_container_element() {
 
 // ---------------------------------------------------------------------------
 // MISSING-z2bB9: tuple types and the destructuring binding that takes one
-// apart (`plan/syntax.md` 3 and 4). A tuple is a record with positional
+// apart (`design/syntax.md (kelp wiki)` 3 and 4). A tuple is a record with positional
 // fields, so it is a value like every other owned one: it owns its elements,
 // it takes the derived deep copy and the derived order a `datac` takes in
 // position order, it may appear in every position the element rules allow, and
@@ -10927,7 +10927,7 @@ fn the_tuple_surface_is_refused_where_its_rules_refuse_it() {
     }
 }
 
-// Open item 75 prototype (`plan/trailing-closure.md`): a `{ ... }` on the same
+// Open item 75 prototype (`kelp issue #242`): a `{ ... }` on the same
 // line as a call is that call's last argument, a zero-parameter Unit `fun`.
 #[test]
 fn a_trailing_block_is_the_calls_last_argument() {
@@ -13326,7 +13326,7 @@ fn a_defer_naming_a_later_local_is_refused() {
     );
 }
 
-// Kernel stage 6 `errdefer` (`plan/syntax.md`, errdefer): an action that runs
+// Kernel stage 6 `errdefer` (`design/syntax.md (kelp wiki)`, errdefer): an action that runs
 // only when the function leaves through its error variant. `defer.rs` lowers the
 // returned value's test into a `when`, so the error path runs the errdefers and
 // the other paths do not.
@@ -13372,7 +13372,7 @@ fn an_errdefer_naming_a_later_local_is_refused() {
 }
 
 // A `String` passed to a `str` parameter is borrowed for the call, as `.as_str()`
-// would borrow it (`plan/syntax.md`, 11.2).
+// would borrow it (`design/syntax.md (kelp wiki)`, 11.2).
 
 /// A `String` argument for a `str` parameter prints the text the callee sees and
 /// returns its length, exactly as the explicit `.as_str()` form does.
@@ -17891,7 +17891,7 @@ allocs
 
 /// Polyp v3 stage 5: the benchmark builds and prints a table.
 ///
-/// `examples/polyp-bench` runs the five scenarios in `plan/polyp-v3.md`'s table. The test sets
+/// `examples/polyp-bench` runs the five scenarios in `design/polyp-v3.md (kelp wiki)`'s table. The test sets
 /// `POLYP_BENCH_QUICK`, which shortens every scenario to one frame per run, so the whole run fits
 /// in the bounded runner; the counts it pins are the same numbers the full
 /// run's table carries. The wall-clock columns are the host's and are only checked to be numbers.
@@ -18134,7 +18134,7 @@ fn a_while_true_loop_that_breaks_continues_after_the_loop() {
 }
 
 // Language-completeness 8: the interaction matrix of the traits, iterators, const
-// generics, operator and conversion features (`plan/traits.md` 14). Each cell is a
+// generics, operator and conversion features (`design/traits.md (kelp wiki)` 14). Each cell is a
 // fixture; a refused cell pins its message, an accepted one its output.
 #[test]
 fn matrix_associated_types_cannot_be_boxed_as_a_trait_object() {
@@ -18313,7 +18313,7 @@ fn a_freestanding_shift_out_of_range_reaches_the_projects_panic_handler() {
 // ---------------------------------------------------------------------------
 // Evaluation order: every call argument, template interpolation, operator
 // operand and aggregate field is evaluated strictly left to right on both
-// backends (`plan/syntax.md`, section 5). The fixtures record the call order
+// backends (`design/syntax.md (kelp wiki)`, section 5). The fixtures record the call order
 // into a passdown and print it, so a C compiler's own order shows up as a diff.
 // ---------------------------------------------------------------------------
 

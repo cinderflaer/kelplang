@@ -346,7 +346,7 @@ pub fn claim_domain(key: &str) -> Option<&'static str> {
 pub const FRAME_SIZE: u128 = 4096;
 
 /// The `datac`s whose constructor is sealed to their own module. The shipped
-/// library exports every item (a transitional rule, `plan/syntax.md` 13.4) and
+/// library exports every item (a transitional rule, `design/syntax.md (kelp wiki)` 13.4) and
 /// Kelp has no field-level `pub`, so a capability value's constructor is
 /// private by *name*: `infer.rs` refuses `alias.Type(...)` for these keys
 /// wherever the caller is not the declaring module. A `Line` or a `Frame` is

@@ -1,4 +1,4 @@
-/* std/ops, the operator traits (language-completeness 5, `plan/traits.md` 13).
+/* std/ops, the operator traits (language-completeness 5, `design/traits.md (kelp wiki)` 13).
 
    Declaring one of these for a `datac`/`enum` gives the type the operator, and
    the front end lowers the operator into the trait method before borrow
@@ -50,7 +50,7 @@ pub trait Neg {
 
 // The order trait: `cmp` returns the sign of the order (negative, zero,
 // positive), like `memcmp`. It supplies `<`, `<=`, `>` and `>=` and not
-// equality: `==`/`!=` come from a declared `eq` (`plan/syntax.md` 5).
+// equality: `==`/`!=` come from a declared `eq` (`design/syntax.md (kelp wiki)` 5).
 /// The ordering operators `<`, `<=`, `>` and `>=`: `a < b` is `a.cmp(&b) < 0`.
 /// It does not supply `==` or `!=`, which come from a declared `eq`.
 pub trait Ord {

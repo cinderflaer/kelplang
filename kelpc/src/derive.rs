@@ -1,4 +1,4 @@
-//! `derive(eq, hash)` (plan/syntax.md 12.2): a `datac` or `enum` with a
+//! `derive(eq, hash)` (design/syntax.md (kelp wiki) 12.2): a `datac` or `enum` with a
 //! `derive(...)` line above it gets an ordinary `fun T.eq(other: &T)` and
 //! `fun T.hash()`. The methods are written as Kelp source here and parsed by
 //! the same parser as the rest of the file, so the declared-pair machinery

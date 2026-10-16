@@ -51,7 +51,7 @@
    A handle nobody joins is dropped by detaching the worker, which keeps running
    while its record is leaked rather than freed under it; a panicking worker's
    frame is abandoned the same way. Both are deliberate and recorded in
-   `plan/mk9-memory-model.md` section 5.
+   `kelp issue #245` section 5.
 
    The fence: the module's fence is documented here rather than declared, exactly
    as `std/atomic` documents the atomic methods it declares nowhere: a fence is

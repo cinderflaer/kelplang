@@ -1,4 +1,4 @@
-//! The corpus for `kelpc fmt` (roadmap open item 13, `plan/syntax.md` §19).
+//! The corpus for `kelpc fmt` (roadmap open item 13, `design/syntax.md (kelp wiki)` §19).
 //!
 //! `kelpc fmt` is a token-level whitespace reformatter: it lexes the source
 //! with comments kept, then re-emits every token by copying its own source
@@ -79,7 +79,7 @@
 //! outcome, pinned here so it cannot change silently (defect 13).
 //!
 //! Alongside the properties, `tests/fmt_corpus/` holds small golden pairs:
-//! `<name>.kp` is an input, `<name>.fmt.kp` the output `plan/syntax.md` and the
+//! `<name>.kp` is an input, `<name>.fmt.kp` the output `design/syntax.md (kelp wiki)` and the
 //! formatter's design say it must have. Each input's first line names the rule
 //! it pins, and `kelpc/src/fmt.rs` (`RULES`) is the authority on which rule
 //! claims which pair: every rule names at least one pair, every pair is claimed
