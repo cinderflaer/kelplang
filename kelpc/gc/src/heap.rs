@@ -118,6 +118,14 @@ unsafe fn set_start_bit(h: usize, set: bool) {
     }
 }
 
+/// Whether `n` more pool blocks keep the shared pool and the live blocks'
+/// charge within `heap_max` (section 3). With no block charged, this is the
+/// old rule: the pool may take every block of the region. Heap lock held.
+unsafe fn budget_allows(n: usize) -> bool {
+    let s = st();
+    (s.used_blocks + n) * BLOCK + s.charged_bytes <= s.heap_max
+}
+
 /// Advance the bump cursor to the next hole of at least one line, or a free
 /// block. Holes are the runs of lines with no mark, computed at the last cycle.
 unsafe fn next_hole() -> bool {
@@ -129,6 +137,12 @@ unsafe fn next_hole() -> bool {
         let b = s.alloc_block;
         let m = blk(b);
         match (*m).state {
+            FREE if !budget_allows(1) => {
+                // Taking another pool block would pass heap_max with the live
+                // blocks' charge (section 3). Skip it; ACTIVE blocks still hold holes.
+                s.alloc_block = b + 1;
+                s.alloc_line = 0;
+            }
             FREE => {
                 (*m).state = ACTIVE;
                 s.used_blocks += 1;
@@ -199,7 +213,7 @@ unsafe fn take_run(total: usize) -> bool {
             b += 1;
         }
         let n = b - start;
-        if n * BLOCK >= total {
+        if n * BLOCK >= total && budget_allows(n) {
             for i in start..b {
                 (*blk(i)).state = LARGE;
             }

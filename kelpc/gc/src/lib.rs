@@ -6,6 +6,7 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
+pub mod block;
 pub mod heap;
 pub mod mark;
 pub mod state;

@@ -189,6 +189,7 @@ unsafe fn reset() {
     core::ptr::write_bytes(s.large as *mut u8, 0, s.large_cap * 8);
     core::ptr::write_bytes(THREADS.get() as *mut u8, 0, size_of::<[crate::threads::ThreadRec; MAX_THREADS]>());
     crate::threads::reset_roots();
+    st().charged_bytes = 0;
     REGIONS.lock().unwrap().clear();
     s.large_n = 0;
     s.large_sorted = true;
@@ -1778,4 +1779,80 @@ fn t40e_first_clearing_happens_at_the_manifest_trigger() {
 fn t40f_first_clearing_lands_in_the_pool_block_of_the_trigger() {
     let (code, err) = run_child("first_clear_block", &[]);
     assert_eq!(code, Some(0), "first clearing was not in the trigger's pool block: exit {code:?}\n{err}");
+}
+
+// ---- Step 3 (Tidepool, runtime of manual blocks): one element per chunk, rooted and charged. ----
+
+/// Stat counters, read under the test lock.
+fn stats_now() -> KelpGcStats {
+    let mut s = KelpGcStats::default();
+    unsafe { kelp_gc_stats(&mut s) };
+    s
+}
+
+/// A block holds a zeroed element, keeps what it points to alive through a
+/// clearing, charges its chunk and releases both on free. A stale free does nothing.
+#[test]
+fn a_block_is_zeroed_rooted_and_charged_until_freed() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        let before = stats_now();
+        let (p, h) = crate::block::alloc(&ROOT_PTR).unwrap_or_else(|e| panic!("status {e}"));
+        assert_eq!(*(p as *const usize), 0, "the element starts zeroed");
+        let obj = kelp_gc_alloc(&NODE) as usize;
+        *(p as *mut usize) = obj;
+        crate::threads::collect();
+        assert_eq!(kelp_gc_is_heap_ptr(obj as *const u8), 1, "the root keeps its target alive");
+        let mid = stats_now();
+        assert_eq!(mid.roots, before.roots + 1);
+        assert_eq!(mid.charged_bytes, before.charged_bytes + 8);
+        assert!(crate::block::free(h, p, &ROOT_PTR));
+        assert!(!crate::block::free(h, p, &ROOT_PTR), "a second free is stale");
+        let after = stats_now();
+        assert_eq!(after.roots, before.roots);
+        assert_eq!(after.charged_bytes, before.charged_bytes);
+        kelp_gc_thread_detach();
+    }
+}
+
+/// Creation past `heap_max` runs one clearing first, then fails with
+/// BLOCK_OVER_BUDGET. Every chunk is 1 MiB and untouched, so no memory is committed.
+#[test]
+fn a_block_past_heap_max_runs_a_clearing_then_fails() {
+    static BIG: KelpGcType = KelpGcType {
+        id: 200,
+        size: 1 << 20,
+        align: 8,
+        flags: 0,
+        n_ptrs: 0,
+        ptr_off: core::ptr::null(),
+        tag_off: 0,
+        n_variants: 0,
+        variants: core::ptr::null(),
+    };
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        let before = stats_now();
+        let mut held = Vec::new();
+        let status = loop {
+            match crate::block::alloc(&BIG) {
+                Ok(b) => held.push(b),
+                Err(e) => break e,
+            }
+            assert!(held.len() <= 256, "more than heap_max of blocks was granted");
+        };
+        assert_eq!(status, crate::block::BLOCK_OVER_BUDGET);
+        let after = stats_now();
+        assert!(after.collections > before.collections, "the failure ran a clearing first");
+        assert_eq!(after.charged_bytes, before.charged_bytes + held.len() as u64 * (1 << 20));
+        for (p, h) in held {
+            assert!(crate::block::free(h, p, &BIG));
+        }
+        assert_eq!(stats_now().charged_bytes, before.charged_bytes);
+        kelp_gc_thread_detach();
+    }
 }

@@ -34,6 +34,7 @@ empty on release.
 
 ## changed
 
+- The collector's block runtime (not reachable from source yet) charges each block's chunk against `heap_max`, the shared pool refills only within what the live blocks leave, and a block creation past the budget runs one clearing before it fails.
 - The standard library, the examples and the tests no longer write `.as_str()` at call arguments whose parameter is `str` or `&str`, such as `str.concat(a, b)` or `out.push_str(...)`: the checker takes the same borrow implicitly. Sites that still need the explicit form (`String.from_str`, generic `Children` methods, trait methods, function-typed parameters and `Bytes` values) keep it.
 - A parse error prints the token as written (`found ';'`, `found 'fun'`, `found end of file`) where it printed a Rust debug name (`found Semi`, `found Ident("fn")`).
 - `kelpc repl` builds run under a resumable memory guard: when memory runs low the guard stops the build's child tools, the line is refused with a low-memory message, and the session continues. A parse error in a typed line points at its place in the line, and an unknown name in the REPL no longer tells the user to declare it with `val` or `var`.
