@@ -123,6 +123,12 @@ impl "std/option"
 impl "std/result"
 impl "std/thread"
 
+/// A fresh channel number for the select wakeup registry (kelp-rt `stdlib/sync.rs`).
+extern fun chan_id_raw() => u64
+
+/// Wakes every select waiting on channel `chan`.
+extern fun chan_wake_raw(chan: u64)
+
 /// Why `recv` has no value: every sender is gone and the queue is empty.
 enum RecvErr {
     /// Every sender is gone and the queue is empty.
@@ -155,7 +161,9 @@ datac ChanMeta(
     /// How many values have been queued. Gives each send its ticket.
     var pushed: usize,
     /// How many values have been taken off the queue.
-    var taken: usize
+    var taken: usize,
+    /// How many receivers are blocked on this channel. A rendezvous send is ready only while one waits.
+    var waiting: usize
 )
 
 /// What a sender owns besides the queue, and the destructor that closes the
@@ -163,6 +171,8 @@ datac ChanMeta(
 datac SendEnd(
     /// False for the zeroed value a partial move leaves behind. Such a value closes nothing.
     val live: bool,
+    /// The channel number, for waking selects.
+    val id: u64,
     /// The state both ends share.
     val meta: Mutex<ChanMeta>,
     /// Wakes receivers waiting for a value.
@@ -175,6 +185,8 @@ datac SendEnd(
 datac RecvEnd(
     /// False for the zeroed value a partial move leaves behind. Such a value closes nothing.
     val live: bool,
+    /// The channel number, for waking selects.
+    val id: u64,
     /// The state both ends share.
     val meta: Mutex<ChanMeta>,
     /// Wakes receivers waiting for a value.
@@ -211,6 +223,7 @@ fun mut SendEnd.drop() {
     if last {
         ne.notify_all()
     }
+    chan_wake_raw(id)
 }
 
 /// Marks the receiver gone and wakes blocked senders.
@@ -220,6 +233,7 @@ fun mut RecvEnd.drop() {
     }
     meta.lock { s -> s.rx_alive = false }
     nf.notify_all()
+    chan_wake_raw(id)
 }
 
 /// One outcome of a `select`: the case at `index` (0-based) received `value`,
@@ -242,12 +256,13 @@ enum Pick<T> {
 /// Builds a channel holding at most `cap` values (`bounded`), or none of a limit
 /// (`!bounded`). `handoff` is the rendezvous: each send also waits for its take.
 fun make_channel<T>(cap: usize, bounded: bool, handoff: bool) => (Sender<T>, Receiver<T>) {
-    val meta = Mutex.new(ChanMeta(count = 0, senders = 1, rx_alive = true, cap = cap, bounded = bounded, handoff = handoff, pushed = 0, taken = 0))
+    val meta = Mutex.new(ChanMeta(count = 0, senders = 1, rx_alive = true, cap = cap, bounded = bounded, handoff = handoff, pushed = 0, taken = 0, waiting = 0))
+    val id = chan_id_raw()
     val q: Mutex<List<T>> = Mutex.new(List.empty())
     val ne = Condvar.new()
     val nf = Condvar.new()
-    val rx = Receiver<T>(q = q.share(), end = RecvEnd(live = true, meta = meta.share(), ne = ne.share(), nf = nf.share()))
-    val tx = Sender<T>(q = q, end = SendEnd(live = true, meta = meta, ne = ne, nf = nf))
+    val rx = Receiver<T>(q = q.share(), end = RecvEnd(live = true, id = id, meta = meta.share(), ne = ne.share(), nf = nf.share()))
+    val tx = Sender<T>(q = q, end = SendEnd(live = true, id = id, meta = meta, ne = ne, nf = nf))
     return (tx, rx)
 }
 
@@ -293,6 +308,7 @@ must_use fun Sender<T>.send(value: move T) => option.Option<T> {
         }
     }
     self.end.ne.notify_one()
+    chan_wake_raw(self.end.id)
     return when r {
         Err(v) -> {
             val gone: option.Option<T> = option.Option.Some(value = v)
@@ -324,18 +340,52 @@ fun Sender<T>.await_take(ticket: usize) => option.Option<T> {
         }
     }
     self.end.nf.notify_all()
+    chan_wake_raw(self.end.id)
+    return r
+}
+
+/// The select form of `send`: queue `value` now if that finishes without waiting.
+/// `Ok(ticket)` means it was queued (ticket 0 means the receiver is gone, so the
+/// value is dropped). `Err(value)` hands it back: the queue is full, or the
+/// channel is a rendezvous with no receiver waiting.
+must_use fun Sender<T>.try_send(value: move T) => result.Result<usize, T> {
+    val staged: Mutex<List<T>> = Mutex.new(List.of(value))
+    val r: result.Result<usize, T> = self.end.meta.lock { s ->
+        var mine = staged.swap(List.empty())
+        if !s.rx_alive {
+            val gone: result.Result<usize, T> = result.Result.Ok(value = 0)
+            gone
+        } else if (s.bounded && s.count >= s.cap) || (s.handoff && (s.waiting == 0 || s.count > 0)) {
+            val back: result.Result<usize, T> = result.Result.Err(error = mine.remove(0))
+            back
+        } else {
+            s.count += 1
+            s.pushed += 1
+            var queue = self.q.swap(List.empty())
+            queue.push(mine.remove(0))
+            val none = self.q.swap(queue)
+            val ticket: usize = s.pushed
+            val queued: result.Result<usize, T> = result.Result.Ok(value = ticket)
+            queued
+        }
+    }
+    self.end.ne.notify_one()
+    chan_wake_raw(self.end.id)
     return r
 }
 
 /// Another sender on the same channel; the channel closes when the last one drops.
 fun Sender<T>.clone() => Sender<T> {
     self.end.meta.lock { s -> s.senders += 1 }
-    return Sender<T>(q = self.q.share(), end = SendEnd(live = true, meta = self.end.meta.share(), ne = self.end.ne.share(), nf = self.end.nf.share()))
+    return Sender<T>(q = self.q.share(), end = SendEnd(live = true, id = self.end.id, meta = self.end.meta.share(), ne = self.end.ne.share(), nf = self.end.nf.share()))
 }
 
 /// Take the oldest value, waiting while the queue is empty and a sender is alive.
 fun Receiver<T>.recv() => result.Result<T, RecvErr> {
+    self.end.meta.lock { s -> s.waiting += 1 }
+    chan_wake_raw(self.end.id)
     val r = self.end.meta.wait_while(&self.end.ne, fun(s: &ChanMeta) => bool = s.count == 0 && s.senders > 0) { s ->
+        s.waiting -= 1
         if s.count > 0 {
             s.count -= 1
             s.taken += 1
@@ -348,6 +398,7 @@ fun Receiver<T>.recv() => result.Result<T, RecvErr> {
         }
     }
     self.end.nf.notify_all()
+    chan_wake_raw(self.end.id)
     return r
 }
 
@@ -365,12 +416,16 @@ fun Receiver<T>.try_recv() => option.Option<T> {
         }
     }
     self.end.nf.notify_all()
+    chan_wake_raw(self.end.id)
     return r
 }
 
 /// Like `recv`, but gives up after `millis` milliseconds with `Err(Timeout)`.
 fun Receiver<T>.recv_timeout(millis: i64) => result.Result<T, RecvTimeout> {
+    self.end.meta.lock { s -> s.waiting += 1 }
+    chan_wake_raw(self.end.id)
     val r = self.end.meta.wait_while_timeout(&self.end.ne, fun(s: &ChanMeta) => bool = s.count == 0 && s.senders > 0, millis) { s ->
+        s.waiting -= 1
         if s.count > 0 {
             s.count -= 1
             s.taken += 1
@@ -383,6 +438,7 @@ fun Receiver<T>.recv_timeout(millis: i64) => result.Result<T, RecvTimeout> {
         }
     }
     self.end.nf.notify_all()
+    chan_wake_raw(self.end.id)
     return when r {
         Some(v) -> v
         None -> {
@@ -425,6 +481,7 @@ fun Receiver<T>.poll() => option.Option<result.Result<T, RecvErr>> {
         }
     }
     self.end.nf.notify_all()
+    chan_wake_raw(self.end.id)
     return r
 }
 

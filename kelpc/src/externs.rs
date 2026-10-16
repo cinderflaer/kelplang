@@ -48,6 +48,8 @@ static RUST_PORTED: &[(&str, &str)] = &[
     ("std/source", "file"),
     ("std/source", "line"),
     ("std/mem", "alloc_raw"),
+    ("std/sync", "chan_id_raw"),
+    ("std/sync", "chan_wake_raw"),
     ("std/time", "now_unix_raw"),
     ("std/time", "now_mono_ns_raw"),
     ("std/time", "sleep_ms_raw"),
