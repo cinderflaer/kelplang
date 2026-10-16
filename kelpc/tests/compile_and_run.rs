@@ -116,12 +116,12 @@ fn assert_rejected_with(source: &str, needle: &str) {
 
 #[test]
 fn hello_prints_greeting() {
-    assert_compiles_and_runs("../examples/hello.kp", "hello, world\n");
+    assert_compiles_and_runs("tests/fixtures/examples/hello.kp", "hello, world\n");
 }
 
 #[test]
 fn fib_computes_correctly() {
-    assert_compiles_and_runs("../examples/fib.kp", "55\n");
+    assert_compiles_and_runs("tests/fixtures/examples/fib.kp", "55\n");
 }
 
 #[test]
@@ -8931,7 +8931,7 @@ fn the_download_example_writes_exactly_what_it_received() {
     let bin = out_path("download_example");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/download.kp"))
+        .arg(fixture("tests/fixtures/examples/download.kp"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -9004,7 +9004,7 @@ fn the_download_pool_example_uses_one_kept_alive_connection_per_worker() {
     let bin = out_path("download_pool_example");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/download_pool.kp"))
+        .arg(fixture("tests/fixtures/examples/download_pool.kp"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -12112,7 +12112,7 @@ fn kernel0_boots_and_prints_its_greeting_over_the_uart() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0",
-        &fixture("../examples/kernel0"),
+        &fixture("tests/fixtures/examples/kernel0"),
         &["hello from kelp"],
     );
 }
@@ -12132,7 +12132,7 @@ fn kernel0_handles_a_trap_and_continues_after_it() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0_trap",
-        &fixture("../examples/kernel0-trap"),
+        &fixture("tests/fixtures/examples/kernel0-trap"),
         &["trap: ecall", "done"],
     );
 }
@@ -12158,7 +12158,7 @@ fn kernel0_panic_prints_the_checks_own_message_over_the_uart() {
     boot_under_qemu_containing(
         &RISCV64_QEMU,
         "kernel0_panic",
-        &fixture("../examples/kernel0-panic"),
+        &fixture("tests/fixtures/examples/kernel0-panic"),
         "index out of bounds",
         "panic: ",
     );
@@ -12170,7 +12170,7 @@ fn kernel0_panic_prints_the_checks_own_message_over_the_uart() {
 #[test]
 fn a_freestanding_panic_handler_may_take_a_location() {
     for name in ["kernel0-panic", "kernel0-panic2"] {
-        let target = fixture(&format!("../examples/{name}"));
+        let target = fixture(&format!("tests/fixtures/examples/{name}"));
         let check = Command::new(kelpc_bin())
             .env_remove("KELPC_BACKEND")
             .arg("check")
@@ -12219,7 +12219,7 @@ fn kernel0_panic2_names_each_checks_message_and_location() {
         );
         return;
     }
-    let script = fixture("../examples/kernel0-panic2/run.sh");
+    let script = fixture("tests/fixtures/examples/kernel0-panic2/run.sh");
     let run = Command::new("sh")
         .arg(&script)
         .env("KELPC", kelpc_bin())
@@ -12254,7 +12254,7 @@ fn a_freestanding_double_panic_is_a_weak_defined_symbol() {
     }
     let bin = build_freestanding(
         "kernel0_panic2_symbols",
-        &fixture("../examples/kernel0-panic2"),
+        &fixture("tests/fixtures/examples/kernel0-panic2"),
     );
     let path = bin.to_str().expect("the artifact path is utf-8");
     let symbols = tool("llvm-nm", &[path]);
@@ -12714,7 +12714,7 @@ fn kernel0_statics_boots_and_prints_its_counter() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0_statics",
-        &fixture("../examples/kernel0-statics"),
+        &fixture("tests/fixtures/examples/kernel0-statics"),
         &["counter 3"],
     );
 }
@@ -12859,7 +12859,7 @@ fn kernel0_percpu_boots_with_two_harts_and_shows_the_other_copy() {
     boot_under_qemu(
         &RISCV64_QEMU_SMP2,
         "kernel0_percpu",
-        &fixture("../examples/kernel0-percpu"),
+        &fixture("tests/fixtures/examples/kernel0-percpu"),
         &["cpu0 4", "cpu1 7", "idx 1", "count 2"],
     );
 }
@@ -12902,7 +12902,7 @@ fn kernel0_caps_claims_one_line_and_one_frame_and_prints_them() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0_caps",
-        &fixture("../examples/kernel0-caps"),
+        &fixture("tests/fixtures/examples/kernel0-caps"),
         &["line 10", "frame 0x80100000", "offset 0x80100010"],
     );
 }
@@ -12974,7 +12974,7 @@ fn kernel0_vm_boots_and_aliases_a_high_page() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0_vm",
-        &fixture("../examples/kernel0-vm"),
+        &fixture("tests/fixtures/examples/kernel0-vm"),
         &[
             "vm: m-mode",
             "vm: root",
@@ -13007,7 +13007,7 @@ fn kernel0_vm_fault_reports_a_load_and_a_store_page_fault() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0_vm_fault",
-        &fixture("../examples/kernel0-vm-fault"),
+        &fixture("tests/fixtures/examples/kernel0-vm-fault"),
         &[
             "fault: m-mode",
             "fault: paging on",
@@ -13031,8 +13031,8 @@ fn kernel0_vm_images_link_with_no_undefined_symbols() {
         );
         return;
     }
-    assert_no_undefined_symbols("kernel0_vm", &fixture("../examples/kernel0-vm"));
-    assert_no_undefined_symbols("kernel0_vm_fault", &fixture("../examples/kernel0-vm-fault"));
+    assert_no_undefined_symbols("kernel0_vm", &fixture("tests/fixtures/examples/kernel0-vm"));
+    assert_no_undefined_symbols("kernel0_vm_fault", &fixture("tests/fixtures/examples/kernel0-vm-fault"));
 }
 
 /// Kernel stage 11's frame half: the trap frame is 264 bytes with `x1` at 0,
@@ -13085,7 +13085,7 @@ fn kernel0_user_runs_a_syscall_abi_and_kills_a_faulting_program() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0_user",
-        &fixture("../examples/kernel0-user"),
+        &fixture("tests/fixtures/examples/kernel0-user"),
         &[
             "user: s-mode",
             "user: paging on",
@@ -13115,7 +13115,7 @@ fn kernel0_user_image_links_with_no_undefined_symbols() {
         );
         return;
     }
-    assert_no_undefined_symbols("kernel0_user", &fixture("../examples/kernel0-user"));
+    assert_no_undefined_symbols("kernel0_user", &fixture("tests/fixtures/examples/kernel0-user"));
 }
 
 /// Kernel stage 21's acceptance boot: `examples/kernel0-sched` programs the
@@ -13136,7 +13136,7 @@ fn kernel0_sched_preempts_three_tasks_on_the_machine_timer() {
         );
         return;
     }
-    let script = fixture("../examples/kernel0-sched/run.sh");
+    let script = fixture("tests/fixtures/examples/kernel0-sched/run.sh");
     let run = Command::new("sh")
         .arg(&script)
         .env("KELPC", kelpc_bin())
@@ -13170,7 +13170,7 @@ fn kernel0_sched_image_links_with_no_undefined_symbols() {
         );
         return;
     }
-    assert_no_undefined_symbols("kernel0_sched", &fixture("../examples/kernel0-sched"));
+    assert_no_undefined_symbols("kernel0_sched", &fixture("tests/fixtures/examples/kernel0-sched"));
 }
 
 /// A `pub static`/`pub static mut` is reached across modules exactly as a
@@ -13836,7 +13836,7 @@ fn kernel0_heap_boots_and_balances_its_allocations() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0_heap",
-        &fixture("../examples/kernel0-heap"),
+        &fixture("tests/fixtures/examples/kernel0-heap"),
         &["heap sum 55", "balanced"],
     );
 }
@@ -13862,7 +13862,7 @@ fn kernel0_string_builds_on_the_project_allocator_with_no_undefined_symbols() {
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
         .arg("build")
-        .arg(fixture("../examples/kernel0-string"))
+        .arg(fixture("tests/fixtures/examples/kernel0-string"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -13924,7 +13924,7 @@ fn kernel0_string_boots_and_prints_its_text_over_the_uart() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0_string",
-        &fixture("../examples/kernel0-string"),
+        &fixture("tests/fixtures/examples/kernel0-string"),
         &["s: hello kelp!", "n: 12345", "b: 300", "balanced"],
     );
 }
@@ -13951,7 +13951,7 @@ fn kernel0_eq_builds_with_no_undefined_symbols() {
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
         .arg("build")
-        .arg(fixture("../examples/kernel0-eq"))
+        .arg(fixture("tests/fixtures/examples/kernel0-eq"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -14014,7 +14014,7 @@ fn kernel0_eq_boots_and_prints_the_equality_and_regex_lines() {
     boot_under_qemu(
         &RISCV64_QEMU,
         "kernel0_eq",
-        &fixture("../examples/kernel0-eq"),
+        &fixture("tests/fixtures/examples/kernel0-eq"),
         &[
             "eq same: yes",
             "eq differ: yes",
@@ -14402,7 +14402,7 @@ fn the_freestanding_entry_clears_between_the_bss_symbols() {
         );
         return;
     }
-    let bin = build_freestanding("kernel0_bss_entry", &fixture("../examples/kernel0-bss"));
+    let bin = build_freestanding("kernel0_bss_entry", &fixture("tests/fixtures/examples/kernel0-bss"));
     let path = bin.to_str().expect("the artifact path is utf-8");
 
     let symbols = tool("llvm-nm", &[path]);
@@ -14540,7 +14540,7 @@ fn kernel0_bss_clears_an_image_loaded_marker_before_the_entry_runs() {
         );
         return;
     }
-    let target = fixture("../examples/kernel0-bss");
+    let target = fixture("tests/fixtures/examples/kernel0-bss");
     let bin = build_freestanding("kernel0_bss_image", &target);
     let path = bin.to_str().expect("the artifact path is utf-8");
 
@@ -14606,7 +14606,7 @@ fn kernel0_aarch64_builds_an_aarch64_elf_with_no_undefined_symbols() {
         );
         return;
     }
-    let bin = build_freestanding("kernel0_aarch64", &fixture("../examples/kernel0-aarch64"));
+    let bin = build_freestanding("kernel0_aarch64", &fixture("tests/fixtures/examples/kernel0-aarch64"));
     let path = bin.to_str().expect("the artifact path is utf-8");
 
     let header = tool("llvm-readelf", &["-h", path]);
@@ -14660,7 +14660,7 @@ fn kernel0_aarch64_boots_and_prints_its_greeting_over_the_uart() {
     boot_under_qemu(
         &AARCH64_QEMU,
         "kernel0_aarch64_boot",
-        &fixture("../examples/kernel0-aarch64"),
+        &fixture("tests/fixtures/examples/kernel0-aarch64"),
         &["hello from kelp (aarch64)"],
     );
 }
@@ -14691,7 +14691,7 @@ fn kernel0_x86_64_builds_an_x86_64_elf_with_the_pvh_note() {
         );
         return;
     }
-    let bin = build_freestanding("kernel0_x86_64", &fixture("../examples/kernel0-x86_64"));
+    let bin = build_freestanding("kernel0_x86_64", &fixture("tests/fixtures/examples/kernel0-x86_64"));
     let path = bin.to_str().expect("the artifact path is utf-8");
 
     let header = tool("llvm-readelf", &["-h", path]);
@@ -14761,7 +14761,7 @@ fn kernel0_x86_64_boots_and_prints_its_greeting_over_the_uart() {
     boot_under_qemu(
         &X86_64_QEMU,
         "kernel0_x86_64_boot",
-        &fixture("../examples/kernel0-x86_64"),
+        &fixture("tests/fixtures/examples/kernel0-x86_64"),
         &["hello from kelp (x86_64)"],
     );
 }
@@ -14782,7 +14782,7 @@ fn kernel0_eq_x86_64_builds_and_boots_the_same_lines() {
         );
         return;
     }
-    let bin = build_freestanding("kernel0_eq_x86_64", &fixture("../examples/kernel0-eq-x86_64"));
+    let bin = build_freestanding("kernel0_eq_x86_64", &fixture("tests/fixtures/examples/kernel0-eq-x86_64"));
     let symbols = tool("llvm-nm", &[bin.to_str().unwrap()]);
     let undefined: Vec<&str> = symbols
         .lines()
@@ -14804,7 +14804,7 @@ fn kernel0_eq_x86_64_builds_and_boots_the_same_lines() {
     boot_under_qemu(
         &X86_64_QEMU,
         "kernel0_eq_x86_64_boot",
-        &fixture("../examples/kernel0-eq-x86_64"),
+        &fixture("tests/fixtures/examples/kernel0-eq-x86_64"),
         &[
             "eq same: yes",
             "eq differ: yes",
@@ -14839,7 +14839,7 @@ fn kernel0_x86_64_lmode_proves_long_mode_then_triple_faults() {
     boot_under_qemu(
         &X86_64_QEMU,
         "kernel0_x86_64_lmode_boot",
-        &fixture("../examples/kernel0-x86_64-lmode"),
+        &fixture("tests/fixtures/examples/kernel0-x86_64-lmode"),
         &["hello from kelp (x86_64)", "long mode on"],
     );
 }
@@ -14870,7 +14870,7 @@ fn kernel0_x86_64_idt_builds_five_aligned_gates_with_no_undefined_symbols() {
     }
     let bin = build_freestanding(
         "kernel0_x86_64_idt",
-        &fixture("../examples/kernel0-x86_64-idt"),
+        &fixture("tests/fixtures/examples/kernel0-x86_64-idt"),
     );
     let path = bin.to_str().expect("the artifact path is utf-8");
 
@@ -14917,7 +14917,7 @@ fn kernel0_x86_64_idt_takes_its_faults_and_ticks_the_timer_in_order() {
     boot_under_qemu_in_order(
         &X86_64_QEMU,
         "kernel0_x86_64_idt_boot",
-        &fixture("../examples/kernel0-x86_64-idt"),
+        &fixture("tests/fixtures/examples/kernel0-x86_64-idt"),
         &[
             "exception 6 err 0 rip 0x",
             "exception 0 err 0 rip 0x",
@@ -15280,7 +15280,7 @@ fn freestanding_big_frames_probe_every_page() {
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
         .arg("build")
-        .arg(fixture("../examples/kernel0-stack"))
+        .arg(fixture("tests/fixtures/examples/kernel0-stack"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -15344,7 +15344,7 @@ fn kernel0_stack_overflows_into_the_guard_page() {
     let captured = boot_and_capture(
         &RISCV64_QEMU,
         "kernel0_stack",
-        &fixture("../examples/kernel0-stack"),
+        &fixture("tests/fixtures/examples/kernel0-stack"),
         &|got| got.contains("stack: halted"),
     );
     for line in [
@@ -17083,7 +17083,7 @@ fn polyp_core_diffs_and_runs_the_todo_program_with_no_display() {
     let bin = out_path("polyp_core_test");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/polyp-core-test"))
+        .arg(fixture("tests/fixtures/examples/polyp-core-test"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -17150,7 +17150,7 @@ fn polyp_core_panics_on_a_duplicate_key_and_names_it() {
     let bin = out_path("polyp_core_dupkey");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/polyp-core-test"))
+        .arg(fixture("tests/fixtures/examples/polyp-core-test"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -17194,7 +17194,7 @@ fn polyp_soft_raster_matches_its_references_and_golden_checksums() {
     let bin = out_path("polyp_soft_test");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/polyp-soft-test"))
+        .arg(fixture("tests/fixtures/examples/polyp-soft-test"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -17338,7 +17338,7 @@ fn polyp_soft_ui_hits_focuses_edits_and_damages() {
     let bin = out_path("polyp_ui_test");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/polyp-ui-test"))
+        .arg(fixture("tests/fixtures/examples/polyp-ui-test"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -17378,7 +17378,7 @@ fn polyp_todo_runs_on_the_soft_backend_with_the_same_counters() {
     let bin = out_path("polyp_todo_soft");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/polyp-todo-soft"))
+        .arg(fixture("tests/fixtures/examples/polyp-todo-soft"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -17496,7 +17496,7 @@ fn hosted_fb_run() -> Vec<String> {
     let bin = out_path("polyp_fb_hosted");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/polyp-todo-soft"))
+        .arg(fixture("tests/fixtures/examples/polyp-todo-soft"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -17569,7 +17569,7 @@ fn polyp_fb_riscv64_draws_the_hosted_runs_pixels() {
     }
     let expected = hosted_fb_run();
     let name = "polyp_fb_riscv64";
-    let captured = boot_and_capture(&RISCV64_QEMU, name, &fixture("../examples/polyp-fb-riscv64"), &|got| {
+    let captured = boot_and_capture(&RISCV64_QEMU, name, &fixture("tests/fixtures/examples/polyp-fb-riscv64"), &|got| {
         got.lines().any(|line| line == "end")
     });
     let undefined = undefined_symbols(&out_path(name));
@@ -17602,7 +17602,7 @@ fn polyp_fb_x86_64_draws_the_hosted_runs_pixels() {
     }
     let expected = hosted_fb_run();
     let name = "polyp_fb_x86_64";
-    let captured = boot_and_capture(&X86_64_QEMU, name, &fixture("../examples/polyp-fb-x86_64"), &|got| {
+    let captured = boot_and_capture(&X86_64_QEMU, name, &fixture("tests/fixtures/examples/polyp-fb-x86_64"), &|got| {
         got.lines().any(|line| line == "end")
     });
     let undefined = undefined_symbols(&out_path(name));
@@ -17642,7 +17642,7 @@ fn polyp_fb_riscv64_shows_its_framebuffer_on_a_real_display() {
     let build = kelpc()
         .env_remove("KELPC_BACKEND")
         .arg("build")
-        .arg(fixture("../examples/polyp-fb-riscv64"))
+        .arg(fixture("tests/fixtures/examples/polyp-fb-riscv64"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -17769,7 +17769,7 @@ fn polyp_soft_ppm_platform_writes_a_frame() {
     let bin = out_path("polyp_ui_test_ppm");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/polyp-ui-test"))
+        .arg(fixture("tests/fixtures/examples/polyp-ui-test"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -17833,7 +17833,7 @@ fn polyp_soft_work_budgets_hold() {
     let bin = out_path("polyp_budget_test");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/polyp-budget-test"))
+        .arg(fixture("tests/fixtures/examples/polyp-budget-test"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -17948,7 +17948,7 @@ fn polyp_bench_prints_a_bounded_table() {
     let bin = out_path("polyp_bench");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("../examples/polyp-bench"))
+        .arg(fixture("tests/fixtures/examples/polyp-bench"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -18003,7 +18003,7 @@ fn polyp_v4_transcript_for(project: &str, tag: &str, envs: &[(&str, &str)], secs
     let bin = out_path(tag);
     let build = kelpc()
         .arg("build")
-        .arg(fixture(&format!("../examples/{project}")))
+        .arg(fixture(&format!("tests/fixtures/examples/{project}")))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -18138,7 +18138,7 @@ fn polyp_v4_riscv64_prints_the_hosted_transcript() {
     }
     let expected = v4_run_slice(&polyp_v4_transcript("polyp-v4-demo", "polyp_v4_demo_hosted_rv", &[]));
     let name = "polyp_v4_riscv64";
-    let captured = boot_and_capture(&RISCV64_QEMU, name, &fixture("../examples/polyp-v4-riscv64"), &|got| {
+    let captured = boot_and_capture(&RISCV64_QEMU, name, &fixture("tests/fixtures/examples/polyp-v4-riscv64"), &|got| {
         got.lines().any(|line| line == "end")
     });
     let undefined = undefined_symbols(&out_path(name));
@@ -18158,7 +18158,7 @@ fn polyp_v4_x86_64_prints_the_hosted_transcript() {
     }
     let expected = v4_run_slice(&polyp_v4_transcript("polyp-v4-demo", "polyp_v4_demo_hosted_x86", &[]));
     let name = "polyp_v4_x86_64";
-    let captured = boot_and_capture(&X86_64_QEMU, name, &fixture("../examples/polyp-v4-x86_64"), &|got| {
+    let captured = boot_and_capture(&X86_64_QEMU, name, &fixture("tests/fixtures/examples/polyp-v4-x86_64"), &|got| {
         got.lines().any(|line| line == "end")
     });
     let undefined = undefined_symbols(&out_path(name));

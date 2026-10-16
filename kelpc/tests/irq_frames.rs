@@ -536,7 +536,7 @@ pub fun go() {
 #[test]
 fn the_examples_ungranted_fixture_is_refused() {
     let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/kernel0-caps/src/ungranted.kp");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/examples/kernel0-caps/src/ungranted.kp");
     let source =
         fs::read_to_string(&fixture).unwrap_or_else(|e| panic!("read '{}': {e}", fixture.display()));
     let main = "\

@@ -74,7 +74,7 @@ def main():
         path = os.path.join(projects, name)
         if os.path.isfile(os.path.join(path, "coral.toml")):
             corpus.append((f"project_{name}", path))
-    examples = os.path.join(CRATE, "..", "examples")
+    examples = os.path.join(CRATE, "tests", "fixtures", "examples")
     for stem in sorted(n[:-3] for n in os.listdir(examples) if n.endswith(".kp")):
         corpus.append((f"example_{stem}", os.path.join(examples, stem + ".kp")))
 

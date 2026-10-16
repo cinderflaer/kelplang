@@ -617,7 +617,7 @@ fn collect_kp(dir: &Path, out: &mut Vec<PathBuf>) {
 /// directory before it is formatted.
 fn repository_corpus() -> Vec<PathBuf> {
     let mut files = Vec::new();
-    for dir in ["std", "tests/fixtures", "tests/projects", "../examples"] {
+    for dir in ["std", "tests/fixtures", "tests/projects"] {
         collect_kp(&manifest(dir), &mut files);
     }
     files.sort();
@@ -723,7 +723,7 @@ fn must_format(path: &Path) -> bool {
     let rel = brief(path);
     rel.starts_with("std/")
         || rel.starts_with("tests/projects/")
-        || rel.starts_with("../examples/")
+        || rel.starts_with("tests/fixtures/examples/")
 }
 
 #[test]
@@ -2343,7 +2343,7 @@ fn buildable_candidates() -> Vec<PathBuf> {
             }
         }
     }
-    for entry in fs::read_dir(manifest("../examples")).expect("reading ../examples") {
+    for entry in fs::read_dir(manifest("tests/fixtures/examples")).expect("reading tests/fixtures/examples") {
         let path = entry.expect("a directory entry").path();
         if path.extension().and_then(|s| s.to_str()) == Some("kp") {
             out.push(path);

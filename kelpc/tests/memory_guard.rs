@@ -10,7 +10,7 @@ fn kelpc() -> Command {
 }
 
 fn hello() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/hello.kp")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/examples/hello.kp")
 }
 
 fn out(name: &str) -> PathBuf {

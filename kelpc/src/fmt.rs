@@ -1292,7 +1292,7 @@ mod tests {
         vec![
             root.join("std"),
             root.join("tests/projects"),
-            root.join("../examples"),
+            root.join("tests/fixtures/examples"),
             root.join("../bench"),
         ]
     }

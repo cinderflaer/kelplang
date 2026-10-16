@@ -68,7 +68,7 @@ impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/fs"
 ```
 
-Those two lines are `examples/download.kp`'s entire network and filesystem
+Those two lines are `kelpc/tests/fixtures/examples/download.kp`'s entire network and filesystem
 authority. A grant names the resource **as the program spells it**, `net`
 matches the host string rather than a resolved address, and `fs` matches a
 normalized, symlink-resolved path, so there is no second place where authority
@@ -91,11 +91,11 @@ can be acquired.
 
 ```sh
 cargo build --release -p kelpc
-./target/release/kelpc run examples/hello.kp
-./target/release/kelpc build examples/download.kp      # artifact in build/download
-./target/release/kelpc check examples/hello.kp        # compiles? no artifact written
-./target/release/kelpc check --json examples/hello.kp # the same, as one JSON object
-./target/release/kelpc fmt -w examples/hello.kp       # format in place (also: --check)
+./target/release/kelpc run kelpc/tests/fixtures/examples/hello.kp
+./target/release/kelpc build kelpc/tests/fixtures/examples/download.kp      # artifact in build/download
+./target/release/kelpc check kelpc/tests/fixtures/examples/hello.kp        # compiles? no artifact written
+./target/release/kelpc check --json kelpc/tests/fixtures/examples/hello.kp # the same, as one JSON object
+./target/release/kelpc fmt -w kelpc/tests/fixtures/examples/hello.kp       # format in place (also: --check)
 ```
 
 With no `-o`, the binary and the backend's intermediate land in `build/` beside
@@ -165,7 +165,7 @@ directory is not followed.
 | `kelpc/std/` | the standard library, written in Kelp and embedded into the compiler |
 | `kelpc/runtime/` | the Kelp sources of the stub resolver's message parser (`dns_parse.kp`) and configuration reader (`resolver_conf.kp`) |
 | `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, the formatter corpus, and the corpus goldens |
-| `examples/` | `hello.kp`, `fib.kp`, `download.kp` |
+| `kelpc/tests/fixtures/examples/` | `hello.kp`, `fib.kp`, `download.kp` |
 | `bench/speed/` | four workloads written in four languages, with checksums |
 
 ## Requirements

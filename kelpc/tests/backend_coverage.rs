@@ -326,7 +326,7 @@ fn targets() -> Vec<Target> {
         });
     }
 
-    for (stem, source) in kp_files(&manifest.join("..").join("examples")) {
+    for (stem, source) in kp_files(&manifest.join("tests").join("fixtures").join("examples")) {
         targets.push(Target {
             tag: format!("example_{stem}"),
             source,
