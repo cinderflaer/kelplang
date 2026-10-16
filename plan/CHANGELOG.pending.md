@@ -100,6 +100,7 @@ empty on release.
 - `kelpc lint` warns on `== true` and on `.len() == 0`, which read better as the condition alone and `.is_empty()`. The warning does not fail the build.
 - A string literal is accepted where a `String` is expected; the examples write it that way, without `String.from_str`.
 - `kelpc doc --std --check` reports nothing for the shipped standard library: every public item has a doc comment.
+- The drop plan records each manual block region the function declares (`DropPlan::region`), with its name and element type. The table is not read by codegen yet, and no checked program holds a region.
 
 ## stdlib
 
