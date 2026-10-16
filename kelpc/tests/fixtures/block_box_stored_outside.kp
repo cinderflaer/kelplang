@@ -1,0 +1,19 @@
+// Manual memory blocks (decision 139, step 4): a block box assigned to a place
+// declared outside its block would outlive the block, so it is refused.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    var keep: Node = Node(value = 0)
+    val n = block request: Node {
+        val cell = request.box()?
+        keep = cell
+        Node(value = 1)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value + keep.value)
+}
+
+fun main() {
+    print(0)
+}

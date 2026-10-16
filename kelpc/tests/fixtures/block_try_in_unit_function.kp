@@ -1,0 +1,13 @@
+// Manual memory blocks (decision 139, step 5): a block's failure is sent with
+// '?', and a function that returns Unit has nowhere to send it.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun main() {
+    val n = block request: Node {
+        val cell = request.box()?
+        Node(value = 1)
+    }?
+    print(n.value)
+}

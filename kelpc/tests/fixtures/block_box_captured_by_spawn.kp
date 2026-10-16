@@ -1,0 +1,21 @@
+// Manual memory blocks (decision 139, step 4): a thread can run after its block
+// ends, so a spawned closure that names a block box is refused.
+impl "std/result"
+impl "std/thread"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        val h = thread.spawn(fun(u: move i32) => i32 {
+            return u + cell.value
+        }, 0)
+        Node(value = 1)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun main() {
+    print(0)
+}

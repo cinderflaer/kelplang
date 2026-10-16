@@ -1,0 +1,21 @@
+// Manual memory blocks (decision 139, step 4): `cell.get()` reads the element of
+// a block box, and a field of the element is read through it. The element stays
+// in its block. The zeroed element is 0, so the result is the argument.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make(n: i32) => result.Result<i32, BlockError> {
+    val v = block request: Node {
+        val cell = request.box()?
+        Node(value = cell.get().value + n)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = v.value)
+}
+
+fun main() {
+    when make(7) {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+}

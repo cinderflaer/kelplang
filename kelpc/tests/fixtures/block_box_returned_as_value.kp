@@ -1,0 +1,17 @@
+// Manual memory blocks (decision 139, step 4): a block box is the value of its
+// block only through its field, so the bare name as the block's value is refused.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        cell
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun main() {
+    print(0)
+}

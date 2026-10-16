@@ -1,0 +1,47 @@
+// Manual memory blocks, slice 1, end to end (decision 139, step 6): ordinary
+// shared-pool code and one block sit side by side in one file, with no mode
+// line. The block is created and released a thousand times in a loop, and the
+// shared-pool data around it stays intact.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun ordinary() => i32 {
+    var xs: List<i32> = List.empty()
+    var i = 0
+    while i < 4 {
+        xs.push(i * i)
+        i += 1
+    }
+    return xs.len().to_i32()
+}
+
+fun doubled(n: i32) => result.Result<i32, BlockError> {
+    val v = block request: Node {
+        val cell = request.box()?
+        Node(value = n * 2)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = v.value)
+}
+
+fun main() {
+    print(ordinary())
+    when doubled(5) {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+    var keep: List<i32> = List.empty()
+    keep.push(7)
+    print(keep.len().to_i32())
+    var round = 0
+    var sum = 0
+    while round < 1000 {
+        when doubled(round) {
+            Ok(v) -> sum = sum + v
+            Err(_) -> sum = 0 - 1
+        }
+        round += 1
+    }
+    print(sum)
+    print(keep.len().to_i32())
+}

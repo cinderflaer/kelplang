@@ -1,0 +1,22 @@
+// Manual memory blocks (decision 139, step 4): a block box is a block value,
+// and a call that takes it as an argument moves it out of its block. The call
+// is refused by name.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun take(n: Box<Node>) => i32 {
+    return 1
+}
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        Node(value = take(cell))
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun main() {
+    print(0)
+}

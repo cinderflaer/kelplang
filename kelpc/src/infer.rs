@@ -699,9 +699,20 @@ struct Ctx {
     active_blocks: Vec<(String, Ty)>,
     /// Let-bound names so far in this function (the shadow check).
     let_names: std::collections::HashSet<String>,
-    /// Let-bound block boxes in scope. Such a binding may only be read as the
-    /// base of a field access, because the region releases its element.
-    box_bindings: std::collections::HashSet<String>,
+    /// Let-bound block boxes in scope, each with the name of its block. Such a
+    /// binding may only be read as the base of a field access, because the
+    /// region releases its element.
+    box_bindings: HashMap<String, String>,
+    /// The block boxes of the enclosing bodies, as seen from inside a `fun`
+    /// literal. A literal that names one of them captures a block value, which
+    /// is refused (decision 139, step 4).
+    outer_boxes: HashMap<String, String>,
+    /// Set just before the operand of a `let`, a call, an assignment or a block
+    /// tail when that operand is a bare name: where the value of a block box
+    /// would go if the name were allowed there. Read by the next expression
+    /// check, and used only to word the refusal.
+    box_sink_ok: Option<BoxSink>,
+    box_sink_here: Option<BoxSink>,
     /// Set just before a block expression that is the direct operand of `?` or
     /// `when`: the only places a block result may go (decision 139, R31).
     block_result_used: bool,
@@ -761,6 +772,9 @@ struct Ctx {
     /// arguments and which wrapper to name.
     variadic_externs: std::rc::Rc<HashMap<String, String>>,
     ret_ty: Ty,
+    /// The name of the function whose body is being checked, for the messages
+    /// that name it (a block's `?` in a function that returns `Unit`).
+    fn_name: String,
     scopes: Vec<HashMap<String, VarInfo>>,
     /// Symbol prefix of the module being checked (`""` for the entry
     /// module, else `"shapes.circle."`) - a bare type name in this module
@@ -10463,7 +10477,10 @@ fn base_ctx(
         block_names: std::collections::HashSet::new(),
         active_blocks: Vec::new(),
         let_names: std::collections::HashSet::new(),
-        box_bindings: std::collections::HashSet::new(),
+        box_bindings: HashMap::new(),
+        outer_boxes: HashMap::new(),
+        box_sink_ok: None,
+        box_sink_here: None,
         block_result_used: false,
         box_let_ok: false,
         field_base_ok: false,
@@ -10483,6 +10500,7 @@ fn base_ctx(
         has_extern_section: project.extern_ffi_of(module).is_some(),
         variadic_externs: env.variadic_externs.clone(),
         ret_ty: Ty::Unit,
+        fn_name: String::new(),
         scopes: vec![HashMap::new()],
         prefix: project.prefix_of(module).to_string(),
         aliases: project.alias_prefixes_of(module),
@@ -11422,6 +11440,7 @@ fn check_function(
         }
     }
     ctx.ret_ty = sig.ret.clone();
+    ctx.fn_name = f.name.clone();
     ctx.receiver_struct = receiver_struct;
     ctx.pd_global_borrow = key == "main" || is_drop_method;
     // `unsafe fun` (MK9-S2 stage 1) and `naked fun` (kernel stage 5): the whole
@@ -11651,6 +11670,9 @@ fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) ->
 
         if is_tail {
             if let ast::Stmt::Expr { expr, .. } = stmt {
+                if matches!(expr, ast::Expr::Ident(..)) {
+                    ctx.box_sink_ok = Some(BoxSink::Tail);
+                }
                 let checked = check_expr(expr, ctx, expected_tail)?;
                 // A unit block throws its tail value away, so a `must_use`
                 // call there is a dropped result like any statement's.
@@ -11789,7 +11811,14 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                 });
             }
             ctx.let_names.insert(name.clone());
-            let box_let = matches!(init, ast::Expr::Try { expr, .. } if matches!(expr.as_ref(), ast::Expr::MethodCall { receiver, method, args, .. } if block_box_receiver(receiver, method, args, ctx).is_some()));
+            let box_block = match init {
+                ast::Expr::Try { expr, .. } => match expr.as_ref() {
+                    ast::Expr::MethodCall { receiver, method, args, .. } => block_box_receiver(receiver, method, args, ctx),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let box_let = box_block.is_some();
             if box_let && *mutable {
                 return Err(TypeError {
                     help: Some("bind it with 'let', not 'var'".to_string()),
@@ -11798,6 +11827,9 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                 });
             }
             ctx.box_let_ok = box_let;
+            if matches!(init, ast::Expr::Ident(..)) {
+                ctx.box_sink_ok = Some(BoxSink::Move(format!("'{name}'")));
+            }
             let expected = match ty {
                 Some(t) => Some(ctx.type_scope().resolve(t, false)?),
                 None => None,
@@ -11853,10 +11885,13 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                     span: stmt_span(stmt),
                 });
             }
-            if box_let {
-                ctx.box_bindings.insert(name.clone());
-            } else {
-                ctx.box_bindings.remove(name);
+            match box_block {
+                Some(block) => {
+                    ctx.box_bindings.insert(name.clone(), block);
+                }
+                None => {
+                    ctx.box_bindings.remove(name);
+                }
             }
             ctx.define(name, final_ty.clone(), *mutable);
             Ok(vec![tir::Stmt::Let {
@@ -12784,6 +12819,13 @@ fn check_fn_literal_pass(
     }
     let spawn_entry = std::mem::replace(&mut ctx.spawn_entry_next, false);
     let mut inner = (*ctx).clone();
+    // Every block box in scope out here is a block value the literal must not
+    // capture (decision 139, step 4).
+    let mut outer_boxes = ctx.outer_boxes.clone();
+    outer_boxes.extend(ctx.box_bindings.iter().map(|(k, v)| (k.clone(), v.clone())));
+    inner.outer_boxes = outer_boxes;
+    inner.box_sink_ok = None;
+    inner.box_sink_here = None;
     inner.spawn_entry = spawn_entry;
     inner.spawn_entry_next = false;
     inner.scopes = vec![HashMap::new()];
@@ -13042,6 +13084,7 @@ fn check_fn_literal_pass(
 /// chances to forget one.
 fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
     ctx.field_base_here = std::mem::take(&mut ctx.field_base_ok);
+    ctx.box_sink_here = std::mem::take(&mut ctx.box_sink_ok);
     // A failed check can be retried with other state by a caller that swallows
     // the error, so what it left in `probes` must not outlive it.
     let mark = ctx.probes.len();
@@ -13052,6 +13095,18 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             return Err(e);
         }
     };
+    // A container made inside a block is shared-pool memory, which the block
+    // cannot free (section 6, rule 4). A call or a template that yields one is
+    // refused by name, and so is a container a call hands back.
+    if let (Some((block, _)), Some(kind)) = (ctx.active_blocks.last(), shared_container_kind(&value.ty)) {
+        if matches!(expr, ast::Expr::Call { .. } | ast::Expr::MethodCall { .. } | ast::Expr::Template { .. }) {
+            return Err(TypeError {
+                help: Some(format!("make the {kind} before '{block}' starts, or keep one value in a Box<T> inside the block")),
+                message: format!("a {kind} made in block '{block}' is shared-pool memory, so the block cannot free it"),
+                span: expr.span(),
+            });
+        }
+    }
     let value = coerce_str_to_string(value, expected);
     Ok(coerce_handle_upcast(value, expected, &ctx.env.handle_parents))
 }
@@ -13318,12 +13373,15 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             span: *span,
         }),
         ast::Expr::Ident(name, span) => {
-            if ctx.box_bindings.contains(name) && !ctx.field_base_here {
-                return Err(TypeError {
-                    help: Some("read the element through a field of the binding, which stays inside its block".to_string()),
-                    message: format!("'{name}' is a block box, and it cannot leave its block: it may only be read through a field"),
-                    span: *span,
-                });
+            if let Some(block) = ctx.outer_boxes.get(name).cloned() {
+                if ctx.lookup(name).is_none() {
+                    return Err(box_capture_error(name, &block, ctx, *span));
+                }
+            }
+            if let Some(block) = ctx.box_bindings.get(name).cloned() {
+                if !ctx.field_base_here {
+                    return Err(box_move_error(name, &block, ctx.box_sink_here.as_ref(), *span));
+                }
             }
             if let Some(info) = ctx.lookup(name) {
                 // An open container takes its element from the type this
@@ -13775,6 +13833,15 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             ctx.field_base_ok = false;
             let base_t = base_t?;
             let Some(sname) = struct_name_of(&base_t.ty).map(|s| s.to_string()) else {
+                if let ast::Expr::Ident(bname, _) = base.as_ref() {
+                    if let Some(block) = ctx.box_bindings.get(bname).cloned() {
+                        return Err(TypeError {
+                            help: Some(format!("read the element with '{bname}.get()', which stays inside '{block}'")),
+                            message: format!("block box '{bname}' has no field '{field}': its element is read through 'get()'"),
+                            span: *span,
+                        });
+                    }
+                }
                 return Err(TypeError {
                     help: None,
                     message: format!("cannot access field '{field}' on non-struct type '{}'", base_t.ty.display()),
@@ -14006,6 +14073,17 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 });
             }
             check_method_call_enum_guard(receiver, method, *span, ctx)?;
+            // `cell.get()` on a let-bound block box (design section 5): the
+            // box is read through its own method, which reads the element and
+            // leaves the box in its block. Any other method on the box is refused.
+            if let ast::Expr::Ident(bname, _) = receiver.as_ref() {
+                if method == "get" && args.is_empty() && ctx.box_bindings.contains_key(bname) {
+                    ctx.field_base_ok = true;
+                    let got = check_method_call(receiver, method, type_args, args, *span, ctx, expected);
+                    ctx.field_base_ok = false;
+                    return got;
+                }
+            }
             check_method_call(receiver, method, type_args, args, *span, ctx, expected)
         }
         ast::Expr::When {
@@ -14968,6 +15046,93 @@ fn block_elem_ok(ty: &Ty, ctx: &Ctx) -> bool {
     }
 }
 
+/// Where a bare block-box name is about to go (decision 139, step 4). It only
+/// words the refusal: each sink has its own text in the design (section 14.3).
+#[derive(Clone, Debug)]
+enum BoxSink {
+    /// A value taken out of the block: a `let`, or an argument, named here.
+    Move(String),
+    /// A store into a place declared outside the block, named here.
+    Store(String),
+    /// The value of the block itself.
+    Tail,
+}
+
+/// The refusal for a block box used outside its field reads. `sink` says where
+/// the bare name was going, when the checker knew.
+fn box_move_error(name: &str, block: &str, sink: Option<&BoxSink>, span: Span) -> TypeError {
+    match sink {
+        Some(BoxSink::Store(target)) => TypeError {
+            help: Some(format!("'{target}' lives longer than '{block}'; store the number you need from '{name}', or declare '{target}' inside '{block}'")),
+            message: format!("block value '{name}' cannot be stored in '{target}', which is declared outside block '{block}'"),
+            span,
+        },
+        Some(BoxSink::Tail) => TypeError {
+            help: Some(format!("'{block}' ends at its closing brace; return a number or a bool from '{name}', or do the work that needs '{name}' inside '{block}'")),
+            message: format!("block value '{name}' cannot leave block '{block}' as the value of its block"),
+            span,
+        },
+        Some(BoxSink::Move(dest)) => box_move_into(name, block, dest, span),
+        None => box_move_into(name, block, &format!("a place outside '{block}'"), span),
+    }
+}
+
+fn box_move_into(name: &str, block: &str, dest: &str, span: Span) -> TypeError {
+    TypeError {
+        help: Some(format!("copy the number you need, or borrow '{name}' for a call whose result holds no reference")),
+        message: format!("block value '{name}' cannot be moved out of block '{block}' into {dest}"),
+        span,
+    }
+}
+
+/// The refusal for a block box that a `fun` literal names: the literal would
+/// keep the value in its environment, which is shared-pool memory (`fun`), a
+/// stack frame that must not outlive the block (`scoped fun`), or a thread
+/// that can run after the block ends (a spawn).
+fn box_capture_error(name: &str, block: &str, ctx: &Ctx, span: Span) -> TypeError {
+    if ctx.spawn_entry {
+        TypeError {
+            help: Some(format!("a thread can run after '{block}' ends; create the value inside the thread, or pass a number")),
+            message: format!("block value '{name}' cannot be passed to a spawned thread"),
+            span,
+        }
+    } else if ctx.borrowed_captures {
+        TypeError {
+            help: Some(format!("move the scoped block inside '{block}', or pass the number you need into it")),
+            message: format!("scoped block captures block value '{name}', which would leave block '{block}'"),
+            span,
+        }
+    } else {
+        TypeError {
+            help: Some(format!("pass '{name}' to the closure as a parameter, or create the closure outside '{block}'")),
+            message: format!("this closure captures block value '{name}', so its environment would be shared-pool memory"),
+            span,
+        }
+    }
+}
+
+/// The name a container type is written with, when the type is one of the
+/// shared-pool containers that a block may not make (section 6, rule 4).
+fn shared_container_kind(ty: &Ty) -> Option<&'static str> {
+    match ty {
+        Ty::List(_) => Some("List"),
+        Ty::Map(_, _) => Some("Map"),
+        Ty::String => Some("String"),
+        Ty::Bytes => Some("Bytes"),
+        _ => None,
+    }
+}
+
+/// The name at the root of an assignment target: `keep` for `keep`, and `best`
+/// for `best.x`.
+fn place_root_name(target: &ast::Expr) -> Option<String> {
+    match target {
+        ast::Expr::Ident(name, _) => Some(name.clone()),
+        ast::Expr::FieldAccess { base, .. } => place_root_name(base),
+        _ => None,
+    }
+}
+
 /// `name.box()` with no arguments, when `name` is a block of this function:
 /// the block's name, or `None` for any other call.
 fn block_box_receiver(receiver: &ast::Expr, method: &str, args: &[ast::CallArg], ctx: &Ctx) -> Option<String> {
@@ -15022,8 +15187,8 @@ fn check_manual_block(
 ) -> Result<tir::Expr> {
     if !std::mem::take(&mut ctx.block_result_used) {
         return Err(TypeError {
-            help: Some(format!("write `block {name}: T {{ ... }}?` in a function that returns a Result, or match it with 'when'")),
-            message: format!("the result of the block '{name}' is neither used with '?' nor matched with 'when'"),
+            help: Some("add '?' after the closing brace in a function that returns a Result, or match the result with 'when'".to_string()),
+            message: format!("block '{name}' can fail to start, and its result is not used"),
             span,
         });
     }
@@ -15076,6 +15241,15 @@ fn check_manual_block(
 }
 
 fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
+    // A block's failure has to go to the caller. In a function that returns
+    // `Unit` there is nowhere for it to go (decision 139, R31).
+    if matches!(sub, ast::Expr::ManualBlock { .. }) && matches!(ctx.ret_ty, Ty::Unit) {
+        return Err(TypeError {
+            help: Some(format!("match the block's result with 'when' here, or make '{}' return a Result", ctx.fn_name)),
+            message: format!("'?' has nowhere to send a failure, because '{}' returns Unit", ctx.fn_name),
+            span,
+        });
+    }
     let inner = if let ast::Expr::MethodCall { receiver, method, args, .. } = sub {
         match block_box_receiver(receiver, method, args, ctx) {
             Some(bname) => {
@@ -15927,6 +16101,11 @@ fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx
     }
 
     let target_t = check_expr(target, ctx, None)?;
+    if matches!(value, ast::Expr::Ident(..)) {
+        if let Some(name) = place_root_name(target) {
+            ctx.box_sink_ok = Some(BoxSink::Store(name));
+        }
+    }
     check_written_place(&target_t, ctx)?;
 
     let value_t = check_expr(value, ctx, Some(&target_t.ty))?;
@@ -16801,6 +16980,9 @@ fn check_call_arg_in(
     site: Option<&StrArgSite>,
 ) -> Result<tir::Expr> {
     let memo = ctx.take_probe(arg_expr);
+    if matches!(arg_expr, ast::Expr::Ident(..)) {
+        ctx.box_sink_ok = Some(BoxSink::Move(format!("the parameter {pname}")));
+    }
     // A `scoped fun(...)` parameter accepts only a `fun` literal or a trailing
     // block written at this call site (`kelp wiki page language/functions.md`), never a
     // stored value. The one exception is forwarding a scoped value that is

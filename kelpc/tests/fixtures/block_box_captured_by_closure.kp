@@ -1,0 +1,18 @@
+// Manual memory blocks (decision 139, step 4): a closure that names a block
+// box keeps it in its environment, which is shared-pool memory. It is refused.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        val read = fun() => i32 { cell.value }
+        Node(value = read())
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun main() {
+    print(0)
+}

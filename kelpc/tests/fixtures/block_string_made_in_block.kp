@@ -1,0 +1,18 @@
+// Manual memory blocks (decision 139, step 4): a String made inside a block is
+// shared-pool memory, so it is refused by name, as a List is.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        val name = String.from_str("kelp")
+        Node(value = cell.value + name.len().to_i32())
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun main() {
+    print(0)
+}

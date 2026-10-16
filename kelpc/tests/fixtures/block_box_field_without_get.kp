@@ -1,0 +1,17 @@
+// Manual memory blocks (decision 139, step 4): a field of a block box is not a
+// field of the box, so `cell.value` without `get()` is refused by name.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    val v = block request: Node {
+        val cell = request.box()?
+        Node(value = cell.value)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = v.value)
+}
+
+fun main() {
+    print(0)
+}

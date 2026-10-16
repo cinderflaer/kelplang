@@ -1,0 +1,20 @@
+impl "std/result"
+
+datac Node(val value: i32)
+fun take(n: Box<Node>) => i32 { return 1 }
+fun pick(p: &i32) => i32 { p }
+fun run(f: scoped fun() => i32) => i32 { f() }
+fun report(r: result.Result<i32, BlockError>) {
+    when r {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+}
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        Node(value = pick(&cell.value))
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+fun main() { report(make()) }

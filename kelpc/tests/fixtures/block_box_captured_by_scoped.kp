@@ -1,0 +1,21 @@
+// Manual memory blocks (decision 139, step 4): a scoped block that names a block
+// box would hold it past the block, so it is refused.
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun run(f: scoped fun() => i32) => i32 {
+    return f()
+}
+
+fun make() => result.Result<i32, BlockError> {
+    val n = block request: Node {
+        val cell = request.box()?
+        Node(value = run(fun() => i32 { cell.value }))
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value)
+}
+
+fun main() {
+    print(0)
+}

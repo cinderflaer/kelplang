@@ -4594,10 +4594,18 @@ fn block_stays_an_ordinary_name_outside_a_block_introducer() {
 }
 
 #[test]
-fn a_block_region_is_refused_by_name_until_blocks_are_built() {
+fn a_block_result_must_be_used_with_try_or_when() {
     assert_rejected_with(
         "tests/fixtures/block_region_not_built.kp",
-        "the result of the block 'request' is neither used with '?' nor matched with 'when'",
+        "block 'request' can fail to start, and its result is not used",
+    );
+}
+
+#[test]
+fn a_block_try_has_nowhere_to_go_in_a_unit_function() {
+    assert_rejected_with(
+        "tests/fixtures/block_try_in_unit_function.kp",
+        "'?' has nowhere to send a failure, because 'main' returns Unit",
     );
 }
 
@@ -4626,7 +4634,74 @@ fn a_block_box_is_bound_by_a_let_inside_its_block() {
 
 #[test]
 fn a_block_box_may_not_leave_its_block_through_a_plain_binding() {
-    assert_rejected_with("tests/fixtures/block_box_escapes.kp", "is a block box, and it cannot leave its block");
+    assert_rejected_with(
+        "tests/fixtures/block_box_escapes.kp",
+        "block value 'cell' cannot be moved out of block 'request' into 'copy'",
+    );
+}
+
+#[test]
+fn a_block_box_may_not_be_passed_to_a_call() {
+    assert_rejected_with(
+        "tests/fixtures/block_box_moved_into_call.kp",
+        "block value 'cell' cannot be moved out of block 'request' into the parameter 'n'",
+    );
+}
+
+#[test]
+fn a_block_box_may_not_be_the_value_of_its_block() {
+    assert_rejected_with(
+        "tests/fixtures/block_box_returned_as_value.kp",
+        "block value 'cell' cannot leave block 'request' as the value of its block",
+    );
+}
+
+#[test]
+fn a_block_box_may_not_be_stored_in_a_place_outside_its_block() {
+    assert_rejected_with(
+        "tests/fixtures/block_box_stored_outside.kp",
+        "block value 'cell' cannot be stored in 'keep', which is declared outside block 'request'",
+    );
+}
+
+#[test]
+fn a_closure_may_not_capture_a_block_box() {
+    assert_rejected_with(
+        "tests/fixtures/block_box_captured_by_closure.kp",
+        "this closure captures block value 'cell', so its environment would be shared-pool memory",
+    );
+}
+
+#[test]
+fn a_scoped_block_may_not_capture_a_block_box() {
+    assert_rejected_with(
+        "tests/fixtures/block_box_captured_by_scoped.kp",
+        "scoped block captures block value 'cell', which would leave block 'request'",
+    );
+}
+
+#[test]
+fn a_spawned_thread_may_not_capture_a_block_box() {
+    assert_rejected_with(
+        "tests/fixtures/block_box_captured_by_spawn.kp",
+        "block value 'cell' cannot be passed to a spawned thread",
+    );
+}
+
+#[test]
+fn a_list_made_inside_a_block_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/block_list_made_in_block.kp",
+        "a List made in block 'request' is shared-pool memory, so the block cannot free it",
+    );
+}
+
+#[test]
+fn a_string_made_inside_a_block_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/block_string_made_in_block.kp",
+        "a String made in block 'request' is shared-pool memory, so the block cannot free it",
+    );
 }
 
 #[test]
@@ -4639,6 +4714,29 @@ fn a_block_region_runs_and_releases_on_every_exit() {
     // The end of a block, a loop, a `return`, a `?` that leaves the function,
     // and a `defer` in the caller (decision 139, step 4).
     assert_compiles_and_runs("tests/fixtures/block_region_runs.kp", "5\n3\n7\n0\n1\n2\n5\n");
+}
+
+#[test]
+fn a_block_and_shared_pool_code_share_one_file() {
+    // Decision 139, step 6: shared-pool code and one block side by side, with no
+    // mode line. The loop creates and frees a thousand blocks, and the list that
+    // lives in shared-pool memory is intact afterwards.
+    assert_compiles_and_runs("tests/fixtures/block_end_to_end.kp", "4\n10\n1\n999000\n1\n");
+}
+
+#[test]
+fn a_block_box_is_read_through_get() {
+    // `cell.get().value` reads a field of the element, which stays in its block
+    // (design section 5). The zeroed element is 0, so the result is the argument.
+    assert_compiles_and_runs("tests/fixtures/block_box_get_reads_field.kp", "7\n");
+}
+
+#[test]
+fn a_block_box_field_without_get_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/block_box_field_without_get.kp",
+        "block box 'cell' has no field 'value': its element is read through 'get()'",
+    );
 }
 
 #[test]
