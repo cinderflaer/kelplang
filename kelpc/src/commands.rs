@@ -8,3 +8,6 @@ pub(crate) use cmd_lint::*;
 
 mod cmd_stdlib;
 pub(crate) use cmd_stdlib::*;
+
+mod cmd_doc;
+pub(crate) use cmd_doc::*;
