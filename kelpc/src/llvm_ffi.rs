@@ -314,7 +314,7 @@ pub fn default_target_triple() -> String {
 /// their types, and every handle belongs to the context that created it. One
 /// context per compilation is the usual shape.
 pub struct Context {
-    raw: LLVMContextRef,
+    pub(crate) raw: LLVMContextRef,
 }
 
 impl Context {
@@ -794,8 +794,8 @@ impl Drop for Context {
 /// A type handle, owned by the [`Context`] that created it.
 #[derive(Clone, Copy)]
 pub struct Type<'ctx> {
-    raw: LLVMTypeRef,
-    context: PhantomData<&'ctx Context>,
+    pub(crate) raw: LLVMTypeRef,
+    pub(crate) context: PhantomData<&'ctx Context>,
 }
 
 impl<'ctx> Type<'ctx> {
@@ -830,8 +830,8 @@ impl<'ctx> Type<'ctx> {
 /// A function type handle: the `ret (args...)` of a [`Function`].
 #[derive(Clone, Copy)]
 pub struct FnType<'ctx> {
-    raw: LLVMTypeRef,
-    context: PhantomData<&'ctx Context>,
+    pub(crate) raw: LLVMTypeRef,
+    pub(crate) context: PhantomData<&'ctx Context>,
 }
 
 impl<'ctx> FnType<'ctx> {
@@ -844,8 +844,8 @@ impl<'ctx> FnType<'ctx> {
 /// A value handle: a constant, a function, or the result of an instruction.
 #[derive(Clone, Copy)]
 pub struct Value<'ctx> {
-    raw: LLVMValueRef,
-    context: PhantomData<&'ctx Context>,
+    pub(crate) raw: LLVMValueRef,
+    pub(crate) context: PhantomData<&'ctx Context>,
 }
 
 impl<'ctx> Value<'ctx> {
@@ -978,9 +978,9 @@ impl IntExtension {
 /// A function: a declaration or a definition in a [`Module`].
 #[derive(Clone, Copy)]
 pub struct Function<'ctx> {
-    raw: LLVMValueRef,
-    context: LLVMContextRef,
-    context_marker: PhantomData<&'ctx Context>,
+    pub(crate) raw: LLVMValueRef,
+    pub(crate) context: LLVMContextRef,
+    pub(crate) context_marker: PhantomData<&'ctx Context>,
 }
 
 impl<'ctx> Function<'ctx> {
@@ -1186,8 +1186,8 @@ impl<'ctx> Function<'ctx> {
 /// A basic block handle, owned by the module of the [`Function`] it was appended to.
 #[derive(Clone, Copy)]
 pub struct BasicBlock<'ctx> {
-    raw: LLVMBasicBlockRef,
-    context: PhantomData<&'ctx Context>,
+    pub(crate) raw: LLVMBasicBlockRef,
+    pub(crate) context: PhantomData<&'ctx Context>,
 }
 
 impl<'ctx> BasicBlock<'ctx> {
@@ -1200,13 +1200,13 @@ impl<'ctx> BasicBlock<'ctx> {
 /// Guard for `LLVMModuleRef`: one translation unit, and the owner of its
 /// functions and basic blocks.
 pub struct Module<'ctx> {
-    raw: LLVMModuleRef,
+    pub(crate) raw: LLVMModuleRef,
     // Kept so that a function's declaration can name its context without
     // threading `&'ctx Context` through every method. LLVM has no
     // LLVMGetModuleContext, and the pointer is only valid because the lifetime
     // marker below ties this module to the guard that owns it.
-    context: LLVMContextRef,
-    context_marker: PhantomData<&'ctx Context>,
+    pub(crate) context: LLVMContextRef,
+    pub(crate) context_marker: PhantomData<&'ctx Context>,
 }
 
 impl<'ctx> Module<'ctx> {
@@ -1644,8 +1644,8 @@ pub enum RealCmp {
 
 /// Guard for `LLVMBuilderRef`: where the next instruction is emitted.
 pub struct Builder<'ctx> {
-    raw: LLVMBuilderRef,
-    context: PhantomData<&'ctx Context>,
+    pub(crate) raw: LLVMBuilderRef,
+    pub(crate) context: PhantomData<&'ctx Context>,
 }
 
 impl<'ctx> Builder<'ctx> {
@@ -2551,16 +2551,16 @@ fn baseline_cpu(triple: &str) -> &'static str {
 /// This is what turns a verified module into an object, and it is why MK7 §1.3
 /// keeps `cc` for linking: LLVM writes the object, the driver links it.
 pub struct TargetMachine {
-    raw: LLVMTargetMachineRef,
+    pub(crate) raw: LLVMTargetMachineRef,
     /// The subtarget choices this machine was created with, kept so an object
     /// cache can describe the machine that produced an object (roadmap A-14
     /// slice 2). LLVM's C API has no getters for them, so they are recorded at
     /// creation rather than read back.
-    triple: String,
-    cpu: String,
-    features: String,
-    reloc: &'static str,
-    code_model: &'static str,
+    pub(crate) triple: String,
+    pub(crate) cpu: String,
+    pub(crate) features: String,
+    pub(crate) reloc: &'static str,
+    pub(crate) code_model: &'static str,
 }
 
 /// The relocation model's name, part of a target machine's cache identity.
@@ -2863,7 +2863,7 @@ impl Drop for TargetMachine {
 /// Created from a [`TargetMachine`] with [`TargetMachine::data_layout`] and
 /// disposed on drop.
 pub struct DataLayout {
-    raw: LLVMTargetDataRef,
+    pub(crate) raw: LLVMTargetDataRef,
 }
 
 impl TargetMachine {
@@ -2922,8 +2922,8 @@ impl Drop for DataLayout {
 /// outliving the context it belongs to.
 #[derive(Clone, Copy)]
 pub struct Metadata<'ctx> {
-    raw: LLVMMetadataRef,
-    context_marker: PhantomData<&'ctx Context>,
+    pub(crate) raw: LLVMMetadataRef,
+    pub(crate) context_marker: PhantomData<&'ctx Context>,
 }
 
 /// Guard for `LLVMDIBuilderRef`: the DWARF debug-information builder of one
@@ -2940,23 +2940,23 @@ pub struct Metadata<'ctx> {
 /// subprogram may be created before or after the function it describes, as long
 /// as the module is live for both.
 pub struct DebugBuilder<'ctx> {
-    raw: LLVMDIBuilderRef,
+    pub(crate) raw: LLVMDIBuilderRef,
     // The context is kept rather than re-read from the module: a source location
     // is built from the context plus a scope, and LLVM has no "builder's
     // context" accessor. Valid because the marker ties this to the guard that
     // owns the context.
-    context: LLVMContextRef,
+    pub(crate) context: LLVMContextRef,
     // `finalize` is idempotent from LLVM's side only in the sense that nothing
     // reads its return; running it twice is harmless but running it after the
     // module has been written is too late, so the flag is what keeps the drop
     // path from being the second caller.
-    finalized: Cell<bool>,
+    pub(crate) finalized: Cell<bool>,
     // Whether a pass pipeline runs over the module. DWARF carries it as the
     // compile unit's and each subprogram's `isOptimized` flag, which is what a
     // debugger reads to know an instruction may have moved. It is `opt::OptLevel::is_optimized`,
     // false only at `-O0`.
-    optimized: bool,
-    context_marker: PhantomData<&'ctx Context>,
+    pub(crate) optimized: bool,
+    pub(crate) context_marker: PhantomData<&'ctx Context>,
 }
 
 impl<'ctx> DebugBuilder<'ctx> {
@@ -3207,152 +3207,5 @@ fn split_path(path: &Path) -> (String, String) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    /// A directory under the system temp directory, removed on drop.
-    ///
-    /// `CARGO_TARGET_TMPDIR` is only set for integration tests, so a unit test
-    /// picks its own directory. The name carries the process id and the
-    /// nanosecond clock, which is what keeps two test processes from sharing one
-    /// directory; nothing else in this suite uses the system temp directory.
-    struct TempDir {
-        path: PathBuf,
-    }
-
-    impl TempDir {
-        fn new(label: &str) -> Self {
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("the clock is after 1970")
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!(
-                "kelpc-llvm-ffi-{label}-{}-{nanos}",
-                std::process::id()
-            ));
-            fs::create_dir_all(&path).expect("could not create the test's temp directory");
-            TempDir { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
-
-    /// The whole pipeline this milestone claims, in one test: build `i32 @main()`
-    /// in IR (it calls `i32 @puts(i8*)` on a global string and returns 0),
-    /// verify, print the IR, emit an object for the host triple, link with `cc`,
-    /// and run the binary.
-    ///
-    /// The proof is the program's stdout: `hello, kelp\n` and exit status 0. A
-    /// failure in any step fails loudly at that step, so the message says which
-    /// half of the pipeline broke.
-    #[test]
-    fn hello_world_ir_emits_an_object_that_cc_links_and_that_prints() {
-        initialize_native_target().expect("the host has an LLVM target but no code generator");
-        let triple = default_target_triple();
-        assert!(
-            !triple.is_empty(),
-            "LLVMGetDefaultTargetTriple returned an empty triple"
-        );
-
-        let out = TempDir::new("hello-world");
-        let object = out.path().join("hello.o");
-        let executable = out.path().join("hello");
-
-        let ctx = Context::new();
-        let mut module = Module::new(&ctx, "hello");
-        module.set_triple(&triple);
-        assert_eq!(
-            module.triple(),
-            triple,
-            "the module's triple is not the one LLVMGetDefaultTargetTriple returned"
-        );
-
-        // i32 @puts(i8*) is a declaration: no body, so it is the linker that
-        // resolves it from libc.
-        let i32_ty = ctx.i32();
-        let puts_ty = ctx.fn_type(i32_ty, &[ctx.opaque_ptr()], false);
-        let puts = module.add_function("puts", puts_ty);
-        assert!(
-            module.get_function("puts").is_some(),
-            "LLVMGetNamedFunction could not find the declaration LLVMAddFunction made"
-        );
-
-        // define i32 @main() { entry: %greeting = ...; call i32 @puts(ptr %greeting); ret i32 0 }
-        let main = module.add_function("main", ctx.fn_type(i32_ty, &[], false));
-        let builder = Builder::new(&ctx);
-        builder.position_at_end(main.append_block("entry"));
-        // The global carries the text without a newline because `puts` writes one
-        // of its own: with a trailing `\n` in the string the program would print
-        // `hello, kelp` followed by two newlines, and stdout would not be the
-        // `hello, kelp\n` this test asserts.
-        let greeting = builder.global_string("hello, kelp", "greeting");
-        builder.build_call(puts, puts_ty, &[greeting], "");
-        builder.build_ret(ctx.const_int(i32_ty, 0, false));
-
-        if let Err(message) = module.verify() {
-            panic!("LLVMVerifyModule rejected the module:\n{message}");
-        }
-
-        let ir = module.to_ir_string();
-        println!("--- LLVM IR ---\n{ir}--- end LLVM IR ---");
-        assert!(
-            ir.contains("define i32 @main()"),
-            "the IR has no i32 @main() definition:\n{ir}"
-        );
-        assert!(
-            ir.contains(&format!("target triple = \"{triple}\"")),
-            "the IR does not carry the host triple '{triple}':\n{ir}"
-        );
-
-        let machine = TargetMachine::for_host()
-            .unwrap_or_else(|e| panic!("no target machine for the host triple '{triple}': {e}"));
-        machine.emit_object(&module, &object).unwrap_or_else(|e| {
-            panic!("could not emit an object to '{}': {e}", object.display())
-        });
-        assert!(object.is_file(), "emit_object wrote no object file");
-
-        // Link it the way a Kelp program is linked: `ld.lld` with the sysroot argv.
-        crate::driver::link_llvm_objects(
-            std::slice::from_ref(&object),
-            None,
-            &executable,
-            crate::opt::OptLevel::O0,
-            &[],
-            &[],
-            &[],
-            false,
-            false,
-        )
-        .unwrap_or_else(|e| {
-            panic!("ld.lld failed linking '{}': {}", object.display(), e.message)
-        });
-
-        let run = Command::new(&executable)
-            .output()
-            .expect("could not run the linked binary");
-        assert!(
-            run.status.success(),
-            "the linked binary exited with {:?}\nstderr:\n{}",
-            run.status,
-            String::from_utf8_lossy(&run.stderr)
-        );
-        assert_eq!(
-            run.stdout,
-            b"hello, kelp\n",
-            "stdout is not byte-identical to the literal: {:?}",
-            run.stdout
-        );
-    }
-}
+#[path = "llvm_ffi/tests.rs"]
+mod tests;
