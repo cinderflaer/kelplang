@@ -1907,3 +1907,44 @@ fn a_pool_run_past_heap_max_is_refused_while_blocks_hold_the_budget() {
     }
 }
 
+
+/// M5 (design section 13): the cost of one block create and free, and of the
+/// root registration with 1 and 1000 live blocks. Pool off only: the block
+/// chunk pool (D43) is not built, so the pool-on row is not measured. Each
+/// sample is 100,000 create-and-free pairs of one 8-byte element; the figure is
+/// the median of 5 samples. Measurement only: run with `--ignored --nocapture`.
+#[test]
+#[ignore = "measurement (M5): run with --ignored --nocapture"]
+fn m5_block_create_and_free_ns() {
+    const SAMPLES: usize = 5;
+    const PAIRS: usize = 100_000;
+    let _g = serial();
+    let mut per_live = Vec::new();
+    for live_target in [1usize, 1000] {
+        let mut samples = Vec::with_capacity(SAMPLES);
+        unsafe {
+            reset();
+            kelp_gc_thread_attach();
+            let mut live = Vec::with_capacity(live_target);
+            for _ in 0..live_target {
+                live.push(crate::block::alloc(&ROOT_PTR).unwrap_or_else(|e| panic!("status {e}")));
+            }
+            for _ in 0..SAMPLES {
+                let t0 = std::time::Instant::now();
+                for _ in 0..PAIRS {
+                    let (p, h) = crate::block::alloc(&ROOT_PTR).unwrap_or_else(|e| panic!("status {e}"));
+                    assert!(crate::block::free(h, p, &ROOT_PTR));
+                }
+                samples.push(t0.elapsed().as_nanos() as f64 / PAIRS as f64);
+            }
+            for (p, h) in live {
+                assert!(crate::block::free(h, p, &ROOT_PTR));
+            }
+            kelp_gc_thread_detach();
+        }
+        let med = m7_median(&samples);
+        eprintln!("M5 live={live_target:>5} create+free ns per pair (median of {SAMPLES}): {med:.1}");
+        per_live.push(med);
+    }
+    eprintln!("M5 ratio live=1000 over live=1: {:.3} (recorded, not gated)", per_live[1] / per_live[0]);
+}

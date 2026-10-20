@@ -938,6 +938,11 @@ struct Ctx {
     /// name. Unset means no such conversion, as for a constructor or a trait
     /// static call.
     str_arg_site: Option<StrArgSite>,
+    /// Set by a builtin call that stores its arguments into a shared container
+    /// (`xs.push`, `m.insert`, `b.set`), named by the receiver's root: the next
+    /// `match_args_split` takes it, so a block value passed there is refused
+    /// with the store wording (golden G1) instead of the move wording.
+    box_store_into: Option<String>,
     /// How many `unsafe { ... }` blocks enclose the expression being checked
     /// (MK9-S2 stage 1). Non-zero means the unsafe-only operations are legal;
     /// the body of an `unsafe fun` starts at 1.
@@ -10586,6 +10591,7 @@ fn base_ctx(
         defer_empty_container: false,
         probes: Vec::new(),
         str_arg_site: None,
+        box_store_into: None,
         unsafe_depth: 0,
         unsafe_fns: project.unsafe_fns().clone(),
         must_use_fns: project.must_use_fns().clone(),
@@ -15109,6 +15115,9 @@ enum BoxSink {
     Move(String),
     /// A store into a place declared outside the block, named here.
     Store(String),
+    /// A store into a shared container (a `List`, `Map` or `Box` payload),
+    /// named by its receiver: the container outlives the block.
+    Shared(String),
     /// The value of the block itself.
     Tail,
 }
@@ -15120,6 +15129,11 @@ fn box_move_error(name: &str, block: &str, sink: Option<&BoxSink>, span: Span) -
         Some(BoxSink::Store(target)) => TypeError {
             help: Some(format!("'{target}' lives longer than '{block}'; store the number you need from '{name}', or declare '{target}' inside '{block}'")),
             message: format!("block value '{name}' cannot be stored in '{target}', which is declared outside block '{block}'"),
+            span,
+        },
+        Some(BoxSink::Shared(target)) => TypeError {
+            help: Some(format!("store the number you need from '{name}', or keep '{target}' inside '{block}'")),
+            message: format!("block value '{name}' cannot be stored in '{target}', because '{target}' is shared-pool memory that can outlive block '{block}'"),
             span,
         },
         Some(BoxSink::Tail) => TypeError {
@@ -16888,6 +16902,7 @@ fn match_args_split<'a>(
     variadic: bool,
 ) -> Result<(Vec<tir::Expr>, Vec<&'a ast::CallArg>)> {
     let site = ctx.str_arg_site.take();
+    let store = ctx.box_store_into.take();
     if args.len() != params.len() && !(variadic && args.len() > params.len()) {
         return Err(TypeError {
             help: None,
@@ -16922,7 +16937,7 @@ fn match_args_split<'a>(
         };
         // The label the diagnostics use: a declared parameter is quoted by
         // name, which is what a call site can see.
-        result.push(check_call_arg_in(&format!("'{pname}'"), pty, &arg.value, ctx, site.as_ref())?);
+        result.push(check_call_arg_in(&format!("'{pname}'"), pty, &arg.value, ctx, site.as_ref(), store.as_deref())?);
     }
 
     if let Some((&leftover, _)) = named.iter().next() {
@@ -17012,7 +17027,7 @@ fn check_expr_or_memo(
 /// declared parameter, `1` for the position in a call through a function value
 /// (a function *type* has no parameter names).
 fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
-    check_call_arg_in(pname, pty, arg_expr, ctx, None)
+    check_call_arg_in(pname, pty, arg_expr, ctx, None, None)
 }
 
 /// What a `String` argument for a `str` parameter does at one call. `Implicit`
@@ -17033,10 +17048,14 @@ fn check_call_arg_in(
     arg_expr: &ast::Expr,
     ctx: &mut Ctx,
     site: Option<&StrArgSite>,
+    store: Option<&str>,
 ) -> Result<tir::Expr> {
     let memo = ctx.take_probe(arg_expr);
     if matches!(arg_expr, ast::Expr::Ident(..)) {
-        ctx.box_sink_ok = Some(BoxSink::Move(format!("the parameter {pname}")));
+        ctx.box_sink_ok = Some(match store {
+            Some(container) => BoxSink::Shared(container.to_string()),
+            None => BoxSink::Move(format!("the parameter {pname}")),
+        });
     }
     // A `scoped fun(...)` parameter accepts only a `fun` literal or a trailing
     // block written at this call site (`kelp wiki page language/functions.md`), never a
@@ -21026,6 +21045,12 @@ fn check_method_call(
     } else {
         StrArgSite::Implicit
     });
+    // A store into a shared container names the container in the refusal of a
+    // block value (golden G1). A receiver with no place name keeps the move wording.
+    ctx.box_store_into = match key.as_str() {
+        "List#push" | "List#insert" | "List#set" | "Map#insert" | "Box#set" => place_root_name(receiver),
+        _ => None,
+    };
     checked_args.extend(match_args(&format!("method '{owner}.{method}'"), &sig.params[1..], args, span, ctx)?);
     // A method whose result borrows from its receiver (`s.as_str()`) has the
     // same rule as a free function.

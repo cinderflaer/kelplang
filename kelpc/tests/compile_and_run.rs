@@ -4670,6 +4670,14 @@ fn a_block_box_may_not_be_stored_in_a_place_outside_its_block() {
 }
 
 #[test]
+fn a_block_box_may_not_be_stored_in_a_shared_list() {
+    assert_rejected_with(
+        "tests/fixtures/block_box_stored_in_list.kp",
+        "block value 'cell' cannot be stored in 'list', because 'list' is shared-pool memory that can outlive block 'request'",
+    );
+}
+
+#[test]
 fn a_closure_may_not_capture_a_block_box() {
     assert_rejected_with(
         "tests/fixtures/block_box_captured_by_closure.kp",

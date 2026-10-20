@@ -1,0 +1,20 @@
+// Manual memory blocks (decision 139, step 4): a block box pushed into a List
+// would sit in shared-pool memory, which outlives the block, so it is refused
+// with the store wording (golden G1).
+impl "std/result"
+
+datac Node(val value: i32)
+
+fun make() => result.Result<i32, BlockError> {
+    var list: List<Node> = List.empty()
+    val n = block request: Node {
+        val cell = request.box()?
+        list.push(cell)
+        Node(value = 1)
+    }?
+    return result.Result.Ok<i32, BlockError>(value = n.value + list.len().to_i32())
+}
+
+fun main() {
+    print(0)
+}
