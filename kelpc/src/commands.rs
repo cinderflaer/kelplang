@@ -11,3 +11,6 @@ pub(crate) use cmd_stdlib::*;
 
 mod cmd_doc;
 pub(crate) use cmd_doc::*;
+
+mod cmd_check;
+pub(crate) use cmd_check::*;
