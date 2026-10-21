@@ -252,6 +252,10 @@ pub(crate) struct TupleRow {
 #[path = "parser/tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "parser/tests_b.rs"]
+mod tests_b;
+
 mod parser_tail;
 pub(crate) use parser_tail::*;
 mod parser_part7;
