@@ -76,14 +76,17 @@ sri_sha256() {
 # ---------------------------------------------------------------- in the container
 
 # Owner package of a file, by the family of the target's package manager.
+# Both the path as named and its resolved target are asked, because an alternatives
+# link (cc, for one) and the package that ships its target can differ.
 owner_of() {
-    p=$(readlink -f "$1" 2>/dev/null) || return 0
-    [ -n "$p" ] || return 0
-    case $FAMILY in
-        deb) dpkg -S "$p" 2>/dev/null | head -n 1 | sed 's/:.*//' ;;
-        rpm) rpm -qf --qf '%{NAME}\n' "$p" 2>/dev/null | head -n 1 ;;
-        arch) pacman -Qqo "$p" 2>/dev/null | head -n 1 ;;
-    esac
+    for q in "$1" "$(readlink -f "$1" 2>/dev/null)"; do
+        [ -n "$q" ] || continue
+        case $FAMILY in
+            deb) dpkg -S "$q" 2>/dev/null | head -n 1 | sed 's/:.*//' ;;
+            rpm) rpm -qf --qf '%{NAME}\n' "$q" 2>/dev/null | head -n 1 ;;
+            arch) pacman -Qqo "$q" 2>/dev/null | head -n 1 ;;
+        esac
+    done | sort -u
 }
 
 # The packages kelpc needs at run time: the owners of every library the given
