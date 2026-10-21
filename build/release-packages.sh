@@ -167,6 +167,34 @@ smoke_run() {
     echo "smoke: kelpc run printed hello, world"
 }
 
+# The installed layout, the same for every format:
+#   /usr/lib/kelpc/kelpc          the compiler binary
+#   /usr/lib/kelpc/libkelp_gc.a   the collector archive a hosted link needs
+#   /usr/bin/kelpc                a launcher that names the archive and this
+#                                 distro's ld.lld, so the link works without setup
+# kelpc otherwise reads the archive from its build-time path, which does not exist on
+# a machine that installs the package. The launcher is the packaging fix; the lookup
+# itself is a compiler change (embed the archive, as kelp-rt is embedded).
+stage_root() {
+    gc=$1
+    rm -rf /work/root && mkdir -p /work/root/usr/bin /work/root/usr/lib/kelpc
+    install -m 0755 /work/kelpc-bin /work/root/usr/lib/kelpc/kelpc
+    install -m 0644 "$gc" /work/root/usr/lib/kelpc/libkelp_gc.a
+    lld=$(readlink -f "$(command -v ld.lld)")
+    cat > /work/root/usr/bin/kelpc <<WRAP
+#!/bin/sh
+# kelpc launcher (installed by the kelpc package).
+KELP_GC_LIB=\${KELP_GC_LIB:-/usr/lib/kelpc/libkelp_gc.a}
+KELPC_LLD=\${KELPC_LLD:-$lld}
+export KELP_GC_LIB KELPC_LLD
+exec /usr/lib/kelpc/kelpc "\$@"
+WRAP
+    chmod 0755 /work/root/usr/bin/kelpc
+    tar -C /work/root -czf "/work/kelpc-$VERSION-root.tar.gz" usr
+    # Install the same tree into this build container, so the smoke run uses the launcher.
+    cp -a /work/root/. /
+}
+
 write_buildinfo() {
     {
         echo "target: $TARGET"
@@ -194,7 +222,7 @@ package_deb() {
     codename=$1
     pkg=/work/pkg/kelpc
     rm -rf "$pkg" && mkdir -p "$pkg/DEBIAN" "$pkg/usr/bin"
-    install -m 0755 /work/kelpc-bin "$pkg/usr/bin/kelpc"
+    cp -a /work/root/. "$pkg/"
     depends=$(deps_lines /work/deps.txt | paste -sd, - | sed 's/,/, /g')
     deb_version="$VERSION-1+$codename"
     cat > "$pkg/DEBIAN/control" <<CONTROL
@@ -216,7 +244,7 @@ CONTROL
 package_rpm() {
     top=/work/rpm
     rm -rf "$top" && mkdir -p "$top/BUILD" "$top/RPMS" "$top/SOURCES" "$top/SPECS" "$top/SRPMS" "$top/BUILDROOT"
-    cp /work/kelpc-bin "$top/SOURCES/kelpc"
+    cp -a /work/root "$top/SOURCES/root"
     requires=$(deps_lines /work/deps.txt | sed 's/^/Requires: /')
     cat > "$top/SPECS/kelpc.spec" <<SPEC
 Name: kelpc
@@ -233,10 +261,12 @@ kelpc compiles and runs Kelp (.kp) programs. It is built against LLVM 21 and
 links with the lld21 ld.lld.
 
 %install
-install -Dm755 %{_sourcedir}/kelpc %{buildroot}%{_bindir}/kelpc
+cp -a %{_sourcedir}/root/usr %{buildroot}/
 
 %files
 %{_bindir}/kelpc
+%{_prefix}/lib/kelpc/kelpc
+%{_prefix}/lib/kelpc/libkelp_gc.a
 SPEC
     rpmbuild --define "_topdir $top" -bb "$top/SPECS/kelpc.spec" >/dev/null
     cp "$top"/RPMS/x86_64/kelpc-*.rpm /out/
@@ -245,9 +275,9 @@ SPEC
 package_arch() {
     dir=/work/arch
     rm -rf "$dir" && mkdir -p "$dir"
-    cp /work/kelpc-bin "$dir/kelpc-$VERSION-bin"
+    cp "/work/kelpc-$VERSION-root.tar.gz" "$dir/"
     depends=$(deps_lines /work/deps.txt | sed "s/.*/'&'/" | paste -sd' ' -)
-    sum=$(sha256sum "$dir/kelpc-$VERSION-bin" | cut -d' ' -f1)
+    sum=$(sha256sum "$dir/kelpc-$VERSION-root.tar.gz" | cut -d' ' -f1)
     cat > "$dir/PKGBUILD" <<PKGBUILD
 # Maintainer: Lilly <lilly@rift.dev>
 pkgname=kelpc
@@ -259,11 +289,11 @@ url='https://homelabone.xenoo.dev/gittea/Lilly/kelp'
 license=('custom')
 depends=($depends)
 options=('!strip' '!debug')
-source=("kelpc-\$pkgver-bin")
+source=("kelpc-\$pkgver-root.tar.gz")
 sha256sums=('$sum')
 
 package() {
-    install -Dm755 "\$srcdir/kelpc-\$pkgver-bin" "\$pkgdir/usr/bin/kelpc"
+    tar -xzf "\$srcdir/kelpc-\$pkgver-root.tar.gz" -C "\$pkgdir"
 }
 PKGBUILD
     chown -R builder "$dir"
@@ -286,7 +316,10 @@ container_build() {
     esac
     export PATH="$LLVM_PREFIX/bin:$PATH"
     build_kelpc "$src" /work/kelpc-bin
-    smoke_run /work/kelpc-bin "$src/kelpc/tests/fixtures/examples/hello.kp"
+    gc=$(find /work/target/release/build -path '*kelp-gc/release/libkelp_gc.a' | head -n 1)
+    [ -f "$gc" ] || die "collector archive not found under /work/target"
+    stage_root "$gc"
+    smoke_run /usr/bin/kelpc "$src/kelpc/tests/fixtures/examples/hello.kp"
     write_buildinfo
     find_runtime_deps /work/kelpc-bin > /work/deps.txt
     echo "deps for $TARGET:" && cat /work/deps.txt
