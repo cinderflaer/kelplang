@@ -74,6 +74,48 @@ fn assert_compiles_and_runs(source: &str, expected: &str) {
     assert_eq!(stdout, expected, "unexpected stdout for '{source}'");
 }
 
+/// Like `assert_compiles_and_runs`, and also runs the binary with `env` set and
+/// asserts that its stderr contains `stderr_line`.
+fn assert_compiles_and_runs_with_stderr(
+    source: &str,
+    expected: &str,
+    env: &[(&str, &str)],
+    stderr_line: &str,
+) {
+    let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
+    let bin = out_path(&name);
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture(source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected '{source}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let mut run = Command::new(&bin);
+    for (k, v) in env {
+        run.env(k, v);
+    }
+    let run = run.output().expect("failed to run compiled binary");
+    assert!(
+        run.status.success(),
+        "expected the binary for '{source}' to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(stdout, expected, "unexpected stdout for '{source}'");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains(stderr_line),
+        "expected stderr of '{source}' to contain '{stderr_line}', got:\n{stderr}"
+    );
+}
+
 /// Asserts that `kelpc build` rejects `source` (a compile error is expected).
 fn assert_rejected(source: &str) {
     let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();

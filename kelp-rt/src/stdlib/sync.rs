@@ -17,6 +17,7 @@
 
 use core::ffi::c_int;
 use core::ptr;
+use core::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 /// One select's waiter: a pthread mutex and condition variable (on the
 /// monotonic clock) and the sticky wake flag.
@@ -38,6 +39,40 @@ struct Link {
 static mut REG_LOCK: libc::pthread_mutex_t = libc::PTHREAD_MUTEX_INITIALIZER;
 static mut REG_HEAD: *mut Link = ptr::null_mut();
 static mut NEXT_CHAN: u64 = 1;
+
+/// Waiters made and not yet freed. The test hook `KELP_RT_TEST_WAITERS=1` prints
+/// it at exit, so a test can check that a select (also one that ends by a panic)
+/// frees its waiter.
+static LIVE_WAITERS: AtomicI64 = AtomicI64::new(0);
+static REPORT_ARMED: AtomicBool = AtomicBool::new(false);
+
+unsafe extern "C" {
+    static mut stderr: *mut libc::FILE;
+}
+
+/// The exit report of the test hook: the number of waiters still live.
+extern "C" fn report_live_waiters() {
+    let n = LIVE_WAITERS.load(Ordering::SeqCst);
+    unsafe {
+        libc::fprintf(
+            stderr,
+            c"kelp-rt: select waiters live at exit: %lld\n".as_ptr(),
+            n as libc::c_longlong,
+        );
+    }
+}
+
+/// Arms the exit report once, when the hook variable is set at the first waiter.
+unsafe fn arm_report() {
+    if REPORT_ARMED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    unsafe {
+        if !libc::getenv(c"KELP_RT_TEST_WAITERS".as_ptr()).is_null() {
+            libc::atexit(report_live_waiters);
+        }
+    }
+}
 
 /// Milliseconds on the monotonic clock.
 unsafe fn now_ms() -> i64 {
@@ -69,10 +104,12 @@ pub unsafe extern "C" fn kelp_std__sync__chan_now_ms_raw() -> i64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_std__sync__waiter_new_raw() -> u64 {
     unsafe {
+        arm_report();
         let w = libc::malloc(core::mem::size_of::<Waiter>()).cast::<Waiter>();
         if w.is_null() {
             crate::panic::kelp_panic(c"sync: out of memory for a select waiter".as_ptr());
         }
+        LIVE_WAITERS.fetch_add(1, Ordering::SeqCst);
         libc::pthread_mutex_init(&raw mut (*w).lock, ptr::null());
         let mut attr = core::mem::MaybeUninit::<libc::pthread_condattr_t>::uninit();
         libc::pthread_condattr_init(attr.as_mut_ptr());
@@ -104,6 +141,7 @@ pub unsafe extern "C" fn kelp_std__sync__waiter_free_raw(w: u64) {
         libc::pthread_cond_destroy(&raw mut (*w).cond);
         libc::pthread_mutex_destroy(&raw mut (*w).lock);
         libc::free(w.cast());
+        LIVE_WAITERS.fetch_sub(1, Ordering::SeqCst);
     }
 }
 

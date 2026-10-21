@@ -1,14 +1,32 @@
 // A worker panics inside a select arm. The select's cases and the sender the
 // worker owns are released by the panic path, so main's receive on that
 // sender's channel sees it closed instead of waiting forever, and the join
-// reports the panic.
-// Output: closed, then the join's panic.
+// reports the panic. A second worker panics inside a select with a timeout arm:
+// its waiter is freed on that path too (the test sets KELP_RT_TEST_WAITERS=1
+// and checks the runtime reports no live waiter at exit).
+// Output: closed, then the join's panic, then the timed worker's panic.
 impl "std/option"
 impl "std/result"
 impl "std/sync"
 impl "std/thread"
 
 datac Job(val rx: sync.Receiver<i64>, val tx: sync.Sender<i64>)
+
+datac Inbox(val rx: sync.Receiver<i64>)
+
+fun timed_worker(inbox: move Inbox) {
+    val got: i64 = select {
+        recv(inbox.rx) as v -> {
+            if v == 4 {
+                panic("timed worker gives up")
+            }
+            v
+        },
+        timeout(5000) -> 0,
+        closed -> 0,
+    }
+    print(got)
+}
 
 fun worker(job: move Job) {
     val picked: i64 = select {
@@ -35,5 +53,12 @@ fun main() {
     when thread.join(h) {
         Ok(_) -> print("joined")
         Err(_) -> print("panicked")
+    }
+    val (tx_t, rx_t) = sync.bounded<i64>(1)
+    val sent_t = tx_t.send(4)
+    val h2 = thread.spawn(timed_worker, Inbox(rx = rx_t))
+    when thread.join(h2) {
+        Ok(_) -> {}
+        Err(_) -> {}
     }
 }

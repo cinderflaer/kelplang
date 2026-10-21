@@ -464,6 +464,19 @@ pub(crate) fn a_select_worker_that_panics_releases_its_sender() {
     assert_compiles_and_runs("tests/fixtures/chan_select_panic.kp", "closed\npanicked\n");
 }
 
+/// A panicking worker's select frees its waiter on the panic path, both for a
+/// select with a receive case and for one with a timeout arm: the runtime's
+/// count of live waiters is zero at exit.
+#[test]
+pub(crate) fn a_select_worker_that_panics_frees_its_waiter() {
+    assert_compiles_and_runs_with_stderr(
+        "tests/fixtures/chan_select_panic.kp",
+        "closed\npanicked\n",
+        &[("KELP_RT_TEST_WAITERS", "1")],
+        "kelp-rt: select waiters live at exit: 0",
+    );
+}
+
 /// A receive case needs its `closed` arm, which says what happens when the channel ends.
 #[test]
 pub(crate) fn a_select_receive_case_without_a_closed_arm_is_refused() {
