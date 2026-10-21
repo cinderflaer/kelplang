@@ -180,7 +180,7 @@ stage_root() {
     rm -rf /work/root && mkdir -p /work/root/usr/bin /work/root/usr/lib/kelpc
     install -m 0755 /work/kelpc-bin /work/root/usr/lib/kelpc/kelpc
     install -m 0644 "$gc" /work/root/usr/lib/kelpc/libkelp_gc.a
-    lld=$(readlink -f "$(command -v ld.lld)")
+    lld=$(command -v ld.lld)  # keep the symlink: lld picks its flavour from argv[0]
     cat > /work/root/usr/bin/kelpc <<WRAP
 #!/bin/sh
 # kelpc launcher (installed by the kelpc package).
