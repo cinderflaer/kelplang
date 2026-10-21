@@ -38,7 +38,7 @@ kelp-rt = { path = "../kelp-rt" }
 [dev-dependencies]
 # `std/tls`'s own test coverage (MK5-S4b-M1, open item 37) needs a TLS server
 # to test the client against, the same way the plain HTTP fixtures in
-# `tests/compile_and_run.rs` use a canned `TcpListener`. This wraps the system
+# `tests/compile_and_run/` use a canned `TcpListener`. This wraps the system
 # OpenSSL kelpc itself links against (`driver.rs`'s `-lssl -lcrypto`), so the
 # test server and the compiled program under test always negotiate against
 # the same library, and generating a throwaway self-signed certificate needs

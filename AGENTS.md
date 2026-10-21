@@ -79,7 +79,7 @@ lands.
   are language shape: one lane at a time when a variant, field or type is added.
 - `kelpc/src/stdlib.rs` and `resolve.rs` hold the capability and gate tables read
   by every backend; a change moves everyone's measurements.
-- `kelpc/tests/compile_and_run.rs` holds the whole fixture suite, so two lanes
+- `kelpc/tests/compile_and_run/` holds the whole fixture suite (one module per fixture family), so two lanes
   adding tests nearby conflict textually.
 - rustc's exhaustiveness check is the safety net. A `match` that names every
   variant and has no wildcard stops building when another lane adds a variant;
