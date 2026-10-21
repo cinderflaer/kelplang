@@ -468,11 +468,15 @@ write_flake() {
         name = "llvm-21-kelp-prefix";
         paths = [ llvm.dev llvm.lib ];
       };
-      src = pkgs.fetchzip {
+      # The hash is the tarball's own sha256 (SRI), as fetchurl checks it.
+      tarball = pkgs.fetchurl {
         url = "@URL@";
         hash = "@HASH@";
-        stripRoot = true;
       };
+      src = pkgs.runCommand "kelpc-@VERSION@-src" { } ''
+        mkdir -p $out
+        tar -xzf ${tarball} -C $out --strip-components=1
+      '';
       kelpc = pkgs.rustPlatform.buildRustPackage {
         pname = "kelpc";
         version = "@VERSION@";
