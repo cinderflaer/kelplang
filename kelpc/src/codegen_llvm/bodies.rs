@@ -46,10 +46,16 @@ impl<'a> Gen<'a> {
 
 }
 
-mod part5_4;
+mod map_bodies;
 
-mod part5_3;
+mod list_bodies;
 
-mod part5_2;
+mod list_compare_bodies;
 
-mod part5_1;
+mod map_specs;
+
+mod container_bodies;
+
+mod runtime_bodies;
+
+mod cmp_bodies;
