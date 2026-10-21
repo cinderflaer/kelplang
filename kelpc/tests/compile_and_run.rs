@@ -584,7 +584,6 @@ mod incremental;
 
 #[path = "compile_and_run/http_server.rs"]
 mod http_server;
-pub(crate) use http_server::*;
 
 #[path = "compile_and_run/http_low.rs"]
 mod http_low;
@@ -600,4 +599,3 @@ pub(crate) use http_helpers::*;
 
 #[path = "compile_and_run/eval_order.rs"]
 mod eval_order;
-pub(crate) use eval_order::*;
