@@ -82,7 +82,8 @@ owner_of() {
     for q in "$1" "$(readlink -f "$1" 2>/dev/null)"; do
         [ -n "$q" ] || continue
         case $FAMILY in
-            deb) dpkg -S "$q" 2>/dev/null | head -n 1 | sed 's/:.*//' ;;
+            # dpkg also prints "diversion by ... from:" lines; only "name[:arch]: path" counts.
+            deb) dpkg -S "$q" 2>/dev/null | awk -F': ' '/^[a-z0-9][a-z0-9.+-]*(:[a-z0-9-]+)?: / { sub(/:.*/, "", $1); print $1; exit }' ;;
             rpm) rpm -qf --qf '%{NAME}\n' "$q" 2>/dev/null | head -n 1 ;;
             arch) pacman -Qqo "$q" 2>/dev/null | head -n 1 ;;
         esac
@@ -350,7 +351,7 @@ container_build() {
     find_runtime_deps /work/kelpc-bin "$lld_bin" "$llvm_lib" > /work/deps.txt
     if [ "$BUNDLE_LLVM" = 1 ]; then
         # The bundled copies replace the distro packages that would own them.
-        { owner_of "$llvm_lib"; owner_of "$lld_bin"; } | grep -v '^$' | sort -u > /work/drop.txt
+        { owner_of "$llvm_lib"; owner_of "$lld_bin"; } | grep -v '^$' | sort -u > /work/drop.txt || true
         grep -vxF -f /work/drop.txt /work/deps.txt > /work/deps.new || true
         mv /work/deps.new /work/deps.txt
     fi
