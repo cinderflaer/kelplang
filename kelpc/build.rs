@@ -366,6 +366,13 @@ fn build_collector(manifest_dir: &Path, out_dir: &Path) {
     let out = cmd
         .output()
         .expect("could not run cargo for the collector archive kelpc/gc");
+    // A global `[build] target` (Nix's cargo setup writes one) moves the output to
+    // `<target-dir>/<triple>/release`, so look there too before giving up.
+    let triple_archive = target_dir
+        .join(std::env::var("TARGET").unwrap_or_default())
+        .join("release")
+        .join("libkelp_gc.a");
+    let archive = if archive.is_file() { archive } else { triple_archive };
     assert!(
         out.status.success() && archive.is_file(),
         "kelpc/gc (libkelp_gc.a) failed to build: {}",
