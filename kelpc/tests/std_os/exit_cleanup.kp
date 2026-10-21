@@ -1,0 +1,21 @@
+impl "std/os" caps(fs = ["__SCRATCH__/**"], machine = [])
+impl "std/fs" caps(fs = ["__SCRATCH__/**"])
+impl "std/str"
+
+// Exit runs no destructor, so the runtime removes the temporary paths on the
+// way out. The paths are printed first so the test can check them afterwards.
+fun main() {
+    val td = os.temp_dir()
+    val tpl = str.concat(td, "/kelp-p-XXXXXX")
+    val dr = os.make_temp_dir(tpl)
+    let Ok(d) = &dr else { panic("no temporary directory") }
+    val ftpl = str.concat(td, "/kelp-pf-XXXXXX")
+    val fr = os.make_temp_file(ftpl)
+    let Ok(f) = &fr else { panic("no temporary file") }
+    val dp = d.path()
+    val file = str.concat(dp, "/a.txt")
+    fs.write_text(file, String.from_str("x"))
+    print(dp)
+    print(f.path())
+    os.exit(3)
+}

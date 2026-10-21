@@ -111,6 +111,7 @@ unsafe fn worker_end(message: *const c_char) -> ! {
         let h = worker_handle();
         (*h).panicked = 1;
         (*h).message = message;
+        crate::stdlib::os::cleanup_thread();
         cleanup::cleanup_run_all_then_exit(ptr::null_mut())
     }
 }

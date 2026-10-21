@@ -3,5 +3,5 @@ backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: 'disk' is not a capability domain; v1 has fs, net, process, env, time, rand, ui, mmio, irq, frames
+error: 'disk' is not a capability domain; v1 has fs, net, process, env, time, rand, machine, ui, mmio, irq, frames
 run-status: not run

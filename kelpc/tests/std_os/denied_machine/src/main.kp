@@ -1,0 +1,7 @@
+// `util` is granted env and nothing else, so its call to `os.hostname` is
+// refused at build time: the machine facts need their own grant.
+impl "util" caps(env = ["HOME"])
+
+fun main() {
+    print(util.host_is_known())
+}

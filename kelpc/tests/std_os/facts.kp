@@ -1,0 +1,16 @@
+impl "std/os"
+impl "std/str"
+
+// The ungated facts: no grant is needed for any of these.
+fun main() {
+    val system = os.os()
+    print(str.eq(system, "linux"))
+    val a = os.arch()
+    print(str.eq(a, "x86_64") || str.eq(a, "aarch64"))
+    print(os.pid() > 0)
+    print(os.parent_pid() > 0)
+    val exe = os.exe_path()
+    print(str.len(exe) > 0)
+    print(os.cpu_count() >= 1)
+    print(os.total_memory() > 0)
+}

@@ -18,7 +18,7 @@ pub mod path;
 pub mod rand;
 pub mod source;
 pub mod str;
-pub mod sys;
+pub mod os;
 pub mod sync;
 pub mod thread;
 pub mod time;

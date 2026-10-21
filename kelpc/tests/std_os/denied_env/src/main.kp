@@ -1,0 +1,8 @@
+// `util` is granted nothing, so its call to `os.env_var` is refused when the
+// project is built. The entry module holds every domain, so the refusal can
+// only happen in `util`.
+impl "util"
+
+fun main() {
+    print(util.home_is_set())
+}

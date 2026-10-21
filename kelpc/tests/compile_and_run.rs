@@ -519,6 +519,9 @@ pub(crate) use caps_unsafe::*;
 #[path = "compile_and_run/externs_gating.rs"]
 mod externs_gating;
 
+#[path = "compile_and_run/std_os.rs"]
+mod std_os;
+
 #[path = "compile_and_run/consts_arrays.rs"]
 mod consts_arrays;
 

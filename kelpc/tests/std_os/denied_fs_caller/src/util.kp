@@ -1,0 +1,9 @@
+impl "std/os" caps(fs = ["/nonexistent/**"], machine = [])
+impl "std/str"
+
+pub fun make() => bool {
+    val td = os.temp_dir()
+    val tpl = str.concat(td, "/kelp-util-XXXXXX")
+    val made = os.make_temp_dir(tpl)
+    return made.is_ok()
+}

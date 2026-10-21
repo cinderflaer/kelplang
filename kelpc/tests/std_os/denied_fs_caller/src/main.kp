@@ -1,0 +1,8 @@
+// `util` holds `fs` over a place the temporary directory is not in. The
+// template is checked against the caller's own grant, so the directory is
+// refused even though `std/os` was granted the same narrow place.
+impl "util" caps(fs = ["/nonexistent/**"], machine = [])
+
+fun main() {
+    print(util.make())
+}

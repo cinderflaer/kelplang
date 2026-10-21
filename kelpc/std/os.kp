@@ -1,0 +1,236 @@
+impl "std/option"
+impl "std/result"
+impl "std/str"
+
+// std/os, the facts a program needs about the system it runs on: the target it
+// was built for, its process, its environment and its machine, and the
+// temporary directories and files it makes for itself.
+//
+// Which items need a grant is the table `stdlib::gated_item_domain` keeps, the
+// one the compiler reads. This list describes that table; a unit test pins the
+// table, so a change to one of them is a change to the other:
+//
+//   ungated       os, arch, pid, parent_pid, exe_path, current_dir,
+//                 set_current_dir, exit, cpu_count, total_memory, and the
+//                 `path()` of a TempDir or TempFile
+//   env           env_var, set_env_var, unset_env_var
+//   machine       hostname, user_name, home_dir, temp_dir, uid, gid
+//   fs            make_temp_dir, make_temp_file, and the drop of TempDir and
+//                 TempFile
+//
+//       impl "std/os" caps(env = ["APP_*"], machine = [], fs = ["/tmp/**"])
+//
+// The `machine` domain has no pattern, like `time` and `rand`: its grant is the
+// domain. `home_dir` and `temp_dir` read `HOME` and `TMPDIR`, and the machine
+// grant covers them, so a program with `machine` can see those two variables
+// whatever `env` names it grants. `fs` is checked against the template a caller
+// passes to `make_temp_dir` or `make_temp_file`, at the call, the way `fs.open`
+// checks its path: the caller's own grant decides where a temporary may go.
+//
+// `env_vars()` is not here. Listing the environment would read every variable,
+// which a grant naming one name should not allow; `std/env` makes the same
+// decision (kelp wiki page stdlib/env.md). `args()` is not here either:
+// `std/process` already gives the program's argv, with no grant.
+
+/// The target operating system, as a lowercase name: `"linux"`, `"macos"`,
+/// `"windows"`, `"freebsd"`, or `"unknown"`. It is fixed when the program is
+/// built, not read from the machine it runs on.
+extern fun os() => str
+
+/// The target CPU architecture: `"x86_64"`, `"aarch64"`, `"arm"`, `"riscv64"`,
+/// `"x86"`, or `"unknown"`. Fixed when the program is built.
+extern fun arch() => str
+
+/// This process's id.
+extern fun pid() => i64
+
+/// The id of the process that started this one.
+extern fun parent_pid() => i64
+
+/// The absolute path of the running program's executable, as the kernel
+/// reports it (`/proc/self/exe`).
+///
+/// Panics: if the link cannot be read.
+extern fun exe_path() => String
+
+/// The working directory of this process.
+///
+/// Panics: if it cannot be read (for example, after it was removed).
+extern fun current_dir() => String
+
+/// Changes the working directory of this process. Relative paths in the
+/// program then resolve against `path`; every grant pattern is absolute, so no
+/// grant changes meaning.
+///
+/// Panics: if `path` is not a directory this process may enter.
+extern fun set_current_dir(path: &str)
+
+/// Ends this process with `code`. Temporary directories and files that are
+/// still registered are removed first (`exit` runs the runtime's exit hook, as
+/// a panic does), but no destructor runs. This is a process's authority over
+/// itself, so it needs no grant.
+extern fun exit(code: i32)
+
+/// The number of processors the system reports as online, at least 1.
+extern fun cpu_count() => usize
+
+/// The physical memory of the machine, in bytes, or 0 when the system does not
+/// report it.
+extern fun total_memory() => u64
+
+// ---------------------------------------------------------------------------
+// env: gated on `env`. The name is the resource, matched against the grant
+// before the call, like `std/env`.
+// ---------------------------------------------------------------------------
+
+extern fun has_raw(name: &str) => bool
+extern fun get_raw(name: &str) => String
+extern fun set_raw(name: &str, value: &str)
+extern fun unset_raw(name: &str)
+
+/// The value of the variable, or `None` when it is not set. Unlike
+/// `std/env.get`, an unset variable and one set to "" are different here.
+///
+/// Panics: if `name` is outside the `env` grant.
+fun env_var(name: &str) => option.Option<String> {
+    if has_raw(name) {
+        return option.Option.Some(value = get_raw(name))
+    }
+    return option.Option.None
+}
+
+/// Sets the variable for this process and any child it starts.
+///
+/// Panics: if `name` is outside the `env` grant, or the variable cannot be set.
+fun set_env_var(name: &str, value: &str) {
+    set_raw(name, value)
+}
+
+/// Removes the variable from this process's environment.
+///
+/// Panics: if `name` is outside the `env` grant, or it cannot be removed.
+fun unset_env_var(name: &str) {
+    unset_raw(name)
+}
+
+// ---------------------------------------------------------------------------
+// machine: gated on `machine`, which has no pattern.
+// ---------------------------------------------------------------------------
+
+/// The host name of the machine, or the empty string when it is not known.
+extern fun hostname() => String
+
+/// The name of the user this process runs as, or the empty string when the user
+/// database has no entry for it.
+extern fun user_name() => String
+
+extern fun home_dir_raw() => String
+
+/// The directory temporary files go in: `TMPDIR`, or `/tmp` when that is unset
+/// or empty.
+extern fun temp_dir() => String
+
+/// The numeric user id of this process.
+extern fun uid() => u32
+
+/// The numeric group id of this process.
+extern fun gid() => u32
+
+/// The home directory: `HOME`, or the home directory of the user database when
+/// `HOME` is unset. `None` when neither is known.
+fun home_dir() => option.Option<String> {
+    val home = home_dir_raw()
+    if str.is_empty(home) {
+        return option.Option.None
+    }
+    return option.Option.Some(value = home)
+}
+
+// ---------------------------------------------------------------------------
+// fs: temporary directories and files, gated on `fs`.
+// ---------------------------------------------------------------------------
+
+/// Why a temporary path could not be made.
+enum OsError {
+    /// The template does not end in `XXXXXX`, the six characters the system
+    /// replaces with a random name.
+    BadTemplate
+    /// The system refused to create the directory or file.
+    CreateFailed
+}
+
+/// A fresh, empty directory, created by `make_temp_dir`. Its name is random, so
+/// two programs do not collide, and it is removed with everything in it when
+/// the value is dropped. A panic runs no destructor, so the runtime also removes
+/// it when the process exits by a panic or by `exit`.
+datac TempDir(
+    /// The directory's path, as the system made it.
+    val dir: String,
+)
+
+/// A fresh, empty file, created by `make_temp_file`, removed when the value is
+/// dropped, and by the runtime at exit, as a `TempDir` is.
+datac TempFile(
+    /// The file's path, as the system made it.
+    val file: String,
+)
+
+extern fun mkdtemp_raw(template: &str) => String
+extern fun mkstemp_raw(template: &str) => String
+extern fun remove_tree_raw(path: &str)
+
+/// A fresh directory whose name is `template` with its six trailing `X`s
+/// replaced by a random string, for example
+/// `str.concat(os.temp_dir(), "/build-XXXXXX")`.
+///
+/// The grant is checked against the template, at the call, like `fs.mkdir`:
+/// the caller must hold an `fs` grant that covers the place the directory is
+/// made. `std/os`'s own grant is checked too, when it has one.
+///
+/// Panics: if `template` is outside the caller's `fs` grant.
+fun make_temp_dir(template: &str) => result.Result<TempDir, OsError> {
+    if !str.ends_with(template, "XXXXXX") {
+        return result.Result.Err(error = OsError.BadTemplate)
+    }
+    val path = mkdtemp_raw(template)
+    if str.is_empty(path) {
+        return result.Result.Err(error = OsError.CreateFailed)
+    }
+    return result.Result.Ok(value = TempDir(dir = path))
+}
+
+/// A fresh empty file whose name is `template` with its six trailing `X`s
+/// replaced, checked against the grant as `make_temp_dir` is.
+///
+/// Panics: if `template` is outside the caller's `fs` grant.
+fun make_temp_file(template: &str) => result.Result<TempFile, OsError> {
+    if !str.ends_with(template, "XXXXXX") {
+        return result.Result.Err(error = OsError.BadTemplate)
+    }
+    val path = mkstemp_raw(template)
+    if str.is_empty(path) {
+        return result.Result.Err(error = OsError.CreateFailed)
+    }
+    return result.Result.Ok(value = TempFile(file = path))
+}
+
+/// The path of the directory. It is named by the directory the module made, so
+/// it is not a new authority and needs no grant.
+fun TempDir.path() => String {
+    return String.from_str(self.dir.as_str())
+}
+
+/// The path of the file. Like `TempDir.path`, it needs no grant.
+fun TempFile.path() => String {
+    return String.from_str(self.file.as_str())
+}
+
+/// Removes the directory and everything in it.
+fun mut TempDir.drop() {
+    remove_tree_raw(self.dir.as_str())
+}
+
+/// Removes the file.
+fun mut TempFile.drop() {
+    remove_tree_raw(self.file.as_str())
+}

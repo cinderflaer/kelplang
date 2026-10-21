@@ -1,0 +1,13 @@
+impl "std/os"
+impl "std/str"
+
+// set_current_dir moves the process; current_dir reads it back.
+fun main() {
+    val before = os.current_dir()
+    os.set_current_dir("__SCRATCH__")
+    val now = os.current_dir()
+    print(str.eq(now, "__SCRATCH__"))
+    os.set_current_dir(before)
+    val back = os.current_dir()
+    print(str.eq(back, before))
+}

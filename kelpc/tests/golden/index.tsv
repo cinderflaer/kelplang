@@ -992,7 +992,7 @@ project_caps_entry_ungranted	c-refused		error: 'std.fs.exists' needs the 'fs' ca
 project_caps_report	ran	exit 1	panic: fs.read: cannot open file	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 project_closure_datac_param	ran	exit 0		9898479bfabd961cde3c91327af8e70831a1eb0d93a55681d0c47b67ce3b0508
 project_convert_cross	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
-project_ffi_bad_domain	c-refused		error: 'disk' is not a capability domain; v1 has fs, net, process, env, time, rand, ui, mmio, irq, frames	
+project_ffi_bad_domain	c-refused		error: 'disk' is not a capability domain; v1 has fs, net, process, env, time, rand, machine, ui, mmio, irq, frames	
 project_ffi_bad_header	c-refused		error: coral.toml value for '[extern."ctype"] header' must not be empty	
 project_ffi_bad_header_dotdot	c-refused		error: coral.toml value for '[extern."ctype"] header' must not contain '"', '<', '>', a newline or '..'	
 project_ffi_bad_rename	c-refused		error: coral.toml C symbol for '[extern."sys"] symbols' must be a C identifier, found 'get-pid'	

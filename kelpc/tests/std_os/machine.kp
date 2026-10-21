@@ -1,0 +1,16 @@
+impl "std/os" caps(machine = [])
+impl "std/str"
+
+// The machine facts. The grant has no pattern: `machine` is the whole grant.
+fun main() {
+    val host = os.hostname()
+    print(str.len(host) > 0)
+    val user = os.user_name()
+    print(str.len(user) > 0)
+    val home = os.home_dir()
+    print(home.is_some())
+    val tmp = os.temp_dir()
+    print(str.len(tmp) > 0)
+    print(os.uid() == os.uid())
+    print(os.gid() == os.gid())
+}

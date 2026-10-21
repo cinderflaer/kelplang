@@ -1,0 +1,8 @@
+impl "std/os" caps(env = ["HOME"])
+
+impl "std/str"
+
+pub fun host_is_known() => bool {
+    val host = os.hostname()
+    return str.len(host) > 0
+}

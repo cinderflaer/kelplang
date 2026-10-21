@@ -1,0 +1,6 @@
+impl "std/os"
+
+// No grant names env: the call below is a build error in this module.
+pub fun home_is_set() => bool {
+    return os.env_var("HOME").is_some()
+}

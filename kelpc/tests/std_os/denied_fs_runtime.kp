@@ -1,0 +1,11 @@
+impl "std/os" caps(fs = ["__SCRATCH__/keep/**"], machine = [])
+impl "std/str"
+
+// The template is under TMPDIR, and only keep/ may be written. The check runs
+// inside std/os, against the grant on this line, and refuses the directory.
+fun main() {
+    val td = os.temp_dir()
+    val tpl = str.concat(td, "/kelp-x-XXXXXX")
+    val made = os.make_temp_dir(tpl)
+    print(made.is_ok())
+}

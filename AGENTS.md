@@ -32,6 +32,7 @@ for `Bytes`, `String`, `List`, `Map`, `Box`. No `unsafe` in safe code, no except
 | Path | What it is |
 | --- | --- |
 | `kelpc/` | The compiler, `kelpc`, in Rust: lexer, preprocessor, parser, `infer.rs`, `borrowck.rs`, the backends, `driver.rs`. `kelpc/std/` ships inside the binary. |
+| `kelpc/std/` | The shipped standard library, one `.kp` file per `std/*` module: `os.kp` is `std/os` (target, process and machine facts, environment, temporary paths), `sys.kp` re-exports its target facts. The module list is the wiki's `stdlib.md`. |
 | `kelpc/tests/` | The fixture suite and the other test targets. |
 | `plan/` | Removed on 2026-10-16. Plans are Gitea issues labelled `plan`. The design records and the pending changelog are in the kelp wiki (`design/*`, `changelog-pending`). |
 

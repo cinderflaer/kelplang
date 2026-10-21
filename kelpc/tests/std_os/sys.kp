@@ -1,0 +1,9 @@
+impl "std/sys"
+impl "std/os"
+impl "std/str"
+
+// std/sys re-exports the target facts of std/os, so the two always agree.
+fun main() {
+    print(str.eq(sys.os(), os.os()))
+    print(str.eq(sys.arch(), os.arch()))
+}

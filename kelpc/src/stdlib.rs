@@ -159,6 +159,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/time" => include_str!("../std/time.kp"),
         "std/source" => include_str!("../std/source.kp"),
         "std/sys" => include_str!("../std/sys.kp"),
+        "std/os" => include_str!("../std/os.kp"),
         "std/trace" => include_str!("../std/trace.kp"),
         "std/rand" => include_str!("../std/rand.kp"),
         "std/env" => include_str!("../std/env.kp"),
@@ -200,7 +201,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
 /// directly), but nothing should be told it is a library to reach for.
 pub fn shipped() -> &'static [&'static str] {
     &[
-        "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/source", "std/sys", "std/trace", "std/rand", "std/env",
+        "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/source", "std/sys", "std/os", "std/trace", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/tlsfile", "std/http", "std/ws",
         "std/encoding", "std/list", "std/option", "std/result", "std/iter", "std/convert", "std/ops", "std/atomic",
         "std/thread", "std/pool", "std/arena", SYNC_MODULE, "std/irq", "std/frame", "std/regex", "std/tz",
@@ -303,7 +304,7 @@ pub fn may_use_unsafe(id: &str) -> bool {
 /// resource and deliberately leaves `mmio` out, because the whole-address-
 /// space grant is the escape hatch a reviewer greps for.
 pub const DOMAINS: &[&str] = &[
-    "fs", "net", "process", "env", "time", "rand", "ui", "mmio", "irq", "frames",
+    "fs", "net", "process", "env", "time", "rand", "machine", "ui", "mmio", "irq", "frames",
 ];
 
 pub fn is_domain(name: &str) -> bool {
@@ -581,7 +582,33 @@ pub fn domain_of(module: &str) -> Option<&'static str> {
         "std/time" => "time",
         "std/trace" => "time",
         "std/rand" => "rand",
+        "std/os" => "env",
         _ => return None,
+    })
+}
+
+/// The domain one item of a gated module is gated on, by the item's bare name,
+/// or `None` when the item is ungated.
+///
+/// Most gated modules gate every item on the module's one domain, and this
+/// answers `domain_of` for them. `std/os` is the exception: its target and
+/// process facts (`os`, `pid`, `current_dir`, `exit` and the like) are ungated,
+/// so `std/sys` can re-export `os()` and `arch()` without a grant, while its
+/// environment, machine and temporary-path items each have their own domain. A
+/// module with ungated items still gates its *other* items, and its body
+/// reaches the gated primitives it declares itself (its own calls are never
+/// checked against the importer), so no item of it is reachable without the
+/// grant its domain needs.
+pub fn gated_item_domain(module: &str, item: &str) -> Option<&'static str> {
+    if module != "std/os" {
+        return domain_of(module);
+    }
+    Some(match item {
+        "os" | "arch" | "pid" | "parent_pid" | "exe_path" | "current_dir" | "set_current_dir" | "exit"
+        | "cpu_count" | "total_memory" | "path" => return None,
+        "hostname" | "user_name" | "home_dir_raw" | "home_dir" | "temp_dir" | "uid" | "gid" => "machine",
+        "make_temp_dir" | "make_temp_file" | "mkdtemp_raw" | "mkstemp_raw" | "remove_tree_raw" | "drop" => "fs",
+        _ => "env",
     })
 }
 
@@ -802,12 +829,41 @@ mod tests {
     fn the_domain_list_names_every_domain_once() {
         assert_eq!(
             DOMAINS,
-            &["fs", "net", "process", "env", "time", "rand", "ui", "mmio", "irq", "frames"]
+            &["fs", "net", "process", "env", "time", "rand", "machine", "ui", "mmio", "irq", "frames"]
         );
         let mut sorted = DOMAINS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), DOMAINS.len(), "a domain name appears twice");
+    }
+
+    #[test]
+    fn std_os_gates_each_item_on_its_own_domain() {
+        // The target and process facts are ungated, so `std/sys` can re-export
+        // `os()` and `arch()` without a grant.
+        for item in ["os", "arch", "pid", "parent_pid", "exe_path", "current_dir", "set_current_dir", "exit", "cpu_count", "total_memory", "path"] {
+            assert_eq!(gated_item_domain("std/os", item), None, "{item} should be ungated");
+        }
+        assert_eq!(gated_item_domain("std/os", "env_var"), Some("env"));
+        assert_eq!(gated_item_domain("std/os", "set_env_var"), Some("env"));
+        for item in ["hostname", "user_name", "home_dir", "temp_dir", "uid", "gid"] {
+            assert_eq!(gated_item_domain("std/os", item), Some("machine"), "{item}");
+        }
+        for item in ["make_temp_dir", "make_temp_file", "drop", "mkdtemp_raw"] {
+            assert_eq!(gated_item_domain("std/os", item), Some("fs"), "{item}");
+        }
+        assert_eq!(gated_item_domain("std/sys", "os"), None);
+        assert_eq!(gated_item_domain("std/env", "get"), Some("env"));
+    }
+
+    #[test]
+    fn std_os_temp_constructors_check_the_template_the_caller_passes() {
+        // The template is a path, so the caller's grant is checked at the call,
+        // and the module's own `mkdtemp_raw` checks it again against its grant.
+        assert_eq!(checked_args("fs", "make_temp_dir", &[true]), vec![CapCheck::Path(0)]);
+        assert_eq!(checked_args("fs", "make_temp_file", &[true]), vec![CapCheck::Path(0)]);
+        assert_eq!(checked_args("fs", "mkdtemp_raw", &[true]), vec![CapCheck::Path(0)]);
+        assert_eq!(checked_args("fs", "remove_tree_raw", &[true]), vec![CapCheck::Path(0)]);
     }
 
     #[test]

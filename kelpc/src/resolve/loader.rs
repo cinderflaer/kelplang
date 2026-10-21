@@ -762,7 +762,20 @@ pub fn load(
             continue;
         };
         let parsed = &loader.parsed[&m.id];
+        // A stdlib module can gate its items on more than its one domain
+        // (`std/os` leaves its target facts ungated), so each item asks
+        // `gated_item_domain`. A user `[extern.*]` module has no per-item table,
+        // so every item takes the module's domain.
+        let stdlib_module = crate::stdlib::domain_of(&m.id).is_some();
         for f in &parsed.functions {
+            let item_domain = if stdlib_module {
+                crate::stdlib::gated_item_domain(&m.id, &f.name).map(str::to_string)
+            } else {
+                Some(domain.clone())
+            };
+            let Some(item_domain) = item_domain else {
+                continue;
+            };
             // A method's key is `Type#name` and the *receiver type* carries
             // the module prefix (`infer.rs::sig_key`, and the prefixing loop
             // above); a free function's key is its prefixed name.
@@ -770,7 +783,7 @@ pub fn load(
                 Some(r) => format!("{}{}#{}", m.prefix, r.type_name, f.name),
                 None => format!("{}{}", m.prefix, f.name),
             };
-            gated.insert(key, domain.clone());
+            gated.insert(key, item_domain);
         }
     }
 
