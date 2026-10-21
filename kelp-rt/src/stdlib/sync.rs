@@ -301,6 +301,30 @@ mod tests {
         }
     }
 
+    /// CPU time of the calling thread, in nanoseconds.
+    fn thread_cpu_ns() -> i64 {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut ts) };
+        (ts.tv_sec as i64) * 1_000_000_000 + ts.tv_nsec as i64
+    }
+
+    #[test]
+    fn a_quiet_wait_blocks_without_spinning() {
+        unsafe {
+            let c = kelp_std__sync__chan_id_raw();
+            let w = kelp_std__sync__waiter_new_raw();
+            kelp_std__sync__waiter_watch_raw(w, c);
+            let before = thread_cpu_ns();
+            let far = kelp_std__sync__chan_now_ms_raw() + 200;
+            assert!(!kelp_std__sync__waiter_wait_raw(w, far));
+            let used = thread_cpu_ns() - before;
+            // A 200 ms wait that spun would burn most of that in CPU; a blocked one uses almost none.
+            assert!(used < 50_000_000, "the wait used {used} ns of CPU");
+            kelp_std__sync__waiter_unwatch_raw(w, c);
+            kelp_std__sync__waiter_free_raw(w);
+        }
+    }
+
     #[test]
     fn free_removes_registrations() {
         unsafe {
