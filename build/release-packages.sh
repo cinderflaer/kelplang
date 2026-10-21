@@ -462,7 +462,8 @@ write_flake() {
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
-      llvm = pkgs.llvmPackages_21;
+      llvm = pkgs.llvmPackages_21.llvm;
+      lld = pkgs.llvmPackages_21.lld;
       # llvm-sys wants one prefix that holds include/ and lib/ (as shell.nix does).
       llvmPrefix = pkgs.symlinkJoin {
         name = "llvm-21-kelp-prefix";
@@ -490,7 +491,7 @@ write_flake() {
         KELPC_COMMIT = "v@VERSION@";
         # kelpc runs ld.lld and cc for every hosted link.
         postFixup = ''
-          wrapProgram $out/bin/kelpc --prefix PATH : ${pkgs.lib.makeBinPath [ llvm.lld pkgs.stdenv.cc ]}
+          wrapProgram $out/bin/kelpc --prefix PATH : ${pkgs.lib.makeBinPath [ lld pkgs.stdenv.cc ]}
         '';
         meta = {
           description = "Kelp compiler (kelpc)";
