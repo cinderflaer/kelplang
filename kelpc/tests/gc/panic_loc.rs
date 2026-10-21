@@ -127,7 +127,3 @@ pub(crate) fn m7_median(v: &[f64]) -> f64 {
     s.sort_by(|x, y| x.partial_cmp(y).unwrap());
     s[s.len() / 2]
 }
-
-// ---- Tidepool step 1 tests added by fixer B (T7, T25a, T25b, T30, T31, T39, T51, T70, T78). ----
-
-#[path = "tidepool_step1_fixb.rs"]

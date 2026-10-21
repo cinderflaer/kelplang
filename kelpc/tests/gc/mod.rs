@@ -329,6 +329,9 @@ pub(crate) use large::*;
 mod panic_loc;
 pub(crate) use panic_loc::*;
 
+// ---- Tidepool step 1 tests added by fixer B (T7, T25a, T25b, T30, T31, T39, T51, T70, T78). ----
+
+#[path = "tidepool_step1_fixb.rs"]
 mod tidepool_step1_fixb;
 mod bench_clear;
 // Tidepool step 2, T40 (R36): trigger arithmetic, in bytes, as a pure function.

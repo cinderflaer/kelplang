@@ -51,7 +51,7 @@ pub(crate) unsafe fn fill_until_full() {
     }
 }
 
-unsafe extern "C" fn hook_exit_3(msg: *const u8) {
+pub(crate) unsafe extern "C" fn hook_exit_3(msg: *const u8) {
     let text = std::ffi::CStr::from_ptr(msg as *const core::ffi::c_char);
     eprintln!("hooked: {}", text.to_string_lossy());
     std::process::exit(3);
