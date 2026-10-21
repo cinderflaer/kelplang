@@ -1,0 +1,46 @@
+// The zero-capacity form in a select. A send case on a rendezvous channel is
+// ready only while a receiver is waiting, so with no receiver the timeout arm
+// runs. Once a worker is blocked in `recv`, the send case completes: the worker
+// gets the value and acknowledges it on a second channel.
+// Output: no receiver, sent, 10.
+impl "std/option"
+impl "std/result"
+impl "std/sync"
+impl "std/thread"
+
+datac Job(val rx: sync.Receiver<i64>, val ack: sync.Sender<i64>)
+
+fun taker(job: move Job) {
+    when job.rx.recv() {
+        Ok(v) -> {
+            val acked = job.ack.send(v + 1)
+        }
+        Err(_) -> {}
+    }
+}
+
+fun main() {
+    val (tx, rx) = sync.rendezvous<i64>()
+    val (ack, ack_rx) = sync.bounded<i64>(1)
+    val first = select {
+        send(tx, 1) -> "sent",
+        timeout(20) -> "no receiver",
+    }
+    print(first)
+
+    val h = thread.spawn(taker, Job(rx = rx, ack = ack))
+    thread.sleep_ms(30)
+    val second = select {
+        send(tx, 9) -> "sent",
+        timeout(2000) -> "timed out",
+    }
+    print(second)
+    when thread.join(h) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+    when ack_rx.recv() {
+        Ok(v) -> print(v)
+        Err(_) -> print("closed")
+    }
+}

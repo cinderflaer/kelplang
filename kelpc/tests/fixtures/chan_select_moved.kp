@@ -1,0 +1,14 @@
+// A value can be sent in one case of a select only. Sending `x` in two cases
+// would move it twice, so the select is refused and names the value.
+impl "std/sync"
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(1)
+    val (tx2, rx2) = sync.bounded<i64>(1)
+    val x: i64 = 4
+    select {
+        send(tx, x) -> 1,
+        send(tx2, x) -> 2,
+        closed -> 0,
+    }
+}

@@ -1,0 +1,39 @@
+// The `select` form over receive cases. The first ready case in source order
+// wins: a value queued on one channel is taken with its arm's binding. Once the
+// sender of the first channel is gone and that channel is empty, it is a ready
+// case that runs the `closed` arm. A select with nothing ready runs its timeout
+// arm when the deadline passes.
+// Output: 5, then -1 (closed), then -2 (timeout).
+impl "std/option"
+impl "std/result"
+impl "std/sync"
+
+fun give_up(tx: move sync.Sender<i64>) {
+}
+
+fun main() {
+    val (tx_a, rx_a) = sync.bounded<i64>(2)
+    val (tx_b, rx_b) = sync.bounded<i64>(2)
+    val queued = tx_b.send(5)
+    val first: i64 = select {
+        recv(rx_a) as v -> v * 10,
+        recv(rx_b) as v -> v,
+        closed -> -1,
+    }
+    print(first)
+
+    give_up(tx_a)
+    val second: i64 = select {
+        recv(rx_a) as v -> v * 10,
+        recv(rx_b) as v -> v,
+        closed -> -1,
+    }
+    print(second)
+
+    val third: i64 = select {
+        recv(rx_b) as v -> v,
+        timeout(20) -> -2,
+        closed -> -3,
+    }
+    print(third)
+}

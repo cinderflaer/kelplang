@@ -706,6 +706,10 @@ impl Parser {
                 // `unsafe { ... }` (MK9-S2 stage 1): the contextual word is a
                 // block introducer exactly when the next token is `{`, so
                 // `unsafe` stays usable as an ordinary name everywhere else.
+                // `select { ... }` (issue 216, plan 236 step d): contextual, only before `{`.
+                if name == "select" && matches!(self.peek2_kind(), TokenKind::LBrace) {
+                    return self.parse_select();
+                }
                 if name == "unsafe" && matches!(self.peek2_kind(), TokenKind::LBrace) {
                     self.advance();
                     let block = self.parse_block()?;

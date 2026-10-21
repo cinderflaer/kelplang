@@ -1,0 +1,33 @@
+// The `select` form with send cases. A send case is ready while its channel has
+// room; the value it carries is queued only when that case is chosen. A full
+// channel is not ready, so the receive case on it wins instead.
+// Output: sent, 7, received.
+impl "std/option"
+impl "std/result"
+impl "std/sync"
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(1)
+    val sent = select {
+        send(tx, 7) -> "sent",
+        recv(rx) as v -> "received",
+        closed -> "closed",
+    }
+    print(sent)
+
+    val value: i64 = select {
+        recv(rx) as v -> v,
+        timeout(10) -> -1,
+        closed -> -2,
+    }
+    print(value)
+
+    val (tx2, rx2) = sync.bounded<i64>(1)
+    val queued = tx2.send(3)
+    val full = select {
+        send(tx2, 4) -> "sent",
+        recv(rx2) as v -> "received",
+        closed -> "closed",
+    }
+    print(full)
+}

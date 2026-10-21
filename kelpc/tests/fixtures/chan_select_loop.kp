@@ -1,0 +1,55 @@
+// A select in a loop, blocking between values. Two producer threads each send
+// three values with a pause between them; main keeps its own senders, so no
+// channel closes while it reads. Each receive arm adds its value to the total,
+// and the loop stops after six values. Values: 1, 2, 3 on one channel and
+// 10, 20, 30 on the other.
+// Output: 66.
+impl "std/option"
+impl "std/result"
+impl "std/sync"
+impl "std/thread"
+
+datac Feed(val tx: sync.Sender<i64>, val base: i64)
+
+fun producer(feed: move Feed) {
+    var i: i64 = 1
+    while i <= 3 {
+        val queued = feed.tx.send(feed.base * i)
+        thread.sleep_ms(2)
+        i += 1
+    }
+}
+
+fun main() {
+    val (tx_a, rx_a) = sync.bounded<i64>(1)
+    val (tx_b, rx_b) = sync.bounded<i64>(1)
+    val ha = thread.spawn(producer, Feed(tx = tx_a.clone(), base = 1))
+    val hb = thread.spawn(producer, Feed(tx = tx_b.clone(), base = 10))
+
+    var total: i64 = 0
+    var seen: i64 = 0
+    while seen < 6 {
+        select {
+            recv(rx_a) as v -> {
+                total += v
+                seen += 1
+            },
+            recv(rx_b) as v -> {
+                total += v
+                seen += 1
+            },
+            closed -> {
+                seen = 100
+            },
+        }
+    }
+    print(total)
+    when thread.join(ha) {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+    when thread.join(hb) {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+}

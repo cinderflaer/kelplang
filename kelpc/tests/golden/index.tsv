@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1162 ran=582 c_refused=547 excluded=33
+# counts candidates=1169 ran=587 c_refused=549 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -91,6 +91,13 @@ fixture_chan_rendezvous	ran	exit 0		ce537dc4c59701ed9025f47155504239879d859e2816
 fixture_chan_select	ran	exit 0		d467d747eb25f8b1a6bf4a759110d997d0fc76670509605c013eb71a96cb2c06
 fixture_chan_select_blocks	ran	exit 0		ac853736761ed279625f05b51995a4879d7fb5801b4f1c525f81400f83b9eb6a
 fixture_chan_select_engine	ran	exit 0		25fce707182c457d0b81682263b9f853a35c9f4cbfb80976ebf8936a508d6906
+fixture_chan_select_arms	ran	exit 0		3b317719bc759de5a94f89e6a784d3c4b8370c64d3eaf05fdab11e6faa60a2b0
+fixture_chan_select_send	ran	exit 0		3fa82fce54d38c49cbf15a75d5d76fb26bac3cd37199f92e87dfbb8f091f48d1
+fixture_chan_select_rendezvous	ran	exit 0		1558973e82b30e650eaddb4eda3cf9977707fc92df64966b8ff589cb2dd3ba69
+fixture_chan_select_loop	ran	exit 0		8e37bed9dff3949ffd23ae638260dff869f5cc26e551f2a9e5e289a8888949fa
+fixture_chan_select_panic	ran	exit 0		24d0fc7d76b5ebdd1a5296d3134662c834f19aee382ab6a675831b1eccf907c0
+fixture_chan_select_moved	c-refused		error: the value 'x' is sent in two cases of this select: a value can be sent in one case only, so send a copy or a second value in the other case	
+fixture_chan_select_no_closed	c-refused		error: a 'select' with a receive case needs a 'closed -> e' arm: it runs when the chosen receive case is closed and empty	
 fixture_chan_select_mixed	c-refused		error: argument 'b' has type '&std.sync.Receiver<String>', expected '&std.sync.Receiver<i64>'	
 fixture_chan_send_a_lock	c-refused		error: in 'std.sync.bounded<Mutex<i64>>'	
 fixture_chan_string_producers	ran	exit 0		7e82c359a33d04f4ceb4b24c2a3c7eabde0f41ada000f04ea2eca915f7a97913

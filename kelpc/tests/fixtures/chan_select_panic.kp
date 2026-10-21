@@ -1,0 +1,39 @@
+// A worker panics inside a select arm. The select's cases and the sender the
+// worker owns are released by the panic path, so main's receive on that
+// sender's channel sees it closed instead of waiting forever, and the join
+// reports the panic.
+// Output: closed, then the join's panic.
+impl "std/option"
+impl "std/result"
+impl "std/sync"
+impl "std/thread"
+
+datac Job(val rx: sync.Receiver<i64>, val tx: sync.Sender<i64>)
+
+fun worker(job: move Job) {
+    val picked: i64 = select {
+        recv(job.rx) as v -> {
+            if v == 4 {
+                panic("worker gives up")
+            }
+            v
+        },
+        closed -> 0,
+    }
+    print(picked)
+}
+
+fun main() {
+    val (tx_in, rx_in) = sync.bounded<i64>(1)
+    val (tx_out, rx_out) = sync.bounded<i64>(1)
+    val h = thread.spawn(worker, Job(rx = rx_in, tx = tx_out))
+    val sent = tx_in.send(4)
+    when rx_out.recv() {
+        Ok(v) -> print(v)
+        Err(_) -> print("closed")
+    }
+    when thread.join(h) {
+        Ok(_) -> print("joined")
+        Err(_) -> print("panicked")
+    }
+}

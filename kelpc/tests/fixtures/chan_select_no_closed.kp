@@ -1,0 +1,10 @@
+// A receive case in a select needs its `closed -> e` arm: it says what runs when
+// the chosen channel is closed and empty. Without it the select is refused.
+impl "std/sync"
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(1)
+    val v = select {
+        recv(rx) as x -> x,
+    }
+}

@@ -426,6 +426,50 @@ pub(crate) fn a_select_engine_polls_sends_and_times_out() {
     assert_compiles_and_runs("tests/fixtures/chan_select_engine.kp", "false\ntrue\ntrue\n7\ntimed out\n");
 }
 
+/// The `select` form over receive cases: the first ready case in source order wins,
+/// a closed and empty channel runs the `closed` arm, and a timeout runs when nothing is ready.
+#[test]
+pub(crate) fn a_select_takes_the_first_ready_receive_arm_closed_or_timeout() {
+    assert_compiles_and_runs("tests/fixtures/chan_select_arms.kp", "5\n-1\n-2\n");
+}
+
+/// A send arm is ready while its channel has room, and a full channel is not.
+#[test]
+pub(crate) fn a_select_send_arm_sends_when_the_channel_has_room() {
+    assert_compiles_and_runs("tests/fixtures/chan_select_send.kp", "sent\n7\nreceived\n");
+}
+
+/// A send arm on a zero-capacity channel completes only once a receiver is blocked on it.
+#[test]
+pub(crate) fn a_select_send_on_a_rendezvous_waits_for_a_receiver() {
+    assert_compiles_and_runs("tests/fixtures/chan_select_rendezvous.kp", "no receiver\nsent\n10\n");
+}
+
+/// A select in a loop blocks between values from two producer threads and reads all six.
+#[test]
+pub(crate) fn a_select_in_a_loop_reads_two_producers_until_done() {
+    assert_compiles_and_runs("tests/fixtures/chan_select_loop.kp", "66\n");
+}
+
+/// A worker that panics inside a select arm releases its cases and its sender, so the
+/// receiver on that sender's channel sees it closed.
+#[test]
+pub(crate) fn a_select_worker_that_panics_releases_its_sender() {
+    assert_compiles_and_runs("tests/fixtures/chan_select_panic.kp", "closed\npanicked\n");
+}
+
+/// A receive case needs its `closed` arm, which says what happens when the channel ends.
+#[test]
+pub(crate) fn a_select_receive_case_without_a_closed_arm_is_refused() {
+    assert_rejected_with("tests/fixtures/chan_select_no_closed.kp", "closed -> e");
+}
+
+/// A value can be sent in one case of a select only: the second case would move it again.
+#[test]
+pub(crate) fn a_select_sending_one_value_in_two_cases_is_refused_by_name() {
+    assert_rejected_with("tests/fixtures/chan_select_moved.kp", "sent in two cases");
+}
+
 /// `select3` with nothing ready waits for the one channel that sends.
 #[test]
 pub(crate) fn a_select_with_no_ready_case_blocks_until_one_is() {
