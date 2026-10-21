@@ -86,13 +86,15 @@ owner_of() {
     esac
 }
 
-# The packages kelpc needs at run time: the owners of every library it links, and of
-# the tools and crt/libc files a hosted link reads (ld.lld, cc, crt objects, libc.so,
-# libgcc). Prints one package name per line, sorted, without duplicates.
+# The packages kelpc needs at run time: the owners of every library the given
+# executables and shared objects link, and of the tools and crt/libc files a hosted
+# link reads (ld.lld, cc, crt objects, libc.so, libgcc). Prints one package name per
+# line, sorted, without duplicates.
 find_runtime_deps() {
-    bin=$1
     {
-        ldd "$bin" | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^\//) print $i }'
+        for f in "$@"; do
+            ldd "$f" | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^\//) print $i }'
+        done
         for f in crti.o crtbeginS.o libc.so libgcc.a libgcc_s.so; do
             cc -print-file-name="$f"
         done
@@ -175,18 +177,35 @@ smoke_run() {
 # kelpc otherwise reads the archive from its build-time path, which does not exist on
 # a machine that installs the package. The launcher is the packaging fix; the lookup
 # itself is a compiler change (embed the archive, as kelp-rt is embedded).
+# Debian-family targets bundle LLVM 21 (libLLVM.so and ld.lld) under /usr/lib/kelpc,
+# because LLVM 21 is only in apt.llvm.org and a package cannot depend on a repository
+# the install does not add. The launcher then sets LD_LIBRARY_PATH. Other targets
+# depend on the distro's llvm21 packages.
 stage_root() {
     gc=$1
+    llvm_lib=$2
+    lld_bin=$3
     rm -rf /work/root && mkdir -p /work/root/usr/bin /work/root/usr/lib/kelpc
     install -m 0755 /work/kelpc-bin /work/root/usr/lib/kelpc/kelpc
     install -m 0644 "$gc" /work/root/usr/lib/kelpc/libkelp_gc.a
-    lld=$(command -v ld.lld)  # keep the symlink: lld picks its flavour from argv[0]
+    if [ "$BUNDLE_LLVM" = 1 ]; then
+        mkdir -p /work/root/usr/lib/kelpc/lib /work/root/usr/lib/kelpc/bin
+        cp -L "$llvm_lib" "/work/root/usr/lib/kelpc/lib/$(basename "$llvm_lib")"
+        cp -L "$lld_bin" /work/root/usr/lib/kelpc/bin/ld.lld
+        chmod 0755 /work/root/usr/lib/kelpc/bin/ld.lld
+        lld=/usr/lib/kelpc/bin/ld.lld
+        libpath='export LD_LIBRARY_PATH=/usr/lib/kelpc/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}'
+    else
+        lld=$lld_bin  # keep the symlink: lld picks its flavour from argv[0]
+        libpath=''
+    fi
     cat > /work/root/usr/bin/kelpc <<WRAP
 #!/bin/sh
 # kelpc launcher (installed by the kelpc package).
 KELP_GC_LIB=\${KELP_GC_LIB:-/usr/lib/kelpc/libkelp_gc.a}
 KELPC_LLD=\${KELPC_LLD:-$lld}
 export KELP_GC_LIB KELPC_LLD
+$libpath
 exec /usr/lib/kelpc/kelpc "\$@"
 WRAP
     chmod 0755 /work/root/usr/bin/kelpc
@@ -307,9 +326,10 @@ container_build() {
     VERSION=$2
     export KELPC_COMMIT=$3 SOURCE_DATE_EPOCH=$4
     src=/work/kelpc-$VERSION
+    BUNDLE_LLVM=0
     case $TARGET in
-        debian-trixie) FAMILY=deb; container_setup_debian trixie apt ;;
-        ubuntu-noble) FAMILY=deb; container_setup_debian noble rustup ;;
+        debian-trixie) FAMILY=deb; BUNDLE_LLVM=1; container_setup_debian trixie apt ;;
+        ubuntu-noble) FAMILY=deb; BUNDLE_LLVM=1; container_setup_debian noble rustup ;;
         fedora) FAMILY=rpm; container_setup_fedora ;;
         arch) FAMILY=arch; container_setup_arch ;;
         *) die "unknown target $TARGET" ;;
@@ -318,10 +338,19 @@ container_build() {
     build_kelpc "$src" /work/kelpc-bin
     gc=$(find /work/target/release/build -path '*kelp-gc/release/libkelp_gc.a' | head -n 1)
     [ -f "$gc" ] || die "collector archive not found under /work/target"
-    stage_root "$gc"
+    llvm_lib=$(ldd /work/kelpc-bin | awk '/libLLVM/ { print $3; exit }')
+    [ -f "$llvm_lib" ] || die "libLLVM not found for kelpc"
+    lld_bin=$(command -v ld.lld)
+    stage_root "$gc" "$llvm_lib" "$lld_bin"
     smoke_run /usr/bin/kelpc "$src/kelpc/tests/fixtures/examples/hello.kp"
     write_buildinfo
-    find_runtime_deps /work/kelpc-bin > /work/deps.txt
+    find_runtime_deps /work/kelpc-bin "$lld_bin" "$llvm_lib" > /work/deps.txt
+    if [ "$BUNDLE_LLVM" = 1 ]; then
+        # The bundled copies replace the distro packages that would own them.
+        { owner_of "$llvm_lib"; owner_of "$lld_bin"; } | grep -v '^$' | sort -u > /work/drop.txt
+        grep -vxF -f /work/drop.txt /work/deps.txt > /work/deps.new || true
+        mv /work/deps.new /work/deps.txt
+    fi
     echo "deps for $TARGET:" && cat /work/deps.txt
     case $TARGET in
         debian-trixie) package_deb trixie ;;
