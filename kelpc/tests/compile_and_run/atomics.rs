@@ -439,6 +439,12 @@ pub(crate) fn a_select_send_arm_sends_when_the_channel_has_room() {
     assert_compiles_and_runs("tests/fixtures/chan_select_send.kp", "sent\n7\nreceived\n");
 }
 
+/// A `default` arm runs at once when nothing is ready, and a ready receive arm wins otherwise.
+#[test]
+pub(crate) fn a_select_default_arm_runs_when_nothing_is_ready() {
+    assert_compiles_and_runs("tests/fixtures/chan_select_default.kp", "-1\n4\n");
+}
+
 /// A send arm on a zero-capacity channel completes only once a receiver is blocked on it.
 #[test]
 pub(crate) fn a_select_send_on_a_rendezvous_waits_for_a_receiver() {

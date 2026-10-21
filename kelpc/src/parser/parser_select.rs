@@ -10,6 +10,8 @@ enum SelectArm {
     Timeout { millis: Expr, body: Expr, span: Span },
     /// `closed -> e`: a receive case found its channel closed and empty.
     Closed { body: Expr, span: Span },
+    /// `default -> e`: nothing is ready, so the select does not wait and runs this arm.
+    Default { body: Expr, span: Span },
 }
 
 impl SelectArm {
@@ -18,7 +20,8 @@ impl SelectArm {
             SelectArm::Recv { span, .. }
             | SelectArm::Send { span, .. }
             | SelectArm::Timeout { span, .. }
-            | SelectArm::Closed { span, .. } => *span,
+            | SelectArm::Closed { span, .. }
+            | SelectArm::Default { span, .. } => *span,
         }
     }
 
@@ -27,7 +30,8 @@ impl SelectArm {
             SelectArm::Recv { body, .. }
             | SelectArm::Send { body, .. }
             | SelectArm::Timeout { body, .. }
-            | SelectArm::Closed { body, .. } => body,
+            | SelectArm::Closed { body, .. }
+            | SelectArm::Default { body, .. } => body,
         }
     }
 }
@@ -175,9 +179,15 @@ impl Parser {
                 let span = head_span.to(body.span());
                 SelectArm::Closed { body, span }
             }
+            "default" => {
+                self.expect(TokenKind::Arrow, "'->' after 'default'")?;
+                let body = self.parse_expr()?;
+                let span = head_span.to(body.span());
+                SelectArm::Default { body, span }
+            }
             other => {
                 return Err(ParseError {
-                    help: Some("a select arm is recv(rx) as v -> e, send(tx, x) -> e, timeout(ms) -> e or closed -> e".to_string()),
+                    help: Some("a select arm is recv(rx) as v -> e, send(tx, x) -> e, timeout(ms) -> e, closed -> e or default -> e".to_string()),
                     message: format!("'{other}' is not a select arm"),
                     span: head_span,
                 });
@@ -196,6 +206,7 @@ impl Parser {
         let mut recvs = 0usize;
         let mut closeds = 0usize;
         let mut timeouts = 0usize;
+        let mut defaults = 0usize;
         let mut sent: Vec<(String, Span)> = Vec::new();
         for arm in &arms {
             match arm {
@@ -227,6 +238,7 @@ impl Parser {
                 }
                 SelectArm::Timeout { .. } => timeouts += 1,
                 SelectArm::Closed { .. } => closeds += 1,
+                SelectArm::Default { .. } => defaults += 1,
             }
         }
         if timeouts > 1 {
@@ -234,6 +246,15 @@ impl Parser {
         }
         if closeds > 1 {
             return Err(err("a 'select' takes one closed arm".to_string(), span));
+        }
+        if defaults > 1 {
+            return Err(err("a 'select' takes one default arm".to_string(), span));
+        }
+        if defaults > 0 && timeouts > 0 {
+            return Err(err(
+                "a 'select' with a default arm does not wait, so it cannot also have a timeout arm: keep one of them".to_string(),
+                span,
+            ));
         }
         if recvs > 0 && closeds == 0 {
             return Err(err(
@@ -282,7 +303,7 @@ impl Parser {
                     stmts.push(let_stmt(slot.clone(), false, init, arm.span()));
                     slot_of.push(Some(slot));
                 }
-                SelectArm::Timeout { .. } | SelectArm::Closed { .. } => slot_of.push(None),
+                SelectArm::Timeout { .. } | SelectArm::Closed { .. } | SelectArm::Default { .. } => slot_of.push(None),
             }
         }
 
@@ -334,6 +355,21 @@ impl Parser {
             loop_body.push(stmt_expr(
                 Expr::If {
                     cond: Box::new(ident(&expired, span)),
+                    then_block: block_of(
+                        vec![assign(&pick, Expr::IntLit(i as u64, span), span), Stmt::Break { span }],
+                        span,
+                    ),
+                    else_block: None,
+                    span,
+                },
+                span,
+            ));
+        }
+        // A default arm never waits: with nothing ready after this pass, it runs.
+        if let Some(i) = arms.iter().position(|a| matches!(a, SelectArm::Default { .. })) {
+            loop_body.push(stmt_expr(
+                Expr::If {
+                    cond: Box::new(Expr::BoolLit(true, span)),
                     then_block: block_of(
                         vec![assign(&pick, Expr::IntLit(i as u64, span), span), Stmt::Break { span }],
                         span,

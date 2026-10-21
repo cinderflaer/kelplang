@@ -1,0 +1,24 @@
+// The `default` arm: a select that finds nothing ready runs it at once instead
+// of waiting. Once a value is queued, the receive arm wins.
+// Output: -1 (default), then 4 (received).
+impl "std/option"
+impl "std/result"
+impl "std/sync"
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(1)
+    val idle: i64 = select {
+        recv(rx) as v -> v,
+        closed -> 0,
+        default -> -1,
+    }
+    print(idle)
+
+    val queued = tx.send(4)
+    val ready: i64 = select {
+        recv(rx) as v -> v,
+        closed -> 0,
+        default -> -1,
+    }
+    print(ready)
+}
