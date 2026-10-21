@@ -246,7 +246,8 @@ package_deb() {
     pkg=/work/pkg/kelpc
     rm -rf "$pkg" && mkdir -p "$pkg/DEBIAN" "$pkg/usr/bin"
     cp -a /work/root/. "$pkg/"
-    depends=$(deps_lines /work/deps.txt | paste -sd, - | sed 's/,/, /g')
+    # cc is an alternatives link no package owns, so its driver package is named here.
+    depends=$({ echo gcc; deps_lines /work/deps.txt; } | sort -u | paste -sd, - | sed 's/,/, /g')
     deb_version="$VERSION-1+$codename"
     cat > "$pkg/DEBIAN/control" <<CONTROL
 Package: kelpc
