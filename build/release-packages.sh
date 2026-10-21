@@ -490,9 +490,17 @@ write_flake() {
         buildInputs = [ llvm.lib pkgs.openssl ];
         LLVM_SYS_211_PREFIX = llvmPrefix;
         KELPC_COMMIT = "v@VERSION@";
+        # The collector archive is installed beside the binary, and the wrapper names
+        # it (the build-time path is in the build sandbox and gone at run time).
+        postInstall = ''
+          gc=$(find . -name libkelp_gc.a -path '*kelp-gc*' | head -n 1)
+          install -Dm644 "$gc" $out/lib/kelpc/libkelp_gc.a
+        '';
         # kelpc runs ld.lld and cc for every hosted link.
         postFixup = ''
-          wrapProgram $out/bin/kelpc --prefix PATH : ${pkgs.lib.makeBinPath [ lld pkgs.stdenv.cc ]}
+          wrapProgram $out/bin/kelpc \
+            --set-default KELP_GC_LIB $out/lib/kelpc/libkelp_gc.a \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ lld pkgs.stdenv.cc ]}
         '';
         meta = {
           description = "Kelp compiler (kelpc)";
