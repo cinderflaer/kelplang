@@ -164,6 +164,28 @@ pub unsafe extern "C" fn kelp_std__sync__chan_wake_raw(chan: u64) {
     }
 }
 
+/// Wakes every waiter registered on `chan` except `except`, the select that is
+/// parking and must not wake itself.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_std__sync__chan_wake_except_raw(chan: u64, except: u64) {
+    unsafe {
+        let except = except as usize as *mut Waiter;
+        libc::pthread_mutex_lock(&raw mut REG_LOCK);
+        let mut link = REG_HEAD;
+        while !link.is_null() {
+            let w = (*link).waiter;
+            if (*link).chan == chan && w != except {
+                libc::pthread_mutex_lock(&raw mut (*w).lock);
+                (*w).signaled = 1;
+                libc::pthread_cond_signal(&raw mut (*w).cond);
+                libc::pthread_mutex_unlock(&raw mut (*w).lock);
+            }
+            link = (*link).next;
+        }
+        libc::pthread_mutex_unlock(&raw mut REG_LOCK);
+    }
+}
+
 /// Waits until `w` is woken or the monotonic deadline `deadline_ms` passes
 /// (`deadline_ms < 0` waits without a limit). Answers `true` for a wake and
 /// `false` for a deadline. A wake that came earlier, with nothing waiting, still
@@ -256,6 +278,26 @@ mod tests {
             let far = kelp_std__sync__chan_now_ms_raw() + 20;
             assert!(!kelp_std__sync__waiter_wait_raw(w, far));
             kelp_std__sync__waiter_free_raw(w);
+        }
+    }
+
+    #[test]
+    fn wake_except_leaves_the_parking_waiter_asleep() {
+        unsafe {
+            let c = kelp_std__sync__chan_id_raw();
+            let me = kelp_std__sync__waiter_new_raw();
+            let other = kelp_std__sync__waiter_new_raw();
+            kelp_std__sync__waiter_watch_raw(me, c);
+            kelp_std__sync__waiter_watch_raw(other, c);
+            kelp_std__sync__chan_wake_except_raw(c, me);
+            // The other waiter hears the wake; the excepted one does not.
+            assert!(kelp_std__sync__waiter_wait_raw(other, -1));
+            let soon = kelp_std__sync__chan_now_ms_raw() + 20;
+            assert!(!kelp_std__sync__waiter_wait_raw(me, soon));
+            kelp_std__sync__waiter_unwatch_raw(me, c);
+            kelp_std__sync__waiter_unwatch_raw(other, c);
+            kelp_std__sync__waiter_free_raw(me);
+            kelp_std__sync__waiter_free_raw(other);
         }
     }
 

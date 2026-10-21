@@ -90,10 +90,11 @@
    the first case, in argument order, that is ready: `Pick.Got(index, value)` for
    a value, `Pick.Closed(index)` for a channel whose senders are all gone and
    whose queue is empty (a closed channel is ready). `index` is 0-based. They
-   block while no case is ready. The wait is a poll with a 1 ms sleep, not a
-   shared wakeup: a channel keeps no list of select waiters, so a select answers
-   at most about one poll period after its value arrives. Send cases are not
-   in `select`: a send case needs a non-blocking send, which is not built.
+   block while no case is ready, on the select engine below: a channel keeps a
+   list of the selects waiting on it, so a select wakes when a value arrives
+   and does not poll. The general `select` form (send cases, a timeout arm and
+   a closed arm) is written in the language's `select { ... }` syntax, which
+   lowers onto the same engine (`kelp wiki page stdlib/sync.md` section Select).
 
    There is no new runtime record. The two ends share one queue and one state
    record through `Mutex.share()` and `Condvar.share()` (a handle to the same
@@ -128,6 +129,10 @@ extern fun chan_id_raw() => u64
 
 /// Wakes every select waiting on channel `chan`.
 extern fun chan_wake_raw(chan: u64)
+
+/// Wakes every select waiting on channel `chan` except the waiter `except`, which
+/// is the select that is parking: it must not wake itself.
+extern fun chan_wake_except_raw(chan: u64, except: u64)
 
 /// Monotonic milliseconds, the clock `waiter_wait_raw` deadlines are read on.
 extern fun chan_now_ms_raw() => i64
@@ -385,8 +390,15 @@ must_use fun Sender<T>.try_send(value: move T) => result.Result<usize, T> {
             queued
         }
     }
-    self.end.ne.notify_one()
-    chan_wake_raw(self.end.id)
+    // Only a send that changed the queue (or found the receiver gone) wakes anyone:
+    // a refused one leaves the channel as it was, and its own select must not be woken.
+    when r {
+        Ok(_) -> {
+            self.end.ne.notify_one()
+            chan_wake_raw(self.end.id)
+        }
+        Err(_) -> {}
+    }
     return r
 }
 
@@ -486,6 +498,11 @@ fun Receiver<T>.poll() => option.Option<result.Result<T, RecvErr>> {
             val item = self.q.lock { l -> l.remove(0) }
             val got: result.Result<T, RecvErr> = result.Result.Ok(value = item)
             val ready: option.Option<result.Result<T, RecvErr>> = option.Option.Some(value = got)
+            // A taken value is a state change: a sender waiting for room, and any
+            // select waiting on this channel, must hear of it. A poll that finds
+            // nothing changes nothing, so it wakes nobody (not even its own select).
+            self.end.nf.notify_all()
+            chan_wake_raw(self.end.id)
             ready
         } else if s.senders == 0 {
             val gone: result.Result<T, RecvErr> = result.Result.Err(error = RecvErr.Closed)
@@ -496,8 +513,6 @@ fun Receiver<T>.poll() => option.Option<result.Result<T, RecvErr>> {
             none
         }
     }
-    self.end.nf.notify_all()
-    chan_wake_raw(self.end.id)
     return r
 }
 
@@ -511,13 +526,20 @@ datac Select(
     val deadline: i64
 )
 
-/// Counts one select receive case out of its channel's waiting receivers when
-/// the select ends. `live` is false for a send case, which counts for nothing.
+/// One select case's share of its channel's waiting-receiver count. A receive
+/// case counts as waiting only while its select is blocked (`park` to `unpark`),
+/// never while the select polls, so a select does not see its own receive case
+/// as a receiver a send case could hand a value to. `live` is false for a send
+/// case, which counts for nothing.
 datac Interest(
     /// False for a send case, which holds no place among the waiting receivers.
     val live: bool,
-    /// The channel state, so the count can be taken back.
-    val meta: Mutex<ChanMeta>
+    /// The channel number, for waking the selects that wait on it.
+    val id: u64,
+    /// The channel state, so the count can be changed.
+    val meta: Mutex<ChanMeta>,
+    /// Whether this case is counted as waiting right now.
+    val parked: Mutex<bool>
 )
 
 /// One case of a `select`: the value a receive case took or found closed, or the
@@ -556,23 +578,50 @@ fun Select.wait() => bool {
     return waiter_wait_raw(self.waiter, self.deadline)
 }
 
-/// Releases the receiving count a select receive case held.
-fun mut Interest.drop() {
+/// Counts this receive case as waiting and wakes the other selects on the channel,
+/// so a blocked rendezvous sender can see it. Only the first waiting receiver
+/// wakes them: a later one needs no wake, and a wake per park would let two
+/// selects on one channel keep waking each other.
+fun Interest.park(waiter: u64) {
     if !live {
         return
     }
-    meta.lock { s -> s.waiting -= 1 }
+    val was = parked.swap(true)
+    if !was {
+        val first = meta.lock { s ->
+            s.waiting += 1
+            s.waiting == 1
+        }
+        if first {
+            chan_wake_except_raw(id, waiter)
+        }
+    }
 }
 
-/// Registers a receive case on `rx` with the select `sel`. The case counts as a
-/// waiting receiver for as long as its slot lives, so a rendezvous send can see it.
+/// Takes this case back out of the waiting receivers, if it is counted.
+fun Interest.unpark() {
+    if !live {
+        return
+    }
+    val was = parked.swap(false)
+    if was {
+        meta.lock { s -> s.waiting -= 1 }
+    }
+}
+
+/// Releases the receiving count a select receive case still holds.
+fun mut Interest.drop() {
+    self.unpark()
+}
+
+/// Registers a receive case on `rx` with the select `sel`. The case is counted as
+/// a waiting receiver only while the select is blocked (see `Slot.park`).
 fun recv_case<T>(rx: &Receiver<T>, sel: &Select) => Slot<T> {
     waiter_watch_raw(sel.waiter, rx.end.id)
-    rx.end.meta.lock { s -> s.waiting += 1 }
-    chan_wake_raw(rx.end.id)
     val items: Mutex<List<T>> = Mutex.new(List.empty())
     val closed: Mutex<bool> = Mutex.new(false)
-    return Slot<T>(items = items, closed = closed, interest = Interest(live = true, meta = rx.end.meta.share()))
+    val parked: Mutex<bool> = Mutex.new(false)
+    return Slot<T>(items = items, closed = closed, interest = Interest(live = true, id = rx.end.id, meta = rx.end.meta.share(), parked = parked))
 }
 
 /// Registers a send case on `tx` with the select `sel`, staging `value` until the case
@@ -581,7 +630,18 @@ fun send_case<T>(tx: &Sender<T>, sel: &Select, value: move T) => Slot<T> {
     waiter_watch_raw(sel.waiter, tx.end.id)
     val items: Mutex<List<T>> = Mutex.new(List.of(value))
     val closed: Mutex<bool> = Mutex.new(false)
-    return Slot<T>(items = items, closed = closed, interest = Interest(live = false, meta = tx.end.meta.share()))
+    val parked: Mutex<bool> = Mutex.new(false)
+    return Slot<T>(items = items, closed = closed, interest = Interest(live = false, id = tx.end.id, meta = tx.end.meta.share(), parked = parked))
+}
+
+/// Counts every receive case of the select as waiting, before the select blocks.
+fun Slot<T>.park(sel: &Select) {
+    self.interest.park(sel.waiter)
+}
+
+/// Takes every receive case of the select back out of the waiting count, after it blocked.
+fun Slot<T>.unpark() {
+    self.interest.unpark()
 }
 
 /// The value a receive case took, or the value a send case carries before it is sent.
@@ -592,7 +652,7 @@ fun Slot<T>.take() => T {
 
 /// Whether a receive case found its channel closed and empty.
 fun Slot<T>.is_closed() => bool {
-    return self.closed.lock { c -> c }
+    return self.closed.lock { c -> *c }
 }
 
 /// One look at a receive case: `true` when it is ready, with its value (or its
@@ -637,56 +697,59 @@ fun Sender<T>.select_send(slot: &Slot<T>) => bool {
     }
 }
 
-/// The `Pick` for case `index` once its poll has answered.
-fun pick_of<T>(index: usize, r: move result.Result<T, RecvErr>) => Pick<T> {
-    return when r {
-        Ok(v) -> Pick.Got(index = index, value = v)
-        Err(_) -> Pick.Closed(index = index)
+/// The `Pick` for the receive case at `index` once its poll has answered: the
+/// value it took, or `Closed` when it found its channel closed and empty.
+fun pick_slot<T>(index: usize, slot: &Slot<T>) => Pick<T> {
+    if slot.is_closed() {
+        return Pick.Closed(index = index)
     }
+    return Pick.Got(index = index, value = slot.take())
 }
 
 /// Waits for whichever of two receive cases is ready first; the lower index wins a tie.
 fun select2<T>(a: &Receiver<T>, b: &Receiver<T>) => Pick<T> {
+    val sel = select_begin(false, 0)
+    val sa = recv_case(a, &sel)
+    val sb = recv_case(b, &sel)
     while true {
-        when a.poll() {
-            Some(r) -> {
-                return pick_of(0, r)
-            }
-            None -> {}
+        if a.select_poll(&sa) {
+            return pick_slot(0, &sa)
         }
-        when b.poll() {
-            Some(r) -> {
-                return pick_of(1, r)
-            }
-            None -> {}
+        if b.select_poll(&sb) {
+            return pick_slot(1, &sb)
         }
-        thread.sleep_ms(1)
+        sa.park(&sel)
+        sb.park(&sel)
+        sel.wait()
+        sa.unpark()
+        sb.unpark()
     }
     panic("select2: unreachable")
 }
 
 /// Waits for whichever of three receive cases is ready first; the lowest index wins a tie.
 fun select3<T>(a: &Receiver<T>, b: &Receiver<T>, c: &Receiver<T>) => Pick<T> {
+    val sel = select_begin(false, 0)
+    val sa = recv_case(a, &sel)
+    val sb = recv_case(b, &sel)
+    val sc = recv_case(c, &sel)
     while true {
-        when a.poll() {
-            Some(r) -> {
-                return pick_of(0, r)
-            }
-            None -> {}
+        if a.select_poll(&sa) {
+            return pick_slot(0, &sa)
         }
-        when b.poll() {
-            Some(r) -> {
-                return pick_of(1, r)
-            }
-            None -> {}
+        if b.select_poll(&sb) {
+            return pick_slot(1, &sb)
         }
-        when c.poll() {
-            Some(r) -> {
-                return pick_of(2, r)
-            }
-            None -> {}
+        if c.select_poll(&sc) {
+            return pick_slot(2, &sc)
         }
-        thread.sleep_ms(1)
+        sa.park(&sel)
+        sb.park(&sel)
+        sc.park(&sel)
+        sel.wait()
+        sa.unpark()
+        sb.unpark()
+        sc.unpark()
     }
     panic("select3: unreachable")
 }

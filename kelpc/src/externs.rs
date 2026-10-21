@@ -48,6 +48,7 @@ static RUST_PORTED: &[(&str, &str)] = &[
     ("std/mem", "alloc_raw"),
     ("std/sync", "chan_id_raw"),
     ("std/sync", "chan_wake_raw"),
+    ("std/sync", "chan_wake_except_raw"),
     ("std/sync", "chan_now_ms_raw"),
     ("std/sync", "waiter_new_raw"),
     ("std/sync", "waiter_free_raw"),

@@ -341,6 +341,8 @@ pub const PROTOTYPES: &[(&str, &str)] = &[(
      "bool kelp_std__sync__waiter_wait_raw(uint64_t w, int64_t deadline_ms);"),
     ("kelp_std__sync__chan_wake_raw",
      "void kelp_std__sync__chan_wake_raw(uint64_t chan);"),
+    ("kelp_std__sync__chan_wake_except_raw",
+     "void kelp_std__sync__chan_wake_except_raw(uint64_t chan, uint64_t except);"),
     ("kelp_std__time__now_unix_raw",
      "int64_t kelp_std__time__now_unix_raw(void);"),
     ("kelp_std__time__now_mono_ns_raw",
