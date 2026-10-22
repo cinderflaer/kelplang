@@ -22,15 +22,3 @@ pub mod os;
 pub mod sync;
 pub mod thread;
 pub mod time;
-
-/// Replaces `*reason` with a fresh Kelp string holding `text`, freeing the old
-/// buffer first, as the failing `try_*` bodies do.
-///
-/// # Safety
-/// `reason` must point to a live `String`, and `text` must be NUL-terminated.
-pub(crate) unsafe fn set_reason(reason: *mut crate::abi::String, text: *const core::ffi::c_char) {
-    unsafe {
-        libc::free((*reason).data.cast());
-        *reason = crate::text::kelp_String__from_str(text);
-    }
-}

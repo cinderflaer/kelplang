@@ -88,16 +88,10 @@ pub fn find(id: &str) -> &'static Outdated {
         .unwrap_or_else(|| panic!("'{id}' is not in the register of outdated syntax"))
 }
 
-/// The finding for one register entry, at the span that names the construct.
-pub fn finding(id: &str, span: Span, module: &str) -> Diagnostic {
-    finding_for(find(id), span, module)
-}
-
-/// The finding for an entry already in hand.
-///
-/// Split from `finding` so a test can exercise the wording on an entry built in
-/// the test rather than one registered here: an empty register has no id to look
-/// up, and a test must not add a permanent deprecation to get one.
+/// The finding for an entry, at the span that names the construct. A test
+/// exercises the wording on an entry built in the test rather than one registered
+/// here: an empty register has no id to look up, and a test must not add a
+/// permanent deprecation to get one.
 fn finding_for(entry: &Outdated, span: Span, module: &str) -> Diagnostic {
     Diagnostic::new(
         format!("{} is outdated and {REMOVAL}: {}", entry.what, entry.instead),

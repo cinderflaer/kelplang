@@ -3,7 +3,7 @@
 //! archive (`KELP_GC_LIB`, built from `kelpc/gc` with `cargo build --release`),
 //! so the tests are `#[ignore]`d and run with `--ignored`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 fn kelpc() -> Command {

@@ -327,7 +327,8 @@ impl DropPlan {
     }
 
     /// The manual block region `expr` is, when it is one. `function` is the
-    /// function whose body holds `expr`.
+    /// function whose body holds `expr`. Only the region tests ask for it.
+    #[cfg(test)]
     pub fn region(&self, function: &str, expr: &tir::Expr) -> Option<&RegionDrop> {
         self.functions
             .get(function)
