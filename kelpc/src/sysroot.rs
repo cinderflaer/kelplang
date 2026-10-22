@@ -220,17 +220,26 @@ fn with_baked(baked: &Option<PathBuf>, system: &[PathBuf]) -> Vec<PathBuf> {
 fn find_loader(libc_dir: &Path, fallbacks: &[PathBuf]) -> Result<PathBuf, String> {
     let beside_libc = libc_dir.join(LOADER);
     if beside_libc.exists() {
-        return Ok(beside_libc);
+        return Ok(canonical_loader(beside_libc));
     }
     for path in fallbacks {
         if path.exists() {
-            return Ok(path.clone());
+            return Ok(canonical_loader(path.clone()));
         }
     }
     Err(format!(
         "could not find the dynamic loader '{LOADER}' in '{}' or at the usual system paths",
         libc_dir.display()
     ))
+}
+
+/// The loader path as the program records it in its `PT_INTERP`. A path such
+/// as GCC's `/usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/...`
+/// names a directory that exists only where GCC is installed, so the kernel
+/// cannot start the program on a machine without it. The canonical path names
+/// the real file, which every distro that runs glibc has.
+fn canonical_loader(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -754,6 +763,22 @@ mod tests {
                 "/usr/lib/x86_64-linux-gnu/crtn.o",
             ]
         );
+    }
+
+    #[test]
+    fn find_loader_records_the_canonical_path_not_a_dotdot_path() {
+        let dir = scratch("loader-canonical");
+        let real = dir.join("real-loader");
+        fs::write(&real, b"x").unwrap();
+        let libc = dir.join("lib");
+        fs::create_dir_all(&libc).unwrap();
+        std::os::unix::fs::symlink(&real, libc.join(LOADER)).unwrap();
+        // The libc directory is named through a `..` component, as GCC names it.
+        let dotted = dir.join("lib").join("..").join("lib");
+        let found = find_loader(&dotted, &[]).unwrap();
+        assert_eq!(found, fs::canonicalize(&real).unwrap());
+        assert!(!found.to_string_lossy().contains(".."), "{found:?}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
