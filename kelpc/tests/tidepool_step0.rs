@@ -119,7 +119,6 @@ fn scalar_thread_and_lock_values_still_check_clean() {
 }
 
 fn run_and_compare(name: &str) {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build(name);
     let out = run(&bin, "");
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -129,39 +128,38 @@ fn run_and_compare(name: &str) {
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t58_a_worker_that_panics_leaves_the_collector() {
     run_and_compare("t58_worker_panic_detaches");
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t61_a_join_does_not_stop_a_collection() {
     run_and_compare("t61_join_blocked");
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t61_a_mutex_wait_does_not_stop_a_collection() {
     run_and_compare("t61_mutex_blocked");
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t61_an_rwlock_wait_does_not_stop_a_collection() {
     run_and_compare("t61_rwlock_blocked");
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t62_a_loop_over_caller_data_polls_the_collector() {
     run_and_compare("t62_caller_data_poll");
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t69_a_main_thread_panic_runs_no_drop() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build("t69_main_panic_no_drop");
     let out = run(&bin, "");
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
@@ -170,9 +168,8 @@ fn t69_a_main_thread_panic_runs_no_drop() {
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t60_a_failed_pthread_create_names_the_return_code() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build("t60_spawn_fails");
     let out = run(&bin, "ulimit -u 1; ");
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();

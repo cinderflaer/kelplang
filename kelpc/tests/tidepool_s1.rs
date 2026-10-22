@@ -84,7 +84,6 @@ fn expected(name: &str) -> String {
 }
 
 fn run_and_compare(name: &str, env: &str) {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build(name);
     let out = run_env(&bin, env);
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -95,31 +94,31 @@ fn run_and_compare(name: &str, env: &str) {
 
 /// The spawner's pause hook runs a clearing while the worker has not started.
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t20_spawn_environment_and_argument_are_rooted() {
     run_and_compare("t20_spawn_env_and_arg_rooted", "export KELP_GC_TEST_SPAWN_PAUSE=1; ");
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t21_spawn_result_is_rooted_until_join() {
     run_and_compare("t21_spawn_result_rooted_until_join", "export KELP_GC_STRESS=20000 KELP_GC_VERIFY=1; ");
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t22_a_mutex_value_is_rooted() {
     run_and_compare("t22_mutex_value_rooted", "export KELP_GC_STRESS=20000 KELP_GC_VERIFY=1; ");
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t22_an_rwlock_value_is_rooted() {
     run_and_compare("t22_rwlock_value_rooted", "export KELP_GC_STRESS=20000 KELP_GC_VERIFY=1; ");
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t68_three_hundred_joined_threads_run_to_the_end() {
     run_and_compare("t68_joined_300", "");
 }
@@ -127,9 +126,8 @@ fn t68_three_hundred_joined_threads_run_to_the_end() {
 /// The 257th open thread is refused by the spawner, with the spawner's message
 /// and no thread-side fatal.
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t68_the_257th_open_thread_is_refused_in_the_spawner() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build("t68_open_257");
     let out = run_env_limit(&bin, "", 8388608);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
@@ -163,9 +161,8 @@ fn is_counter_line(line: &str) -> bool {
 /// T55 (R54): with KELP_GC_STATS=1 the program prints nothing else, and the
 /// counter line is printed once, at exit, in the form of section 17.7.
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t55_the_counter_line_is_printed_at_exit() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build("t55_stats_line");
     let out = run_env(&bin, "export KELP_GC_STATS=1; ");
     assert!(out.status.success(), "{}", text(&out));
@@ -181,9 +178,8 @@ fn t55_the_counter_line_is_printed_at_exit() {
 /// T63 (18.2): the out-of-memory text carries the three numbers in order: the
 /// heap_max, the live bytes at the last clearing, and the charged bytes, all in MiB.
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t63_out_of_memory_names_three_numbers() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build("t80_fatal_stats_and_oom");
     let out = run_env(&bin, "");
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
@@ -213,9 +209,8 @@ fn t63_out_of_memory_names_three_numbers() {
 /// T80 (18.28): a fatal exit still prints the counter line, once, before the
 /// fatal line, and the process exits with status 1.
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t80_a_fatal_exit_prints_the_counter_line_first() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build("t80_fatal_stats_and_oom");
     let out = run_env(&bin, "export KELP_GC_STATS=1; ");
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
@@ -230,9 +225,8 @@ fn t80_a_fatal_exit_prints_the_counter_line_first() {
 
 /// T77: a bad `KELP_GC_` value prints one line and the default applies.
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t77_a_bad_gc_value_prints_one_line_and_the_default_applies() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build("t77_bad_gc_env");
     let out = run_env(&bin, "export KELP_GC_VERIFY=yes; ");
     assert!(out.status.success(), "{}", text(&out));
@@ -245,9 +239,8 @@ fn t77_a_bad_gc_value_prints_one_line_and_the_default_applies() {
 
 /// T77: a stop timeout of 0 is refused the same way.
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn t77_a_zero_stop_timeout_is_refused() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let bin = build("t77_bad_gc_env");
     let script = format!("export KELP_GC_STOP_TIMEOUT_MS=0; exec '{}'", bin.display());
     let out = Command::new("timeout").arg("10").arg("sh").arg("-c").arg(&script).output().expect("run");

@@ -88,28 +88,28 @@ fn expected(fixture: &str) -> String {
 fn require_archive() {}
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn a_worker_that_ends_leaves_the_collector() {
     require_archive();
     assert_eq!(build_and_run("worker_detach", 3000), expected("worker_detach"));
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn a_thread_blocked_in_join_does_not_hold_up_a_collection() {
     require_archive();
     assert_eq!(build_and_run("join_collect", 3000), expected("join_collect"));
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn a_long_text_scan_polls_the_collector() {
     require_archive();
     assert_eq!(build_and_run("text_poll", 20), expected("text_poll"));
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn a_spawn_that_cannot_start_reports_the_errno_and_panics() {
     require_archive();
     let stderr = build_and_run_failing("spawn_fail", 3000);

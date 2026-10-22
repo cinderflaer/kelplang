@@ -48,17 +48,15 @@ fn expected(fixture: &str) -> String {
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn managed_program_that_exceeds_the_initial_heap_collects_and_prints_the_sum() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let (stdout, _) = build_and_run("churn");
     assert_eq!(stdout, expected("churn"));
 }
 
 #[test]
-#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+#[ignore = "a managed run: run with --include-ignored"]
 fn managed_enum_program_that_exceeds_the_initial_heap_collects_and_prints_the_sum() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
     let (stdout, _) = build_and_run("enum_churn");
     assert_eq!(stdout, expected("enum_churn"));
 }
