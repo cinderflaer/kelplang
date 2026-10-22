@@ -38,8 +38,8 @@
 #                 (kelpc-<VERSION>-src.tar.gz, which is also in OUTDIR), with
 #                 nixpkgs' llvmPackages_21 and lld. Not in the repository.
 # Every package is installed in a fresh container of its own distro with only the
-# package (and apt, dnf or pacman), then runs kelpc on examples hello.kp. The nix
-# flake is tested separately with `nix build` (see the release notes).
+# package (and apt, dnf or pacman), then runs kelpc run on hello.kp and kelpc build on
+# download.kp. The nix flake is tested separately with `nix build` (see the release notes).
 #
 # Environment (all optional):
 #   RELEASE_TARGETS   space-separated subset of the targets; default: all four
@@ -174,24 +174,18 @@ smoke_run() {
 }
 
 # The installed layout, the same for every format:
-#   /usr/lib/kelpc/kelpc          the compiler binary
-#   /usr/lib/kelpc/libkelp_gc.a   the collector archive a hosted link needs
-#   /usr/bin/kelpc                a launcher that names the archive and this
-#                                 distro's ld.lld, so the link works without setup
-# kelpc otherwise reads the archive from its build-time path, which does not exist on
-# a machine that installs the package. The launcher is the packaging fix; the lookup
-# itself is a compiler change (embed the archive, as kelp-rt is embedded).
+#   /usr/lib/kelpc/kelpc          the compiler binary (it embeds the collector archive)
+#   /usr/bin/kelpc                a launcher that names this distro's ld.lld
+# ld.lld is needed for every hosted link. kelpc looks for it in KELPC_LLD, then on PATH.
 # Debian-family targets bundle LLVM 21 (libLLVM.so and ld.lld) under /usr/lib/kelpc,
 # because LLVM 21 is only in apt.llvm.org and a package cannot depend on a repository
 # the install does not add. The launcher then sets LD_LIBRARY_PATH. Other targets
 # depend on the distro's llvm21 packages.
 stage_root() {
-    gc=$1
-    llvm_lib=$2
-    lld_bin=$3
+    llvm_lib=$1
+    lld_bin=$2
     rm -rf /work/root && mkdir -p /work/root/usr/bin /work/root/usr/lib/kelpc
     install -m 0755 /work/kelpc-bin /work/root/usr/lib/kelpc/kelpc
-    install -m 0644 "$gc" /work/root/usr/lib/kelpc/libkelp_gc.a
     if [ "$BUNDLE_LLVM" = 1 ]; then
         mkdir -p /work/root/usr/lib/kelpc/lib /work/root/usr/lib/kelpc/bin
         cp -L "$llvm_lib" "/work/root/usr/lib/kelpc/lib/$(basename "$llvm_lib")"
@@ -206,9 +200,8 @@ stage_root() {
     cat > /work/root/usr/bin/kelpc <<WRAP
 #!/bin/sh
 # kelpc launcher (installed by the kelpc package).
-KELP_GC_LIB=\${KELP_GC_LIB:-/usr/lib/kelpc/libkelp_gc.a}
 KELPC_LLD=\${KELPC_LLD:-$lld}
-export KELP_GC_LIB KELPC_LLD
+export KELPC_LLD
 $libpath
 exec /usr/lib/kelpc/kelpc "\$@"
 WRAP
@@ -291,7 +284,6 @@ cp -a %{_sourcedir}/root/usr %{buildroot}/
 %files
 %{_bindir}/kelpc
 %{_prefix}/lib/kelpc/kelpc
-%{_prefix}/lib/kelpc/libkelp_gc.a
 SPEC
     rpmbuild --define "_topdir $top" -bb "$top/SPECS/kelpc.spec" >/dev/null
     cp "$top"/RPMS/x86_64/kelpc-*.rpm /out/
@@ -342,12 +334,10 @@ container_build() {
     esac
     export PATH="$LLVM_PREFIX/bin:$PATH"
     build_kelpc "$src" /work/kelpc-bin
-    gc=$(find /work/target/release/build -path '*kelp-gc/release/libkelp_gc.a' | head -n 1)
-    [ -f "$gc" ] || die "collector archive not found under /work/target"
     llvm_lib=$(ldd /work/kelpc-bin | awk '/libLLVM/ { print $3; exit }')
     [ -f "$llvm_lib" ] || die "libLLVM not found for kelpc"
     lld_bin=$(command -v ld.lld)
-    stage_root "$gc" "$llvm_lib" "$lld_bin"
+    stage_root "$llvm_lib" "$lld_bin"
     smoke_run /usr/bin/kelpc "$src/kelpc/tests/fixtures/examples/hello.kp"
     write_buildinfo
     find_runtime_deps /work/kelpc-bin "$lld_bin" "$llvm_lib" > /work/deps.txt
@@ -421,13 +411,14 @@ build_target() {
 }
 
 # A test: install the package in a fresh container of its own distro, then run
-# kelpc on the hello fixture from the source tarball. The install must pull in the
-# dependencies by itself, so the command has no extra apt, dnf or pacman steps.
+# kelpc on the hello and download fixtures from the source tarball. The install must
+# pull in the dependencies by itself, so the command has no extra apt, dnf or pacman steps.
 hello_check() {
     cat <<CHECK
-mkdir -p /t && cd /t && tar -xzf /out/kelpc-$VERSION-src.tar.gz kelpc-$VERSION/kelpc/tests/fixtures/examples/hello.kp
+mkdir -p /t && cd /t && tar -xzf /out/kelpc-$VERSION-src.tar.gz kelpc-$VERSION/kelpc/tests/fixtures/examples/hello.kp kelpc-$VERSION/kelpc/tests/fixtures/examples/download.kp
 kelpc version && kelpc run kelpc-$VERSION/kelpc/tests/fixtures/examples/hello.kp > /t/out.txt
 grep -qx 'hello, world' /t/out.txt && echo "PASS: hello.kp printed hello, world"
+kelpc build kelpc-$VERSION/kelpc/tests/fixtures/examples/download.kp -o /t/download && test -x /t/download && echo "PASS: download.kp built"
 CHECK
 }
 
@@ -491,16 +482,9 @@ write_flake() {
         buildInputs = [ llvm.lib pkgs.openssl ];
         LLVM_SYS_211_PREFIX = llvmPrefix;
         KELPC_COMMIT = "v@VERSION@";
-        # The collector archive is installed beside the binary, and the wrapper names
-        # it (the build-time path is in the build sandbox and gone at run time).
-        postInstall = ''
-          gc=$(find . -name libkelp_gc.a -path '*kelp-gc*' | head -n 1)
-          install -Dm644 "$gc" $out/lib/kelpc/libkelp_gc.a
-        '';
         # kelpc runs ld.lld and cc for every hosted link.
         postFixup = ''
           wrapProgram $out/bin/kelpc \
-            --set-default KELP_GC_LIB $out/lib/kelpc/libkelp_gc.a \
             --prefix PATH : ${pkgs.lib.makeBinPath [ lld pkgs.stdenv.cc ]}
         '';
         meta = {

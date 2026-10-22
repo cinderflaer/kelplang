@@ -94,6 +94,49 @@ Sanitizers are not available. The LLVM backend links no sanitizer passes, so a b
 
 `kelpc fmt` formats `.kp` source to the style rules. It is idempotent and keeps every comment. `--check` exits nonzero when a file is not already formatted, which is what a CI job wants. It refuses rather than guesses: a file with a syntax error is reported with nothing written.
 
+## Without Nix
+
+Packages are built by `build/release-packages.sh` for Debian 13 (trixie), Ubuntu 24.04 (noble), Fedora and Arch Linux. Each one installs the compiler as `/usr/lib/kelpc/kelpc` and a launcher as `/usr/bin/kelpc`. The package manager resolves the dependencies. The file names below are the ones for version 26.10.6.
+
+```sh
+sudo apt install ./kelpc_26.10.6-1+trixie_amd64.deb     # Debian 13
+sudo apt install ./kelpc_26.10.6-1+noble_amd64.deb      # Ubuntu 24.04
+sudo dnf install ./kelpc-26.10.6-1.fc44.x86_64.rpm      # Fedora
+sudo pacman -U kelpc-26.10.6-1-x86_64.pkg.tar.zst       # Arch Linux
+```
+
+What each package needs:
+
+- **Debian and Ubuntu (`.deb`).** LLVM 21 is not in the distribution archives, so the package bundles `libLLVM.so.21.1` and `ld.lld` under `/usr/lib/kelpc`. The launcher sets `LD_LIBRARY_PATH` and `KELPC_LLD` to those copies. The package depends on `gcc`, the C library and its development files, `libstdc++6`, and the other libraries kelpc links. `apt show kelpc` lists them.
+- **Fedora (`.rpm`).** The distribution's `llvm21` and `lld21` packages, and the libraries kelpc links. `rpm -qpR` on the file lists them.
+- **Arch Linux (`.pkg.tar.zst`).** The same owners, from the `extra` repository (`llvm21`, `lld21`). `pacman -Qip` on the file lists them.
+
+Every hosted link runs `ld.lld` and `cc`. `kelpc` finds `ld.lld` in `KELPC_LLD`, then on `PATH`. The collector archive is inside the compiler, so no other variable is needed.
+
+To build from source without Nix you need:
+
+- Rust with the 2024 edition (rustc 1.85 or newer). `rustup` works on every distribution.
+- LLVM 21 development files, with `llvm-config` reporting 21.x, and `ld.lld`.
+- A C compiler (`cc`), `pkg-config`, and the OpenSSL development files.
+
+| Distribution | LLVM 21 and lld | `LLVM_SYS_211_PREFIX` | Packages |
+| --- | --- | --- | --- |
+| Debian 13, Ubuntu 24.04 | apt.llvm.org (`llvm-21-dev`, `lld-21`) | `/usr/lib/llvm-21` | `build-essential pkg-config libssl-dev` |
+| Fedora | distribution (`llvm21-devel`, `lld21`) | `/usr/lib64/llvm21` | `gcc gcc-c++ make pkgconf-pkg-config openssl-devel` |
+| Arch Linux | distribution (`llvm21`, `lld21`) | `/usr/lib/llvm21` | `base-devel pkgconf openssl` |
+
+On Debian and Ubuntu the apt.llvm.org repository for LLVM 21 must be added first. Then, for example on Debian 13:
+
+```sh
+export LLVM_SYS_211_PREFIX=/usr/lib/llvm-21
+export PATH=/usr/lib/llvm-21/bin:$PATH      # ld.lld, and llvm-config for the build
+cargo build --release -p kelpc
+./target/release/kelpc run kelpc/tests/fixtures/examples/hello.kp
+./target/release/kelpc build kelpc/tests/fixtures/examples/download.kp
+```
+
+A `kelpc` built this way links `libLLVM-21.so` from the system, so that library must be present at run time. The distribution packages above provide it. If `ld.lld` is not on `PATH`, set `KELPC_LLD` to its full path instead.
+
 ## Repository layout
 
 | Path | Contents |
