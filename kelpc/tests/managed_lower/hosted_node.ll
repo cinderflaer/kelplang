@@ -8,6 +8,8 @@ target triple = "x86_64-unknown-linux-gnu"
 %kelp_View = type { ptr, i64 }
 %tag_Node = type { %kelp_Box__Node, %kelp_Box__Node }
 %kelp_Box__Node = type { ptr }
+%tag_std__block__BlockError = type { i32, %tag_std__block__BlockError.kelp_v }
+%tag_std__block__BlockError.kelp_v = type { i8 }
 
 @kelp_argc = external global i32
 @kelp_argv = external global ptr
@@ -15,6 +17,7 @@ target triple = "x86_64-unknown-linux-gnu"
 @kelp_caps_node_frames = external global ptr
 @kelp_caps_node_fs = external global ptr
 @kelp_caps_node_irq = external global ptr
+@kelp_caps_node_machine = external global ptr
 @kelp_caps_node_net = external global ptr
 @kelp_caps_node_process = external global ptr
 @kelp_caps_node_rand = external global ptr
@@ -415,6 +418,72 @@ entry:
   %right = getelementptr inbounds nuw %tag_Node, ptr %0, i32 0, i32 1
   call void @kelp_box_drop__Node(ptr %right)
   ret void
+}
+
+define void @kelp_clone_std__block__BlockError(ptr %0, ptr %1) {
+entry:
+  %tag = getelementptr inbounds nuw %tag_std__block__BlockError, ptr %0, i32 0, i32 0
+  %tag1 = load i32, ptr %tag, align 4
+  %tag2 = getelementptr inbounds nuw %tag_std__block__BlockError, ptr %1, i32 0, i32 0
+  store i32 %tag1, ptr %tag2, align 4
+  ret void
+}
+
+define i32 @kelp_cmp_std__block__BlockError(ptr %0, ptr %1) {
+entry:
+  %tag = getelementptr inbounds nuw %tag_std__block__BlockError, ptr %0, i32 0, i32 0
+  %ta = load i32, ptr %tag, align 4
+  %tag1 = getelementptr inbounds nuw %tag_std__block__BlockError, ptr %1, i32 0, i32 0
+  %tb = load i32, ptr %tag1, align 4
+  %tagdiff = icmp ne i32 %ta, %tb
+  br i1 %tagdiff, label %cmp.tag, label %cmp.variants
+
+cmp.tag:                                          ; preds = %entry
+  %lt = icmp slt i32 %ta, %tb
+  %sign = select i1 %lt, i32 -1, i32 1
+  ret i32 %sign
+
+cmp.variants:                                     ; preds = %entry
+  ret i32 0
+}
+
+define i64 @kelp_hash_std__block__BlockError(ptr %0) {
+entry:
+  %tag = getelementptr inbounds nuw %tag_std__block__BlockError, ptr %0, i32 0, i32 0
+  %tag1 = load i32, ptr %tag, align 4
+  %h = alloca i64, align 8
+  %tagw = sext i32 %tag1 to i64
+  %mix.s1 = lshr i64 %tagw, 33
+  %mix.x1 = xor i64 %tagw, %mix.s1
+  %mix.x2 = mul i64 %mix.x1, -49064778989728563
+  %mix.s2 = lshr i64 %mix.x2, 33
+  %mix.x3 = xor i64 %mix.x2, %mix.s2
+  %mix.s12 = lshr i64 %mix.x3, 33
+  %mix.x13 = xor i64 %mix.x3, %mix.s12
+  %mix.x24 = mul i64 %mix.x13, -49064778989728563
+  %mix.s25 = lshr i64 %mix.x24, 33
+  %mix.x36 = xor i64 %mix.x24, %mix.s25
+  %combine.h1 = xor i64 0, %mix.x36
+  %combine.h2 = mul i64 %combine.h1, 1099511628211
+  store i64 %combine.h2, ptr %h, align 8
+  %h7 = load i64, ptr %h, align 8
+  ret i64 %h7
+}
+
+define i1 @kelp_eq_std__block__BlockError(ptr %0, ptr %1) {
+entry:
+  %tag = getelementptr inbounds nuw %tag_std__block__BlockError, ptr %0, i32 0, i32 0
+  %ta = load i32, ptr %tag, align 4
+  %tag1 = getelementptr inbounds nuw %tag_std__block__BlockError, ptr %1, i32 0, i32 0
+  %tb = load i32, ptr %tag1, align 4
+  %sametag = icmp eq i32 %ta, %tb
+  br i1 %sametag, label %eq.variants, label %eq.false
+
+eq.false:                                         ; preds = %entry
+  ret i1 false
+
+eq.variants:                                      ; preds = %entry
+  ret i1 true
 }
 
 define internal %kelp_Box__Node @kelp_Box__Node__empty() {
