@@ -3,13 +3,15 @@
    it at the ELF entry, so `.text` is placed first and the compiler's `_start`
    stub (kernel stage 4) is what the entry names.
 
-   Three stacks and one hole matter here. `_start` loads `sp` from
+   Two stacks and two holes matter here. `_start` loads `sp` from
    `__stack_top`, so the kernel stack is the 8 KiB just below it. Directly
    below that stack is `__guard_bottom`..`__guard_top`, one page that neither
    `map_range` in `main.kp` maps, so a stack access there traps instead of
-   walking into the trap stack. The 16 KiB below the hole is the trap stack:
+   walking into the trap stack. The 16 KiB below that hole is the trap stack:
    `sscratch` names its top, so the S-mode handler runs there even when the
-   kernel stack is spent. */
+   kernel stack is spent. The trap stack has a hole of its own below it,
+   `__trap_guard_bottom`..`__trap_guard_top`, so an overflow of the trap stack
+   faults too instead of writing into the image's `.bss`. */
 
 ENTRY(_start)
 
@@ -50,10 +52,14 @@ SECTIONS
         __bss_end = .;
     }
 
-    /* The trap stack, the guard page and the kernel stack, in that order. The
-       trap stack is the region below the hole, so it is mapped with the rest of
-       the image; the kernel stack is above the hole and mapped separately. */
-    . = ALIGN(16);
+    /* Two guard pages and two stacks, in this order: the trap stack's guard,
+       the trap stack, the kernel stack's guard, the kernel stack. The trap
+       stack is mapped with the rest of the image, below its own guard; the
+       kernel stack is above its guard and mapped separately. */
+    . = ALIGN(4096);
+    __trap_guard_bottom = .;
+    . = . + 0x1000;
+    __trap_guard_top = .;
     __trap_stack_bottom = .;
     . = . + 0x4000;
     __trap_stack_top = .;

@@ -42,6 +42,24 @@ pub fun guard_top() => usize = unsafe {
     asm("la {0}, __guard_top", out("r") _)
 }
 
+// The trap stack's own guard page, below the trap stack.
+pub fun trap_guard_bottom() => usize = unsafe {
+    asm("la {0}, __trap_guard_bottom", out("r") _)
+}
+
+pub fun trap_guard_top() => usize = unsafe {
+    asm("la {0}, __trap_guard_top", out("r") _)
+}
+
+// True when `addr` lies in either guard page: the kernel stack's or the trap
+// stack's. Each page has no leaf, so a fault there is the same defined fault.
+fun in_a_guard(addr: usize) => bool {
+    if addr >= guard_bottom() && addr < guard_top() {
+        return true
+    }
+    return addr >= trap_guard_bottom() && addr < trap_guard_top()
+}
+
 pub fun arm(phase: usize) {
     unsafe {
         PHASE = phase
@@ -101,6 +119,10 @@ pub fun install() {
 // answer with `1` to resume the next phase or `0` to halt. `stval` is the
 // address the faulting access named, so the guard-page line is a check that the
 // probe sent the frame into the hole rather than under it.
+//
+// Three phases each end in one fault: 0 is a store into the trap stack's guard,
+// 1 is the small-frame recursion, and 2 is the big frame. The handler resumes
+// at `RESUME` for phases 0 and 1 and halts after phase 2.
 pub fun report() => usize {
     val cause: usize = unsafe { asm("csrr {0}, scause", out("r") _) }
     val tval: usize = unsafe { asm("csrr {0}, stval", out("r") _) }
@@ -111,7 +133,7 @@ pub fun report() => usize {
     put_hex(tval)
     uart.putc(10)
 
-    if tval >= guard_bottom() && tval < guard_top() {
+    if in_a_guard(tval) {
         uart.puts("stack: stval in guard")
     } else {
         uart.puts("stack: stval outside guard")
@@ -124,8 +146,8 @@ pub fun report() => usize {
         return 0
     }
 
-    if current_phase() == 0 {
-        arm(1)
+    if current_phase() < 2 {
+        arm(current_phase() + 1)
         unsafe {
             asm("csrw sepc, {0}", in("r") resume_pc())
         }

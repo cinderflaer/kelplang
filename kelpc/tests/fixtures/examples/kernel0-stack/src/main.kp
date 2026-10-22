@@ -96,7 +96,33 @@ fun recurse_big(depth: u64, limit: u64) => u64 {
     return next + pad
 }
 
-// The second phase: reached by the trap handler, which restored `sp` to the top
+// The first phase's body: reached by the trap handler after the trap-stack guard
+// fault, with `sp` restored to the top of the kernel stack. It sets the resume
+// address for the next fault (phase b), then recurses until the kernel stack's
+// guard faults.
+fun phase_a() {
+    uart.puts("stack: phase a")
+    uart.putc(10)
+    trap.set_resume(Ptr.from_fn(phase_b).addr())
+    val survived: u64 = recurse_small(1, current_limit())
+
+    // The guard faults before either recursion returns, so this is the failure
+    // signal for phase a.
+    uart.puts("stack: phase a survived")
+    uart.putc(10)
+    uart.halt()
+}
+
+// Store one word into the trap stack's guard page from supervisor mode. The
+// page has no leaf, so the store faults before it writes anything.
+fun probe_trap_guard() {
+    unsafe {
+        val p: Ptr<u64> = Ptr.from_addr(trap.trap_guard_top() - 8)
+        p.write_volatile(1)
+    }
+}
+
+// The third phase: reached by the trap handler, which restored `sp` to the top
 // of the kernel stack and set `sepc` here. Its one call overflows that stack on
 // its own, so the line after it is the failure signal.
 fun phase_b() {
@@ -122,15 +148,21 @@ fun smain() {
     trap.put_hex(trap.guard_top())
     uart.putc(10)
 
-    trap.set_resume(Ptr.from_fn(phase_b).addr())
-    trap.arm(0)
-    uart.puts("stack: phase a")
+    uart.puts("stack: trap guard ")
+    trap.put_hex(trap.trap_guard_bottom())
+    uart.putc(32)
+    trap.put_hex(trap.trap_guard_top())
     uart.putc(10)
-    val survived: u64 = recurse_small(1, current_limit())
 
-    // The guard faults before either recursion returns, so this is the failure
-    // signal for phase a.
-    uart.puts("stack: phase a survived")
+    // Phase t: the trap stack's guard. Phase a is the resume address for it.
+    trap.set_resume(Ptr.from_fn(phase_a).addr())
+    trap.arm(0)
+    uart.puts("stack: phase t")
+    uart.putc(10)
+    probe_trap_guard()
+
+    // Not reached: the trap stack's guard faults first.
+    uart.puts("stack: phase t survived")
     uart.putc(10)
     uart.halt()
 }
@@ -149,10 +181,17 @@ section(".text.boot") fun kmain() {
         uart.halt()
     }
 
-    // The image, its trap stack and the page frames, but not the guard page:
-    // the first span stops at `__guard_bottom`, the second starts at
-    // `__guard_top`, and the 4 KiB between them is left with no leaf.
-    if vm.map_range(root, IMAGE_START, IMAGE_START, trap.guard_bottom() - IMAGE_START, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
+    // The image, the trap stack and the page frames, but not the two guard
+    // pages: the spans stop at `__trap_guard_bottom`, restart at
+    // `__trap_guard_top`, stop at `__guard_bottom` and restart at `__guard_top`.
+    // Each 4 KiB between them is left with no leaf.
+    if vm.map_range(root, IMAGE_START, IMAGE_START, trap.trap_guard_bottom() - IMAGE_START, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
+        uart.puts("stack: image map failed")
+        uart.putc(10)
+        uart.halt()
+    }
+    // The trap stack, between its own guard and the kernel stack's guard.
+    if vm.map_range(root, trap.trap_guard_top(), trap.trap_guard_top(), trap.guard_bottom() - trap.trap_guard_top(), vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
         uart.puts("stack: image map failed")
         uart.putc(10)
         uart.halt()

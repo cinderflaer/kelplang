@@ -22,6 +22,8 @@ section(".text.boot") fun kmain() {
         explicit_panic()
     } else if p == 5 {
         option_unwrap()
+    } else if p == 7 {
+        cleanup_then_panic()
     } else {
         // p == 6: panic, and the handler below panics again.
         panic("first panic")
@@ -59,6 +61,23 @@ fun explicit_panic() {
 fun option_unwrap() {
     val o: option.Option<u32> = option.Option.None
     uart.putc(option.unwrap(o = o).to_u8())
+}
+
+// Phase 7: a `defer` and a user `Drop` are both live when the check fires. A
+// panic never returns, so neither runs: the serial output holds the panic line
+// and not the text either one would print. `run.sh` checks the absence.
+datac Noisy(val tag: i32)
+
+fun mut Noisy.drop() {
+    uart.puts("drop ran\n")
+}
+
+fun cleanup_then_panic() {
+    defer uart.puts("defer ran\n")
+    val held: Noisy = Noisy(tag = 1)
+    if held.tag == 1 {
+        panic("cleanup skipped") // panic-line: cleanup
+    }
 }
 
 // The three-argument handler. `file` is the source file name the diagnostic

@@ -740,13 +740,14 @@ pub(crate) fn freestanding_big_frames_probe_every_page() {
     );
 }
 
-/// Kernel stage 14's acceptance boot: `examples/kernel0-stack` runs two phases
-/// over one trap vector. Phase a recurses with a 16-byte frame until the frame
-/// that crosses `__stack_bottom` stores into the guard page; phase b is entered
+/// Kernel stage 14's acceptance boot: `examples/kernel0-stack` takes three
+/// faults over one trap vector. Phase t stores into the trap stack's own guard
+/// page. Phase a recurses with a 16-byte frame until the frame that crosses
+/// `__stack_bottom` stores into the kernel stack's guard page; phase b is entered
 /// by the handler, which restored `sp` to the top of the kernel stack, and its
-/// one 16 KiB frame probes down into the same page. The handler prints the
-/// `scause` and `stval` of each fault and says so, so the test can assert both
-/// addresses are inside the guard page the boot printed.
+/// one 16 KiB frame probes down into that same page. The handler prints the
+/// `scause` and `stval` of each fault and says so, so the test can assert every
+/// address is inside one of the two guard pages the boot printed.
 ///
 /// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
 #[test]
@@ -767,6 +768,8 @@ pub(crate) fn kernel0_stack_overflows_into_the_guard_page() {
     for line in [
         "stack: m-mode",
         "stack: paging on",
+        "stack: phase t",
+        "stack: stval in guard",
         "stack: phase a",
         "stack: stval in guard",
         "stack: phase b",
@@ -780,17 +783,23 @@ pub(crate) fn kernel0_stack_overflows_into_the_guard_page() {
     }
 
     // The kernel's own `in guard` line is one check; this is the independent
-    // one: parse the guard bounds the boot printed and the two `stval`s, and
-    // require each fault address to lie in the hole.
-    let bounds: Vec<usize> = captured
-        .lines()
-        .find(|line| line.starts_with("stack: guard "))
-        .and_then(|line| {
-            let words: Vec<&str> = line.split_whitespace().collect();
-            Some(vec![parse_hex_word(words.get(2)?)?, parse_hex_word(words.get(3)?)?])
-        })
-        .expect("the boot printed no `stack: guard <lo> <hi>` line");
-    let (lo, hi) = (bounds[0], bounds[1]);
+    // one: parse the bounds of both guard pages the boot printed and the three
+    // `stval`s, and require each fault address to lie in one of the two holes.
+    let bound_pair = |prefix: &str| -> (usize, usize) {
+        let bounds: Vec<usize> = captured
+            .lines()
+            .find(|line| line.starts_with(prefix))
+            .and_then(|line| {
+                // The two bounds are the last two words of the line.
+                let words: Vec<&str> = line.split_whitespace().collect();
+                let n = words.len();
+                Some(vec![parse_hex_word(words.get(n.checked_sub(2)?)?)?, parse_hex_word(words.get(n - 1)?)?])
+            })
+            .unwrap_or_else(|| panic!("the boot printed no `{prefix}<lo> <hi>` line"));
+        (bounds[0], bounds[1])
+    };
+    let (lo, hi) = bound_pair("stack: guard ");
+    let (tlo, thi) = bound_pair("stack: trap guard ");
     let faults: Vec<usize> = captured
         .lines()
         .filter(|line| line.starts_with("stack overflow: scause "))
@@ -802,16 +811,25 @@ pub(crate) fn kernel0_stack_overflows_into_the_guard_page() {
         .collect();
     assert_eq!(
         faults.len(),
-        2,
+        3,
         "expected one fault per phase, got {}:\n{captured}",
         faults.len()
     );
+    assert!(thi <= lo, "the trap stack's guard must lie below the kernel stack's guard");
     for fault in &faults {
+        let in_kernel = *fault >= lo && *fault < hi;
+        let in_trap = *fault >= tlo && *fault < thi;
         assert!(
-            *fault >= lo && *fault < hi,
-            "a fault at {fault:#x} is outside the guard page [{lo:#x}, {hi:#x}):\n{captured}"
+            in_kernel || in_trap,
+            "a fault at {fault:#x} is outside both guard pages \
+             [{lo:#x}, {hi:#x}) and [{tlo:#x}, {thi:#x}):\n{captured}"
         );
     }
+    // The trap stack's fault is phase t, the first one the handler prints.
+    assert!(
+        *faults.first().expect("no faults") >= tlo && *faults.first().unwrap() < thi,
+        "phase t's fault is not in the trap stack's guard:\n{captured}"
+    );
 }
 
 /// Kernel stage 14's other half of "hosted builds are unchanged": a hosted

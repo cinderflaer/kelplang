@@ -242,8 +242,9 @@ pub(crate) fn a_freestanding_panic_handler_with_another_shape_is_rejected() {
 /// panic raised inside its own handler with the project's `kelp_double_panic`
 /// rather than the compiler's weak wait-for-interrupt fallback. The example's
 /// `run.sh` boots one phase per check and asserts the exact `panic: <message>
-/// at <file>:<line>` line; this runs that script, which is where the serial
-/// assertions live.
+/// at <file>:<line>` line, and phase 7 also asserts that a live `defer` and a
+/// user `Drop` print nothing after the panic (a panic runs no cleanup). This
+/// runs that script, which is where the serial assertions live.
 #[test]
 pub(crate) fn kernel0_panic2_names_each_checks_message_and_location() {
     if !have_ld_lld() || !have_llvm_mc() || !have_qemu(&RISCV64_QEMU) {
@@ -268,7 +269,7 @@ pub(crate) fn kernel0_panic2_names_each_checks_message_and_location() {
     );
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(
-        stdout.contains("all six phases printed the lines the compiler named"),
+        stdout.contains("all seven phases printed the lines the compiler named"),
         "the run script did not reach its final line:\n{stdout}"
     );
 }
