@@ -268,7 +268,10 @@ pub struct HostedLink<'a> {
 /// link line that the `cc` path produces on glibc: PIE with `Scrt1.o`, the crt
 /// objects around the program, `libgcc` with `--as-needed` around `libc`, and
 /// `-rpath` for every `/nix/store` library directory, since the gcc wrapper
-/// that would add them is not in the path.
+/// that would add them is not in the path. Every hosted program also gets
+/// `-rpath $ORIGIN/lib` (the last `-rpath` pair), so a `.ckp` finds the
+/// libraries bundled in `lib/` beside its executable without any environment
+/// variable.
 ///
 /// Differences from the `cc` argv: no `-O<n>` (it does nothing at link time)
 /// and no `-pthread` on the link, which becomes `-lpthread`. The collector
@@ -325,6 +328,10 @@ pub fn hosted_link_argv(sys: &Sysroot, link: &HostedLink) -> Vec<OsString> {
         }
     }
 
+    // The libraries a `.ckp` bundles sit in `lib/` beside the executable. The
+    // loader expands `$ORIGIN`, so this is one literal argument, not a shell word.
+    push(&mut a, "-rpath");
+    push(&mut a, "$ORIGIN/lib");
     push(&mut a, "-lm");
     push(&mut a, "-lpthread");
     if link.tls {
@@ -644,8 +651,33 @@ mod tests {
         assert!(after_out + 2 < object);
         assert!(argv.iter().any(|a| a == "-lpthread") && argv.iter().any(|a| a == "-lm"));
         assert!(!argv.iter().any(|a| a == "-lssl" || a == "-lcrypto"));
-        assert!(!argv.iter().any(|a| a == "-rpath"), "Debian-style tree has no rpath: {argv:?}");
+        // The only rpath of a Debian-style tree is the bundled-library directory.
+        let rpaths: Vec<&String> = argv.windows(2).filter(|w| w[0] == "-rpath").map(|w| &w[1]).collect();
+        assert_eq!(rpaths, vec!["$ORIGIN/lib"], "{argv:?}");
         assert!(argv.last().unwrap().ends_with("/crtn.o"));
+    }
+
+    #[test]
+    fn sysroot_hosted_argv_sets_runpath_to_the_bundled_lib_dir_as_one_argument() {
+        let sys = sample_sysroot(false);
+        let objects = vec![PathBuf::from("/tmp/u0.o")];
+        let (dirs, pkg, libs): (Vec<String>, Vec<String>, Vec<String>) = Default::default();
+        let link = HostedLink {
+            out: Path::new("/tmp/prog"),
+            objects: &objects,
+            runtime_obj: Path::new("/tmp/rt.o"),
+            externs_obj: None,
+            gc_archive: None,
+            library_dirs: &dirs,
+            pkg_config_flags: &pkg,
+            tls: false,
+            strip: false,
+            link_libs: &libs,
+        };
+        let argv = strings(&hosted_link_argv(&sys, &link));
+        let at = argv.iter().position(|a| a == "$ORIGIN/lib").expect("RUNPATH argument");
+        assert_eq!(argv[at - 1], "-rpath", "{argv:?}");
+        assert_eq!(argv.iter().filter(|a| a.contains("ORIGIN")).count(), 1, "{argv:?}");
     }
 
     #[test]
