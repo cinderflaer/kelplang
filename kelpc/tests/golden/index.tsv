@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1175 ran=590 c_refused=552 excluded=33
+# counts candidates=1177 ran=590 c_refused=552 excluded=35
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -827,6 +827,7 @@ fixture_tl_refuse_nonliteral	c-refused		error: the initializer of 'tl counter' i
 fixture_tl_stress	ran	exit 0		0e6769f02168bdaf36d1f84cfa8cb46a9d3084c2853d91d7b7669fd862a96350
 fixture_tls_bad_record	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_big_body	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_ca_dir	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_ca_file	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_concurrent	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_error	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
@@ -841,6 +842,7 @@ fixture_tls_reset_read	excluded		needs command-line arguments from a harness; ru
 fixture_tls_sni	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_timeout_handshake	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_timeout_read	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_timeout_write	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_truncated	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_try_ok	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_trace	excluded		its stderr carries a clock reading and the source path, which change from run to run	
