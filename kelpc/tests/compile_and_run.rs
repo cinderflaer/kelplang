@@ -644,3 +644,19 @@ pub(crate) use http_helpers::*;
 
 #[path = "compile_and_run/eval_order.rs"]
 mod eval_order;
+
+// Gitea #223: `()` and `Result<(), E>` are spelled as the issue asks. The
+// success arm is built from `()`, matched, passed through `?`, and the `Err`
+// arm still carries its reason.
+#[test]
+fn result_of_unit_issue_223_spellings_build_match_and_propagate() {
+    assert_compiles_and_runs(
+        "tests/fixtures/result_unit_issue_223.kp",
+        "ok\nfailed\nok\nfailed\nunit ok\nunit failed\n",
+    );
+}
+
+#[test]
+fn unit_spelled_as_empty_parens_is_still_refused_as_a_tuple_element() {
+    assert_rejected_with("tests/fixtures/tuple_unit_type_element.kp", "is 'unit'");
+}

@@ -419,9 +419,12 @@ fn a_tuple_type_is_its_element_list() {
 }
 
 #[test]
-fn an_empty_tuple_type_is_refused_by_name() {
-    let err = parse_err("fun f(p: ()) {}");
-    assert!(err.message.contains("'()' is not a type"), "{}", err.message);
+fn an_empty_tuple_type_is_the_unit_type() {
+    // `()` as a type is `unit` (Gitea #223), the same type the value `()` has.
+    let p = parse("fun f(p: ()) {}");
+    let f = &p.functions[0];
+    assert_eq!(f.params[0].ty.name, "unit");
+    assert!(f.params[0].ty.tuple.is_none());
 }
 
 #[test]

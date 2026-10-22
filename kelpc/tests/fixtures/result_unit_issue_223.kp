@@ -1,0 +1,47 @@
+// Gitea #223, the spellings the issue asks for. `Result<(), String>` and
+// `Result<unit, String>` are one type, `()` is the success value, and the
+// `Err` arm still carries its reason. `?` passes a unit success through.
+impl "std/result"
+
+fun step(ok: bool) => result.Result<(), String> {
+    if ok {
+        return result.Result.Ok(value = ())
+    }
+    return result.Result.Err(error = "failed")
+}
+
+fun unit_spelling(ok: bool) => result.Result<unit, String> {
+    val r: result.Result<unit, String> = if ok {
+        result.Result.Ok(value = ())
+    } else {
+        result.Result.Err(error = "unit failed")
+    }
+    return r
+}
+
+fun chain(ok: bool) => result.Result<(), String> {
+    step(ok)?
+    return result.Result.Ok(value = ())
+}
+
+fun report(r: result.Result<(), String>) {
+    when r {
+        Ok(_) -> print("ok")
+        Err(e) -> print(e)
+    }
+}
+
+fun main() {
+    report(step(true))
+    report(step(false))
+    report(chain(true))
+    report(chain(false))
+    when unit_spelling(true) {
+        Ok(_) -> print("unit ok")
+        Err(e) -> print(e)
+    }
+    when unit_spelling(false) {
+        Ok(_) -> print("unit ok")
+        Err(e) -> print(e)
+    }
+}

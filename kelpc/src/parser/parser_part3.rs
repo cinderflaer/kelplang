@@ -759,16 +759,29 @@ impl Parser {
         // A tuple type (MISSING-z2bB9): `(A, B)`, two or more element types.
         // A tuple is a record with positional fields (`design/syntax.md (kelp wiki)` 3), so
         // this is a *type* like any other. `(T)` is not a tuple: it is the
-        // parenthesized type `T`, and `()` is refused by name because the
-        // absent value's type is spelled `unit`.
+        // parenthesized type `T`. `()` is the type of the absent value, the
+        // same type as `unit` (Gitea #223), so `Result<(), String>` and
+        // `Result<unit, String>` are one type; it is spelled as `unit` here.
         if self.check(&TokenKind::LParen) {
             let open = self.advance().span;
             if self.check(&TokenKind::RParen) {
                 let close = self.advance().span;
-                return Err(ParseError {
-                    help: None,
-                    message: "'()' is not a type: a tuple has two or more element types ('(i32, i32)'), and the absent value's type is 'unit'"
-                        .to_string(),
+                return Ok(TypeExpr {
+                    name: "unit".to_string(),
+                    tuple: None,
+                    args: Vec::new(),
+                    array_elem: None,
+                    assoc: None,
+                    array_len: None,
+                    amp: amp_start.is_some(),
+                    amp_mut: false,
+                    dyn_trait: None,
+                    scoped: false,
+                    fn_params: None,
+                    fn_ret: None,
+                    const_expr: None,
+                    impl_trait: None,
+                    bound_eq: Vec::new(),
                     span: amp_start.map(|a| a.to(close)).unwrap_or_else(|| open.to(close)),
                 });
             }

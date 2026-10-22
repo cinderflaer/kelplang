@@ -62,8 +62,7 @@ pub(crate) fn a_tuple_gets_the_derived_copy_and_order_a_datac_does() {
     );
 }
 
-/// The refusals, each naming the rule it breaks: the empty type, a borrowed
-/// element, the absent value as an element, a pattern whose position count does
+/// The refusals, each naming the rule it breaks: a borrowed element, the absent value as an element, a pattern whose position count does
 /// not match, a destructuring of something that is not a tuple, an element
 /// naming a type declared later (open item 12, the by-value field rule), an
 /// owned element read out of a borrow, the initializer used twice, and a tuple
@@ -71,7 +70,6 @@ pub(crate) fn a_tuple_gets_the_derived_copy_and_order_a_datac_does() {
 #[test]
 pub(crate) fn the_tuple_surface_is_refused_where_its_rules_refuse_it() {
     for (fixture, needle) in [
-        ("tuple_empty_type", "'()' is not a type"),
         (
             "tuple_borrowed_element",
             "element 1 of the tuple is a borrowed type ('str')",

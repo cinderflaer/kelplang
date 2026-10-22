@@ -1,7 +1,0 @@
-// MISSING-z2bB9: `()` is not a type. A tuple has two or more element types, and
-// the absent value's type is spelled `unit` (`plan/syntax.md` 3).
-fun nothing() => () = 1
-
-fun main() {
-    print(nothing())
-}

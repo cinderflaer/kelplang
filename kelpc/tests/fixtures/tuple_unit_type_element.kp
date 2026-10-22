@@ -1,0 +1,11 @@
+// Gitea #223: `()` is a type now, but `unit` is still refused as a tuple
+// element, whether it is spelled `()` or `unit`.
+impl "std/result"
+
+fun take(t: ((), i32)) {
+    print(t.1)
+}
+
+fun main() {
+    take(((), 1))
+}
