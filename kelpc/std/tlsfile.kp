@@ -65,6 +65,57 @@ fun read_pem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> {
 /// the TLS runtime read a path at all.
 fun ca_pem(path: &str) => result.Result<Bytes, tls.TlsError> = read_pem(path, "CA certificate")
 
+/// The error for a CA directory that cannot be listed, or that holds no CA certificate.
+fun ca_dir_error(dir: &str, reason: &str) => tls.TlsError {
+    var text = String.with_capacity(96)
+    text.push_str("tls: the directory ")
+    text.push_str(dir)
+    text.push_str(reason)
+    return tls.TlsError.Io(reason = text)
+}
+
+/// The names in the CA directory `dir`, through the `fs` gate, or the typed error.
+fun ca_dir_names(dir: &str) => result.Result<List<String>, tls.TlsError> {
+    return when fs.try_list(dir) {
+        Ok(names) -> result.Result.Ok(value = names)
+        Err(e) -> {
+            val why = str.concat(" cannot be listed: ", e.message.as_str())
+            result.Result.Err(error = ca_dir_error(dir, why.as_str()))
+        }
+    }
+}
+
+/// The private CA certificates in every `.pem` and `.crt` file directly inside
+/// `dir`, joined into one PEM text, for `TlsClientOptions.with_ca_pem`:
+///
+///     val ca = tlsfile.ca_dir_pem("/etc/myapp/ca.d")?
+///     val opts = tls.client_options().with_ca_pem(ca)
+///
+/// Every file is read through the `fs` gate, one path at a time, so the grant
+/// decides which of them may be read, exactly as for `ca_pem`. Other files in the
+/// directory are never opened. The order of the files does not matter: trust
+/// is the set of certificates. A directory with no `.pem` or `.crt` file is a
+/// typed `TlsError.Io`, not an empty set of extra roots, so a wrong path cannot
+/// fall back to the system store without a word.
+fun ca_dir_pem(dir: &str) => result.Result<Bytes, tls.TlsError> {
+    val names = ca_dir_names(dir)?
+    var out = Bytes.empty()
+    var found = false
+    for name in names {
+        if str.ends_with(name.as_str(), ".pem") || str.ends_with(name.as_str(), ".crt") {
+            val slash = str.concat(dir, "/")
+            val path = str.concat(slash.as_str(), name.as_str())
+            val pem = read_pem(path.as_str(), "CA certificate")?
+            out.append(pem)
+            found = true
+        }
+    }
+    if !found {
+        return result.Result.Err(error = ca_dir_error(dir, " holds no .pem or .crt CA certificate"))
+    }
+    return result.Result.Ok(value = out)
+}
+
 /// The octal digits of the low nine permission bits, as `0644` prints them.
 fun mode_text(mode: u32) => String {
     val bits = mode & 511
