@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1179 ran=590 c_refused=554 excluded=35
+# counts candidates=1181 ran=590 c_refused=556 excluded=35
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -1063,6 +1063,8 @@ project_freestanding_pool	c-refused		error: the module 'std/pool' is unavailable
 project_freestanding_print	c-refused		error: 'print' is unavailable in a freestanding build	
 project_freestanding_ptr_alloc	c-refused		error: 'Ptr#alloc' is unavailable in a freestanding build	
 project_freestanding_ptr_alloc_hook	c-refused		error: '/home/juniper/Projects/kelp-work/wt-kernel-alloc/kelpc/tests/projects/freestanding_ptr_alloc_hook' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_ptr_free_count	c-refused		error: '/home/juniper/Projects/kelp-work/wt-kernel-freehook/kelpc/tests/projects/freestanding_ptr_free_count' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_ptr_free_count_overflow	c-refused		error: '/home/juniper/Projects/kelp-work/wt-kernel-freehook/kelpc/tests/projects/freestanding_ptr_free_count_overflow' sets '[target] mode = "freestanding"', which only the llvm backend can build	
 project_freestanding_ptr_free_hook	c-refused		error: '/home/juniper/Projects/kelp-work/wt-kernel-alloc/kelpc/tests/projects/freestanding_ptr_free_hook' sets '[target] mode = "freestanding"', which only the llvm backend can build	
 project_freestanding_rwlock	c-refused		error: the binding 'rw' has type 'RwLock', whose runtime half is pthread condition variables	
 project_freestanding_shift	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_shift' sets '[target] mode = "freestanding"', which only the llvm backend can build	

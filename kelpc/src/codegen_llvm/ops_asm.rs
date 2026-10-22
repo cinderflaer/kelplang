@@ -739,6 +739,56 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.g.builder.build_call(func, fty, &[v], "");
                 Ok(None)
             }
+            // `Ptr.free_count(count)` (freestanding, with the allocator pair):
+            // the project's `dealloc(ptr, count * size_of<T>, align_of<T>)`,
+            // the exact size and alignment `Ptr.alloc<T>(count)` passed to
+            // `alloc`, so the allocator's contract holds. A count whose byte
+            // size wraps panics first, as `try_alloc`'s over-check does, so a
+            // huge count never reaches `dealloc` as a small size. A null
+            // pointer owns no block and is not passed on.
+            "free_count" => {
+                let elem = recv_elem()?;
+                let lty = self.lty(&elem)?;
+                let size = self.g.layout.abi_size_of(lty);
+                let align = self.g.layout.abi_alignment_of(lty) as u64;
+                let v = self.value_of(&args[0])?;
+                let count = self.value_of(&args[1])?;
+                if size != 0 {
+                    let limit = u64::MAX / size;
+                    let over = self.g.builder.build_icmp(
+                        IntCmp::Ugt,
+                        count,
+                        self.g.v_i64(limit),
+                        "free.over",
+                    );
+                    self.guard_or_panic(over, "Ptr.free_count: the byte size overflows")?;
+                }
+                let bytes = self.g.builder.build_int_binop(
+                    IntBinOp::Mul,
+                    count,
+                    self.g.v_i64(size),
+                    "free.bytes",
+                );
+                let null = self.g.ctx.const_null(ptr);
+                let isnull = self.g.builder.build_icmp(IntCmp::Eq, v, null, "free.null");
+                let skip_bb = self.cur_fn.append_block("free.skip");
+                let free_bb = self.cur_fn.append_block("free.do");
+                let join_bb = self.cur_fn.append_block("free.join");
+                self.g.builder.build_cond_br(isnull, skip_bb, free_bb);
+                self.g.builder.position_at_end(free_bb);
+                self.cur = free_bb;
+                self.terminated = false;
+                self.g.heap_dealloc(v, bytes, align)?;
+                self.g.builder.build_br(join_bb);
+                self.g.builder.position_at_end(skip_bb);
+                self.cur = skip_bb;
+                self.terminated = false;
+                self.g.builder.build_br(join_bb);
+                self.g.builder.position_at_end(join_bb);
+                self.cur = join_bb;
+                self.terminated = false;
+                Ok(None)
+            }
             other => Err(no_value(&format!("the pointer operation '{other}'"))),
         }
     }

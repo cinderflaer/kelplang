@@ -1,0 +1,22 @@
+name = "freestandingptrfreecountoverflow"
+
+# A freestanding riscv64 image whose `[target] alloc`/`dealloc` pair is the
+# project's own bump allocator, so `Ptr.alloc` lowers to those functions rather
+# than libc's `malloc`. The boot prints the aligned, writable block it returns,
+# and the `llvm-nm -u` check proves no libc symbol is left.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+
+[unsafe]
+modules = ["main", "uart"]
+
+# The NS16550's register window, held by the entry module and delegated to
+# `uart`, the one module that builds a pointer from the device's address.
+[caps]
+mmio = ["0x10000000+0x100"]

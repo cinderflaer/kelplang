@@ -660,6 +660,7 @@ pub(crate) fn ptr_op_is_unsafe(key: &str) -> bool {
             | "Ptr#alloc"
             | "Ptr#try_alloc"
             | "Ptr#free"
+            | "Ptr#free_count"
     )
 }
 

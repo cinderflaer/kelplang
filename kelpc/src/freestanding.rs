@@ -485,8 +485,15 @@ fn unavailable_builtin(name: &str, heap_ok: bool) -> Option<&'static str> {
         ),
         // `Ptr.free` has no size to give a project allocator: its `dealloc`
         // takes the byte count and alignment, and a pointer carries neither.
+        // `Ptr.free_count(count)` is the sized form: it takes the count the
+        // block was allocated with and derives the same size and alignment.
         "Ptr#free" => Some(
-            "it frees through the hosted runtime's 'free', and a project allocator's 'dealloc' needs the block's byte size, which a pointer does not carry; free through Box, List or Map instead",
+            "it frees through the hosted runtime's 'free', and a project allocator's 'dealloc' needs the block's byte size, which a pointer does not carry; free through Box, List or Map, or with 'Ptr.free_count(count)' and the same count the block was allocated with",
+        ),
+        // The sized free lowers to the project's `dealloc`, so it is exactly as
+        // available as `Ptr.alloc`: only with the allocator pair.
+        "Ptr#free_count" if !heap_ok => Some(
+            "it needs an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions",
         ),
         // `Ptr.try_alloc` (kernel stage 13) lowers to the project's own
         // allocator, so it is exactly as available as `Box`/`List`/`Map` are:

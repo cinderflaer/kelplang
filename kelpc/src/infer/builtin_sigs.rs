@@ -49,12 +49,21 @@ pub(crate) fn check_ptr_method(
             });
         }
     }
+    // `Ptr.free_count` exists only in a freestanding build: a hosted free has
+    // no project `dealloc` to hand a size to.
+    if method == "free_count" && !ctx.freestanding {
+        return Err(TypeError {
+            help: Some("in a hosted build, free the pointer with 'Ptr.free()'".to_string()),
+            message: "'Ptr.free_count' is only available in a freestanding build: it releases the block through the project's '[target] dealloc', and a hosted build has none".to_string(),
+            span,
+        });
+    }
     let key = format!("Ptr#{method}");
     let Some(sig) = ptr_sig(&key, &elem, cast_to.as_ref(), span)? else {
         return Err(TypeError {
             help: None,
             message: format!(
-                "'Ptr.{method}' is not a pointer operation: a pointer has addr, is_null, offset, byte_offset, cast<U>, read, write, read_volatile, write_volatile, read_unaligned, write_unaligned and free"
+                "'Ptr.{method}' is not a pointer operation: a pointer has addr, is_null, offset, byte_offset, cast<U>, read, write, read_volatile, write_volatile, read_unaligned, write_unaligned, free and free_count"
             ),
             span,
         });
@@ -99,6 +108,14 @@ pub(crate) fn ptr_sig(key: &str, elem: &Ty, cast_to: Option<&Ty>, span: Span) ->
             FnSig { params: vec![p("self", ptr)], ret: Ty::Ptr(Box::new(target.clone())) }
         }
         "Ptr#free" => FnSig { params: vec![p("self", ptr)], ret: Ty::Unit },
+        // `Ptr.free_count(count)` (freestanding only): the sized free. The
+        // count is the one `Ptr.alloc`/`try_alloc` was called with, so the
+        // project's `dealloc` gets the byte size and alignment the block was
+        // allocated with.
+        "Ptr#free_count" => FnSig {
+            params: vec![p("self", ptr), p("count", Ty::Usize)],
+            ret: Ty::Unit,
+        },
         "Ptr#read" | "Ptr#read_volatile" | "Ptr#read_unaligned" => {
             if !elem.is_copy() {
                 let op = key.strip_prefix("Ptr#").unwrap_or(key);

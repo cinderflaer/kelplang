@@ -146,6 +146,139 @@ pub(crate) fn freestanding_ptr_free_is_refused_with_an_allocator() {
     );
 }
 
+/// `Ptr.free_count(count)` is the sized free: its build calls the project's
+/// `dealloc` (never libc's `free`), and the IR has no `@free` call at all.
+#[test]
+pub(crate) fn freestanding_ptr_free_count_goes_through_the_project_allocator() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding Ptr.free_count test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = build_freestanding(
+        "freestanding_ptr_free_count",
+        &project("freestanding_ptr_free_count"),
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the Ptr.free_count image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+    let ir = std::fs::read_to_string(bin.with_extension("ll"))
+        .expect("the LLVM backend writes textual IR beside the object");
+    assert!(
+        ir.contains("@kelp_dealloc("),
+        "Ptr.free_count should call the project's '@kelp_dealloc'"
+    );
+    assert!(
+        !ir.contains("call void @free("),
+        "a freestanding Ptr.free_count must not call libc's 'free'"
+    );
+}
+
+/// The boot half of the sized free: `dealloc` receives the size and alignment
+/// `Ptr.alloc<u32>(4)` was given (16 bytes, aligned to 4), a null pointer is
+/// not passed on, and the value written before the free reads back.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+pub(crate) fn freestanding_ptr_free_count_boots_with_the_allocation_contract() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the Ptr.free_count boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_ptr_free_count",
+        &project("freestanding_ptr_free_count"),
+        &["ptr 0", "val 1234", "size 16", "align 4", "calls 1", "null 1"],
+    );
+}
+
+/// A count whose byte size wraps is a refusal at run time, not a small block
+/// handed to `dealloc`: the program panics with the free's own message and the
+/// `free` never reaches the project's allocator.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+pub(crate) fn freestanding_ptr_free_count_with_a_wrapping_size_panics() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the Ptr.free_count overflow test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu_containing(
+        &RISCV64_QEMU,
+        "freestanding_ptr_free_count_overflow",
+        &project("freestanding_ptr_free_count_overflow"),
+        "Ptr.free_count: the byte size overflows",
+        "panic: ",
+    );
+}
+
+/// `Ptr.free_count` needs the allocator pair in a freestanding build, the same
+/// as `Ptr.alloc`: without it the call is refused by name.
+#[test]
+pub(crate) fn freestanding_ptr_free_count_without_an_allocator_is_refused() {
+    let dir = out_path("ptr_free_count_no_pair");
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).expect("create the scratch project");
+    std::fs::copy(project("freestanding_ptr_free_count").join("kernel.ld"), dir.join("kernel.ld"))
+        .expect("copy the linker script");
+    std::fs::write(
+        dir.join("coral.toml"),
+        "name = \"noPairFreeCount\"\n\n[target]\nmode = \"freestanding\"\ntriple = \"riscv64-unknown-none-elf\"\nentry = \"kmain\"\nlinker_script = \"kernel.ld\"\npanic = \"kp_panic\"\n\n[unsafe]\nmodules = [\"main\"]\n",
+    )
+    .expect("write the manifest");
+    std::fs::write(
+        src.join("main.kp"),
+        "section(\".text.boot\") fun kmain() {\n    unsafe {\n        val p: Ptr<u32> = Ptr.null()\n        p.free_count(4)\n    }\n}\n\nfun kp_panic(msg: str) {\n}\n",
+    )
+    .expect("write the entry module");
+    assert_project_rejected(
+        "ptr_free_count_no_pair",
+        &dir,
+        "'Ptr#free_count' is unavailable in a freestanding build",
+    );
+}
+
+/// `Ptr.free_count` is freestanding-only: a hosted program that calls it is
+/// refused with the reason and the hosted alternative.
+#[test]
+pub(crate) fn hosted_ptr_free_count_is_refused() {
+    let dir = out_path("hosted_ptr_free_count_project");
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).expect("create the scratch project");
+    std::fs::write(
+        dir.join("coral.toml"),
+        "name = \"hostedFreeCount\"\n\n[unsafe]\nmodules = [\"main\"]\n",
+    )
+    .expect("write the manifest");
+    std::fs::write(
+        src.join("main.kp"),
+        "fun main() {\n    unsafe {\n        val p: Ptr<u32> = Ptr.alloc<u32>(4)\n        p.free_count(4)\n    }\n}\n",
+    )
+    .expect("write the hosted program");
+    assert_project_rejected(
+        "hosted_ptr_free_count",
+        &dir,
+        "'Ptr.free_count' is only available in a freestanding build",
+    );
+}
+
 /// Kernel stage 7's acceptance boot: `examples/kernel0-heap` defines a bump
 /// allocator over a `static mut` arena, builds a `List<i32>` of 1..=10 with no
 /// `realloc` (the alloc + copy + dealloc fallback), sums it and prints
