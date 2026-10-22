@@ -320,6 +320,16 @@ pub unsafe fn find_object(addr: usize) -> Option<usize> {
     }
 }
 
+/// The byte that verify mode writes over every dead object at the sweep
+/// (decision 139, design T24). A read through a dangling root then sees this
+/// pattern, not the object's old contents, and a test can name the poison.
+pub const POISON: u8 = 0xA5;
+
+/// Fill `bytes` at `addr` with `POISON`. Verify mode only.
+unsafe fn poison(addr: usize, bytes: usize) {
+    core::ptr::write_bytes(addr as *mut u8, POISON, bytes);
+}
+
 /// Free dead objects and blocks. Runs before the epoch flips, so an object is
 /// live when its mark bit equals the current epoch. Mark has set the lines of
 /// every live object, so a block with no marked line holds no live object.
@@ -333,6 +343,8 @@ pub unsafe fn sweep() {
         if (rd(h) & HDR_MARK) as usize == s.epoch {
             *a.add(keep) = h;
             keep += 1;
+        } else if s.verify {
+            poison(h, object_total(h));
         }
     }
     s.large_n = keep;
@@ -348,7 +360,11 @@ pub unsafe fn sweep() {
             ACTIVE => {
                 if (*m).lines.iter().all(|&x| x == 0) {
                     // No marked line: every object here is dead. Free the block
-                    // without reading a single header.
+                    // without reading a single header. Verify mode poisons the
+                    // whole block, which is the only read it makes.
+                    if s.verify {
+                        poison(base_of(b), BLOCK);
+                    }
                     (*m).state = FREE;
                     (*m).starts = [0; 64];
                     s.used_blocks -= 1;
@@ -363,6 +379,9 @@ pub unsafe fn sweep() {
                                 bits &= bits - 1;
                                 let h = base_of(b) + (w * 64 + bit) * 8;
                                 if (rd(h) & HDR_MARK) as usize != s.epoch {
+                                    if s.verify {
+                                        poison(h, object_total(h));
+                                    }
                                     (*m).starts[w] &= !(1u64 << bit);
                                 }
                             }

@@ -437,6 +437,56 @@ fn a_block_is_zeroed_rooted_and_charged_until_freed() {
     }
 }
 
+/// A descriptor with no pointer slots, so the verifier does not read the
+/// scalar word the test writes as a pointer.
+static WORDS: KelpGcType = KelpGcType {
+    id: 0x77,
+    size: 16,
+    align: 8,
+    flags: 0,
+    n_ptrs: 0,
+    ptr_off: core::ptr::null(),
+    tag_off: 0,
+    n_variants: 0,
+    variants: core::ptr::null(),
+};
+
+/// The address of the object made by `make_dead_words`. A static is not a
+/// root, so holding the address here does not keep the object alive.
+static DEAD_AT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Make one object and drop every reference to it. Only the address goes to
+/// `DEAD_AT`, so no stack slot of the caller holds it.
+#[inline(never)]
+unsafe fn make_dead_words() {
+    let obj = kelp_gc_alloc(&WORDS) as usize;
+    *(obj as *mut u64) = 0x1122_3344_5566_7788;
+    DEAD_AT.store(obj, SeqCst);
+}
+
+/// Verify mode poisons a dead shared-pool object at the sweep, so a read through
+/// a dangling reference sees the poison and not the old contents (design T24,
+/// rule R21). The sweep frees the object's block but never unmaps it, so the
+/// read stays inside mapped memory and the test can name what it reads.
+#[test]
+fn a_dead_object_is_poisoned_in_verify_mode() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        make_dead_words();
+        // Overwrite the dead helper's stack frame, so no stale copy of the
+        // address is left where the collector scans.
+        clobber_stack();
+        crate::threads::collect();
+        let obj = DEAD_AT.load(SeqCst);
+        assert_eq!(kelp_gc_is_heap_ptr(obj as *const u8), 0, "nothing roots the object");
+        let poison = u64::from_ne_bytes([crate::heap::POISON; 8]);
+        assert_eq!(*(obj as *const u64), poison, "a dangling read sees the poison");
+        kelp_gc_thread_detach();
+    }
+}
+
 /// Creation past `heap_max` runs one clearing first, then fails with
 /// BLOCK_OVER_BUDGET. Every chunk is 1 MiB and untouched, so no memory is committed.
 #[test]
