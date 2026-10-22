@@ -559,7 +559,7 @@ impl HeapLimits {
 #[derive(Debug, Clone)]
 pub struct Managed {
     pub heap: HeapLimits,
-    pub gc_archive: PathBuf,
+    pub gc_archive: crate::driver::CollectorArchive,
 }
 
 /// Lower a whole program and return the IR text, without linking, in the hosted

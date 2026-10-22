@@ -14,11 +14,15 @@ static RUNTIME_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libkel
 /// and not an archive, because the collector archive it links with already
 /// carries the panic handler. A managed link takes it.
 static RUNTIME_OBJECT_MANAGED: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kelp_rt_managed.o"));
+/// The collector archive (`kelpc/gc`, crate `kelp_gc`), built by `build.rs` and
+/// embedded like the runtime, so a managed build needs no build tree and no
+/// environment variable. The link writes it to a temporary file.
+static COLLECTOR_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libkelp_gc.a"));
 
-/// Makes the temporary runtime object's name unique within one process: several
+/// Makes each temporary link input's name unique within one process: several
 /// compilations can run at once (the test suite does), and two of them must not
 /// write the same path.
-static RUNTIME_TMP: AtomicU64 = AtomicU64::new(0);
+static LINK_TMP: AtomicU64 = AtomicU64::new(0);
 
 /// A sanitizer named by `[build] sanitize`. The LLVM backend links no sanitizer
 /// passes, so the manifest key is refused at build time. The type stays so the
@@ -105,7 +109,7 @@ pub fn link_llvm_object(
 pub fn link_managed_object(
     object_path: &Path,
     externs_object: Option<&Path>,
-    gc_archive: &Path,
+    gc_archive: &CollectorArchive,
     out_path: &Path,
     opt: OptLevel,
     link_libs: &[String],
@@ -130,24 +134,48 @@ pub fn link_managed_object(
     )
 }
 
-/// The collector archive a managed build links. `KELP_GC_LIB` overrides it when
-/// set; otherwise it is the `libkelp_gc.a` that `build.rs` built from `kelpc/gc`
-/// (`KELPC_GC_ARCHIVE`). The path must name an existing file, so a managed build
-/// with no archive is an error that names the path and the variable, never a
-/// link that fails on `kelp_gc_init`.
-pub fn managed_archive() -> Result<PathBuf, CompileError> {
-    let (path, source) = match std::env::var_os("KELP_GC_LIB") {
-        Some(p) => (PathBuf::from(p), "KELP_GC_LIB names"),
-        None => (PathBuf::from(env!("KELPC_GC_ARCHIVE")), "the build-time archive is"),
-    };
-    if !path.is_file() {
-        return Err(CompileError {
-            message: format!(
-                "a managed build links the collector archive, and {source} '{}', which is not a file: set KELP_GC_LIB to a libkelp_gc.a built from kelpc/gc (cargo build --release in kelpc/gc)",
-                path.display()
-            ),
-        });
+/// Where a managed link's collector archive comes from. `Embedded` is the copy
+/// `kelpc` carries; `File` is a `libkelp_gc.a` named by `KELP_GC_LIB`, which
+/// overrides the embedded copy (development and the tests that link a collector
+/// built on its own).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollectorArchive {
+    Embedded,
+    File(PathBuf),
+}
+
+/// The collector archive a managed build links: the embedded one, unless
+/// `KELP_GC_LIB` names a file, which must exist, so a bad override is an error
+/// that names the path rather than a link failure on `kelp_gc_init`.
+pub fn managed_archive() -> Result<CollectorArchive, CompileError> {
+    match std::env::var_os("KELP_GC_LIB") {
+        None => Ok(CollectorArchive::Embedded),
+        Some(p) => {
+            let path = PathBuf::from(p);
+            if !path.is_file() {
+                return Err(CompileError {
+                    message: format!(
+                        "KELP_GC_LIB names '{}', which is not a file: point it at a libkelp_gc.a built from kelpc/gc, or unset it to use the collector kelpc carries",
+                        path.display()
+                    ),
+                });
+            }
+            Ok(CollectorArchive::File(path))
+        }
     }
+}
+
+/// Writes `bytes` to a fresh temporary file named `<stem>_<pid>_<n>.<ext>` and
+/// returns its path. The caller removes it once the link has read it.
+fn write_link_input(stem: &str, ext: &str, bytes: &[u8]) -> Result<PathBuf, CompileError> {
+    let path = std::env::temp_dir().join(format!(
+        "{stem}_{}_{}.{ext}",
+        std::process::id(),
+        LINK_TMP.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&path, bytes).map_err(|e| CompileError {
+        message: format!("could not write '{}' for the link: {e}", path.display()),
+    })?;
     Ok(path)
 }
 
@@ -193,7 +221,7 @@ pub fn link_llvm_objects(
 fn link_llvm_objects_with_archive(
     objects: &[PathBuf],
     externs_object: Option<&Path>,
-    gc_archive: Option<&Path>,
+    gc_archive: Option<&CollectorArchive>,
     out_path: &Path,
     opt: OptLevel,
     link_libs: &[String],
@@ -211,52 +239,58 @@ fn link_llvm_objects_with_archive(
     } else {
         (RUNTIME_ARCHIVE, "a")
     };
-    let runtime_path = std::env::temp_dir().join(format!(
-        "kelp_rt_{}_{}.{ext}",
-        std::process::id(),
-        RUNTIME_TMP.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::write(&runtime_path, runtime_bytes).map_err(|e| CompileError {
-        message: format!(
-            "could not write the runtime object to '{}': {e}",
-            runtime_path.display()
-        ),
-    })?;
-    // `cc` took `-O<n>` here, which does nothing at link time; `ld.lld` has no such flag.
-    let _ = opt;
-    let argv = crate::sysroot::hosted_link_argv(
-        &sys,
-        &crate::sysroot::HostedLink {
-            out: out_path,
-            objects,
-            runtime_obj: &runtime_path,
-            externs_obj: externs_object,
-            gc_archive,
-            library_dirs,
-            pkg_config_flags,
-            tls,
-            strip,
-            link_libs,
-        },
-    );
-    let output = Command::new(&sys.ld_lld).args(&argv).guarded_output();
-    // The object is embedded in `kelpc`; the file was only a place for the linker
-    // to read from, and leaving one per compile behind would be litter.
-    let _ = std::fs::remove_file(&runtime_path);
-    let output = output.map_err(|e| CompileError {
-        message: format!("could not invoke '{}': {e}", sys.ld_lld.display()),
-    })?;
-
-    if !output.status.success() {
-        return Err(CompileError {
-            message: format!(
-                "ld.lld failed:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        });
+    // The temporary inputs the link reads. Each is removed after `ld.lld` runs,
+    // on success and failure alike.
+    let mut temps: Vec<PathBuf> = Vec::new();
+    let result = (|| -> Result<(), CompileError> {
+        let runtime_path = write_link_input("kelp_rt", ext, runtime_bytes)?;
+        temps.push(runtime_path.clone());
+        let gc_path = match gc_archive {
+            None => None,
+            Some(CollectorArchive::File(path)) => Some(path.clone()),
+            Some(CollectorArchive::Embedded) => {
+                let path = write_link_input("libkelp_gc", "a", COLLECTOR_ARCHIVE)?;
+                temps.push(path.clone());
+                Some(path)
+            }
+        };
+        // `cc` took `-O<n>` here, which does nothing at link time; `ld.lld` has no such flag.
+        let _ = opt;
+        let argv = crate::sysroot::hosted_link_argv(
+            &sys,
+            &crate::sysroot::HostedLink {
+                out: out_path,
+                objects,
+                runtime_obj: &runtime_path,
+                externs_obj: externs_object,
+                gc_archive: gc_path.as_deref(),
+                library_dirs,
+                pkg_config_flags,
+                tls,
+                strip,
+                link_libs,
+            },
+        );
+        let output = Command::new(&sys.ld_lld).args(&argv).guarded_output();
+        let output = output.map_err(|e| CompileError {
+            message: format!("could not invoke '{}': {e}", sys.ld_lld.display()),
+        })?;
+        if !output.status.success() {
+            return Err(CompileError {
+                message: format!(
+                    "ld.lld failed:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            });
+        }
+        Ok(())
+    })();
+    // The embedded inputs were only places for the linker to read from; leaving
+    // them behind would be litter, one set per compile.
+    for path in &temps {
+        let _ = std::fs::remove_file(path);
     }
-
-    Ok(())
+    result
 }
 
 /// Links a freestanding object into an ELF with `ld.lld` (kernel stage 4).

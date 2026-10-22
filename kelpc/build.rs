@@ -339,9 +339,11 @@ fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path, variant: &RuntimeVari
 }
 
 /// Builds the collector archive `kelpc/gc` (crate `kelp_gc`, a staticlib with
-/// its own workspace) into `$OUT_DIR/kelp-gc/release/libkelp_gc.a`, and bakes
-/// that path in as `KELPC_GC_ARCHIVE`. A managed build links this archive when
-/// `KELP_GC_LIB` is not set, so no build environment needs the variable.
+/// its own workspace) into `$OUT_DIR/kelp-gc/release/libkelp_gc.a`, then copies
+/// it to `$OUT_DIR/libkelp_gc.a`, which `driver.rs` embeds with `include_bytes!`
+/// (as it does the runtime archive), so `kelpc` links the collector with no
+/// build tree, no environment variable and no launcher. The build-tree path is
+/// also baked in as `KELPC_GC_ARCHIVE` for the tests that link it directly.
 fn build_collector(manifest_dir: &Path, out_dir: &Path) {
     let gc_dir = manifest_dir.join("gc");
     let target_dir = out_dir.join("kelp-gc");
@@ -378,6 +380,9 @@ fn build_collector(manifest_dir: &Path, out_dir: &Path) {
         "kelpc/gc (libkelp_gc.a) failed to build: {}",
         String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")
     );
+    let embedded = out_dir.join("libkelp_gc.a");
+    std::fs::copy(&archive, &embedded)
+        .expect("could not copy the collector archive into OUT_DIR");
     println!("cargo:rustc-env=KELPC_GC_ARCHIVE={}", archive.display());
 }
 

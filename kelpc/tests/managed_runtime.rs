@@ -6,9 +6,8 @@
 //! a safepoint makes the collector abort at its stop timeout, which is short
 //! here so a regression fails in seconds.
 //!
-//! Needs the collector archive (`KELP_GC_LIB`, built from `kelpc/gc` with
-//! `cargo build --release`), so the tests are `#[ignore]`d and run with
-//! `--include-ignored`.
+//! The collector archive is embedded in `kelpc`, so these need no environment;
+//! they are `#[ignore]`d for their cost and run with `--include-ignored`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -84,9 +83,9 @@ fn expected(fixture: &str) -> String {
     std::fs::read_to_string(path).expect("read expected.txt")
 }
 
-fn require_archive() {
-    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
-}
+/// The collector archive is embedded in `kelpc` (`driver::managed_archive`), so
+/// a managed build needs no environment. `KELP_GC_LIB` still overrides it.
+fn require_archive() {}
 
 #[test]
 #[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
