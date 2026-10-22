@@ -100,7 +100,9 @@ with zipfile.ZipFile(src) as zin, zipfile.ZipFile(glibc_out, "w", zipfile.ZIP_ST
             assert any(l.startswith('glibc = "') for l in lines)
             lines = ['glibc = "2.99"' if l.startswith('glibc = "') else l for l in lines]
             data = "\n".join(lines).encode()
-        zout.writestr(info.filename, data)
+        fresh = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+        fresh.compress_type = zipfile.ZIP_STORED
+        zout.writestr(fresh, data)
 b = bytearray(open(src, "rb").read())
 b[len(b) // 3] ^= 0x55
 open(flipped_out, "wb").write(bytes(b))
