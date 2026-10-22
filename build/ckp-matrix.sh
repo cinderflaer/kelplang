@@ -68,7 +68,7 @@ library = "meas"
 library_dirs = ["native"]
 symbols = ["meas_add"]
 TOML
-    printf 'pub extern fun meas_add(a: i32, b: i32) => i32\n' > extapp/src/meas.kp
+    printf 'pub extern fun meas_add(a: i64, b: i64) => i64\n' > extapp/src/meas.kp
     cat > extapp/src/main.kp <<KP
 impl "meas"
 impl "std/fmt"
@@ -81,7 +81,7 @@ fun main() {
 }
 KP
     printf 'greeting\n' > extapp/data/greeting.txt
-    printf 'int meas_add(int a, int b) { return a + b; }\n' > meas.c
+    printf 'long meas_add(long a, long b) { return a + b; }\n' > meas.c
     cc -shared -fPIC -o extapp/native/libmeas.so meas.c
 }
 
