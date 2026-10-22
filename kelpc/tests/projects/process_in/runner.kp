@@ -45,7 +45,7 @@ pub fun bad_dir_code(dir: &str) => i32 {
 pub fun bad_dir_message(dir: &str) => bool {
     val bad = path.join(dir, "nope")
     val r = process.run_in(bad, "/bin/sh", sh("true"))
-    val at = str.index_of(r.err, "cannot enter")
+    val at = str.index_of(r.err.as_str(), "cannot enter")
     return option.is_some(at)
 }
 
