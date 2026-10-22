@@ -179,7 +179,9 @@ impl ShortAlias {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("the clock is after 1970")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("kelpc-fmt-{}-{nanos}", std::process::id()));
+        // `/tmp` rather than `temp_dir()`: `$TMPDIR` can be a long path, and the
+        // alias is what the socket's `sun_path` is measured on.
+        let dir = PathBuf::from("/tmp").join(format!("kelpc-fmt-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&dir).expect("creating a short alias directory");
         symlink(target, &dir.join("d"));
         Self { dir }
