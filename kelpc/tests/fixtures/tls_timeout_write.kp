@@ -1,0 +1,42 @@
+// Release goal 1: the write deadline. The peer completes the handshake and then
+// never reads, so a 64 MiB `try_write_all` fills the socket buffers and stalls.
+// `set_timeout` puts the send deadline on the socket, so the stall is
+// `TlsError.Timeout`, not a hang.
+impl "std/encoding"
+impl "std/mem"
+impl "std/net"
+impl "std/process"
+impl "std/result"
+impl "std/str"
+impl "std/tls"
+
+fun err_name(e: move tls.TlsError) => String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(reason) -> str.concat("handshake_failed ", reason.as_str())
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(reason) -> str.concat("io ", reason.as_str())
+}
+
+fun main() {
+    val args = process.args()
+    val parsed = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_timeout_write: argv[1] is not a port number",
+    )
+    var s = net.connect("127.0.0.1", parsed.to_u16())
+    s.set_timeout(4000)
+    val t = tls.handshake(s, "127.0.0.1")
+    tls.set_timeout(t, 500)
+    val body = mem.alloc(67108864)
+    val r = tls.try_write_all(t, body)
+    when r {
+        Ok(_) -> print("ok")
+        Err(e) -> print(err_name(e))
+    }
+    val sd = tls.try_shutdown(t)
+    net.close(s)
+}

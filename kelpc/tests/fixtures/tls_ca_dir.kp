@@ -1,0 +1,47 @@
+// Release goal 1: a private CA directory. `tlsfile.ca_dir_pem` reads every
+// `.pem` and `.crt` file in `argv[2]` through the `fs` gate and joins them into
+// one PEM text; the handshake adds that text to the roots. The harness removes
+// `SSL_CERT_FILE`, so the only reason a handshake succeeds is the directory.
+impl "std/net"
+impl "std/tls"
+impl "std/tlsfile" caps(fs = ["/**"])
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun err_name(e: move tls.TlsError) => String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(reason) -> str.concat("handshake_failed ", reason.as_str())
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(reason) -> str.concat("io ", reason.as_str())
+}
+
+fun main() {
+    val args = process.args()
+    val parsed = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_ca_dir: argv[1] is not a port number",
+    )
+    val dir = args.get(2)
+    var s = net.connect("127.0.0.1", parsed.to_u16())
+    s.set_timeout(5000)
+    when tlsfile.ca_dir_pem(dir.as_str()) {
+        Ok(pem) -> {
+            val opts = tls.TlsOptions(ca_pem = pem, timeout_ms = 0)
+            val hs = tls.try_handshake_with(s, "127.0.0.1", opts)
+            when hs {
+                Ok(t) -> {
+                    print("ok")
+                    val sd = tls.try_shutdown(t)
+                }
+                Err(e) -> print(err_name(e))
+            }
+        }
+        Err(e) -> print(err_name(e))
+    }
+    net.close(s)
+}

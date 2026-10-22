@@ -750,3 +750,165 @@ pub(crate) fn a_private_ca_file_is_added_to_the_roots() {
     assert_eq!(stdout, "ok\n");
     assert_eq!(server.accepted(), 1, "the client opened more than one connection");
 }
+
+#[test]
+pub(crate) fn a_private_ca_directory_adds_its_certificates_and_ignores_other_files() {
+    // Release goal 1, trust by directory: `tlsfile.ca_dir_pem` reads every `.pem`
+    // and `.crt` file in the directory through the `fs` gate and hands the joined
+    // PEM text to the handshake. A file that is not a certificate is never read.
+    let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO]));
+    let dir = tempfile_dir::TempDir::new("ca_dir");
+    std::fs::copy(&server.cert.cert_path, dir.path().join("ca.pem"))
+        .expect("failed to copy the test certificate into the CA directory");
+    std::fs::write(dir.path().join("README.txt"), "not a certificate\n")
+        .expect("failed to write the bystander file");
+    let shown = dir.path().display().to_string();
+    let stdout = tls_fixture_stdout("tls_ca_dir", &[server.port.to_string(), shown], &[]);
+    server.finish();
+    assert_eq!(stdout, "ok\n");
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+#[test]
+pub(crate) fn an_empty_private_ca_directory_is_a_typed_error_not_the_system_store() {
+    // A directory that holds no CA certificate is a configuration mistake. It is
+    // refused by name rather than read as "no extra roots", so a typo cannot
+    // quietly fall back to the system store.
+    let mut server = RudeTlsServer::start(TlsBehavior::NeverHandshakeThenClose);
+    let dir = tempfile_dir::TempDir::new("ca_dir_empty");
+    let shown = dir.path().display().to_string();
+    let stdout = tls_fixture_stdout("tls_ca_dir", &[server.port.to_string(), shown.clone()], &[]);
+    server.finish();
+    assert_eq!(
+        stdout,
+        format!("io tls: the directory {shown} holds no .pem or .crt CA certificate\n")
+    );
+}
+
+#[test]
+pub(crate) fn a_peer_that_stops_reading_times_out_a_write() {
+    // The handshake completes and the server then never reads, so the client's
+    // `try_write_all` of 64 MiB stalls once the socket buffers are full. The write
+    // deadline `set_timeout` puts on the socket turns that stall into `Timeout`.
+    let mut server = RudeTlsServer::start(TlsBehavior::Silent);
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_timeout_write",
+        &[server.port.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    assert_eq!(stdout, "timeout\n");
+}
+
+#[test]
+pub(crate) fn a_certificate_from_an_unknown_ca_is_untrusted() {
+    // The leaf is signed by a CA that no store holds and that nothing names, so
+    // it is untrusted even though its name matches and it is in date.
+    let mut server = CannedTlsServer::start_with_cert(
+        generate_ca_signed_test_cert(),
+        one_connection(&[BODY_200_HELLO]),
+    );
+    let stdout = tls_fixture_stdout(
+        "tls_error",
+        &[server.port.to_string(), "127.0.0.1".to_string()],
+        &[],
+    );
+    server.finish();
+    assert_eq!(stdout, "untrusted\n");
+}
+
+#[test]
+pub(crate) fn a_private_ca_that_signed_the_server_certificate_is_trusted() {
+    // The same leaf, with the CA's PEM added through `tls_ca_file`: the one
+    // thing that changes the outcome is naming the CA, never a weaker check.
+    let cert = generate_ca_signed_test_cert();
+    let ca = cert._dir.path().join("ca.pem").to_str().expect("the CA path is utf-8").to_string();
+    let mut server = CannedTlsServer::start_with_cert(cert, one_connection(&[BODY_200_HELLO]));
+    let stdout = tls_fixture_stdout("tls_ca_file", &[server.port.to_string(), ca], &[]);
+    server.finish();
+    assert_eq!(stdout, "ok\n");
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+/// A certificate for `127.0.0.1` signed by a fresh CA, with the leaf's PEM and key
+/// as the server's own files and the CA's PEM written beside them as `ca.pem`.
+/// Neither the leaf nor the CA is in any store, so only a CA file that names the
+/// CA makes a client trust the leaf.
+pub(crate) fn generate_ca_signed_test_cert() -> TestCert {
+    use openssl::asn1::Asn1Time;
+    use openssl::bn::{BigNum, MsbOption};
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::{PKey, Private};
+    use openssl::rsa::Rsa;
+    use openssl::x509::extension::{BasicConstraints, SubjectAlternativeName};
+    use openssl::x509::{X509, X509Name, X509NameBuilder};
+
+    fn new_key() -> PKey<Private> {
+        let rsa = Rsa::generate(2048).expect("failed to generate an RSA key for the test CA");
+        PKey::from_rsa(rsa).expect("failed to wrap the RSA key")
+    }
+
+    fn name(cn: &str) -> X509Name {
+        let mut b = X509NameBuilder::new().expect("failed to start a name builder");
+        b.append_entry_by_text("CN", cn).expect("failed to set CN");
+        b.build()
+    }
+
+    fn serial() -> openssl::asn1::Asn1Integer {
+        let mut s = BigNum::new().expect("failed to allocate a serial number");
+        s.rand(64, MsbOption::MAYBE_ZERO, false)
+            .expect("failed to randomize the serial number");
+        s.to_asn1_integer().expect("serial as an ASN.1 integer")
+    }
+
+    let ca_key = new_key();
+    let ca_name = name("kelpc test CA");
+    let mut ca = X509::builder().expect("failed to start the CA builder");
+    ca.set_version(2).expect("failed to set the CA version");
+    ca.set_serial_number(&serial()).expect("failed to set the CA serial");
+    ca.set_subject_name(&ca_name).expect("failed to set the CA subject");
+    ca.set_issuer_name(&ca_name).expect("failed to set the CA issuer");
+    ca.set_pubkey(&ca_key).expect("failed to set the CA public key");
+    ca.set_not_before(&Asn1Time::days_from_now(0).expect("CA not-before"))
+        .expect("failed to set the CA not-before");
+    ca.set_not_after(&Asn1Time::days_from_now(1).expect("CA not-after"))
+        .expect("failed to set the CA not-after");
+    ca.append_extension(BasicConstraints::new().critical().ca().build().expect("CA constraints"))
+        .expect("failed to append the CA constraints");
+    ca.sign(&ca_key, MessageDigest::sha256()).expect("failed to sign the test CA");
+    let ca_cert = ca.build();
+
+    let leaf_key = new_key();
+    let mut leaf = X509::builder().expect("failed to start the leaf builder");
+    leaf.set_version(2).expect("failed to set the leaf version");
+    leaf.set_serial_number(&serial()).expect("failed to set the leaf serial");
+    leaf.set_subject_name(&name("127.0.0.1")).expect("failed to set the leaf subject");
+    leaf.set_issuer_name(ca_cert.subject_name()).expect("failed to set the leaf issuer");
+    leaf.set_pubkey(&leaf_key).expect("failed to set the leaf public key");
+    leaf.set_not_before(&Asn1Time::days_from_now(0).expect("leaf not-before"))
+        .expect("failed to set the leaf not-before");
+    leaf.set_not_after(&Asn1Time::days_from_now(1).expect("leaf not-after"))
+        .expect("failed to set the leaf not-after");
+    leaf.append_extension(BasicConstraints::new().critical().build().expect("leaf constraints"))
+        .expect("failed to append the leaf constraints");
+    let mut san = SubjectAlternativeName::new();
+    san.ip("127.0.0.1");
+    let san = san
+        .build(&leaf.x509v3_context(Some(&ca_cert), None))
+        .expect("leaf subject alternative name");
+    leaf.append_extension(san).expect("failed to append the subject alternative name");
+    leaf.sign(&ca_key, MessageDigest::sha256()).expect("failed to sign the leaf");
+    let leaf_cert = leaf.build();
+
+    let dir = tempfile_dir::TempDir::new("tls_ca_signed");
+    let cert_path = dir.path().join("cert.pem");
+    let key_path = dir.path().join("key.pem");
+    std::fs::write(&cert_path, leaf_cert.to_pem().expect("leaf as PEM"))
+        .expect("failed to write the leaf certificate");
+    std::fs::write(&key_path, leaf_key.private_key_to_pem_pkcs8().expect("leaf key as PEM"))
+        .expect("failed to write the leaf key");
+    std::fs::write(dir.path().join("ca.pem"), ca_cert.to_pem().expect("CA as PEM"))
+        .expect("failed to write the CA certificate");
+    TestCert { cert_path, key_path, _dir: Arc::new(dir) }
+}
