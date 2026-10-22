@@ -658,6 +658,21 @@ fn an_unknown_key_in_the_target_section_is_rejected() {
 }
 
 #[test]
+fn coral_package_metadata_is_skipped_and_unknown_flat_keys_stay_refused() {
+    // `author`, `description` and the other `[package]` keys belong to coral,
+    // which reads and checks them. kelpc skips the whole section, so a manifest
+    // coral accepts is never refused here, whatever the metadata's shape.
+    let text = "name = \"demo\"\nversion = \"0.1.0\"\n[package]\nauthor = [\"Ada Lovelace <ada@example.org>\"]\ndescription = \"A demo\"\nlicense = \"MIT\"\nrepository = \"https://example.org/demo.git\"\nhomepage = \"https://example.org/demo\"\nkelp = \"26.10.5\"\n";
+    let m = manifest(text);
+    assert_eq!(m.name.as_deref(), Some("demo"));
+    assert_eq!(m.version.as_deref(), Some("0.1.0"));
+    // The same key written at the top level is still a flat key, and kelpc
+    // refuses it as it refuses every unknown flat key.
+    let err = manifest_err("name = \"demo\"\nauthor = \"Ada <ada@example.org>\"\n");
+    assert!(err.message.contains("unknown key 'author'"), "{}", err.message);
+}
+
+#[test]
 fn alias_entries_are_read_from_the_alias_section() {
     let text = "name = \"x\"\n[alias]\nutil = \"helpers/util\"\n";
     let m = manifest(text);
