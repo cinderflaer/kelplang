@@ -2,6 +2,7 @@
 name = "gc-alloc-bench"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 publish = false
 
 # Own workspace: built by its own cargo command, not by kelpc.

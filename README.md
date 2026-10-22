@@ -129,3 +129,5 @@ The fixture suite compiles a fixture, runs the result, and compares its output w
 ## Documentation and planning
 
 Design notes, the language reference and the changelog are in the Kelp wiki (the `kelp-wiki` repository). Plans are Gitea issues, labelled `plan`. Pending changes are recorded on the wiki's `changelog-pending` page until a release.
+
+License: MIT, see LICENSE

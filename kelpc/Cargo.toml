@@ -7,6 +7,7 @@ name = "kelpc"
 # the release asset and the changelog entry are written padded too.
 version = "26.10.5"
 edition = "2024"
+license = "MIT"
 
 [[bin]]
 name = "kelpc"

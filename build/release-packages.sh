@@ -258,6 +258,7 @@ Depends: $depends
 Section: devel
 Priority: optional
 Homepage: https://homelabone.xenoo.dev/gittea/Lilly/kelp
+License: MIT
 Description: Kelp compiler
  kelpc compiles and runs Kelp (.kp) programs. It is built on $codename against
  LLVM 21 (libllvm21) and links with the lld-21 ld.lld.
@@ -275,7 +276,7 @@ Name: kelpc
 Version: $VERSION
 Release: 1%{?dist}
 Summary: Kelp compiler
-License: NOASSERTION
+License: MIT
 URL: https://homelabone.xenoo.dev/gittea/Lilly/kelp
 AutoReqProv: yes
 $requires
@@ -310,7 +311,7 @@ pkgrel=1
 pkgdesc='Kelp compiler (kelpc), built against LLVM 21'
 arch=('x86_64')
 url='https://homelabone.xenoo.dev/gittea/Lilly/kelp'
-license=('custom')
+license=('MIT')
 depends=($depends)
 options=('!strip' '!debug')
 source=("kelpc-\$pkgver-root.tar.gz")
@@ -507,6 +508,7 @@ write_flake() {
           homepage = "https://homelabone.xenoo.dev/gittea/Lilly/kelp";
           mainProgram = "kelpc";
           platforms = [ system ];
+          license = pkgs.lib.licenses.mit;
         };
       };
     in {
