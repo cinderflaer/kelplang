@@ -239,6 +239,16 @@ fn find_loader(libc_dir: &Path, fallbacks: &[PathBuf]) -> Result<PathBuf, String
 /// cannot start the program on a machine without it. The canonical path names
 /// the real file, which every distro that runs glibc has.
 fn canonical_loader(path: PathBuf) -> PathBuf {
+    // The standard x86_64 interpreter path exists on every distro in the
+    // release matrix (as a link, on Debian-family and Arch systems too). When
+    // the found loader is the same file, record the standard path, not the
+    // distro's own, so a binary built on one distro starts on the others.
+    let standard = PathBuf::from("/lib64/ld-linux-x86-64.so.2");
+    if let (Ok(found), Ok(std_real)) = (std::fs::canonicalize(&path), std::fs::canonicalize(&standard)) {
+        if found == std_real {
+            return standard;
+        }
+    }
     std::fs::canonicalize(&path).unwrap_or(path)
 }
 

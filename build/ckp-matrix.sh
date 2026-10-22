@@ -188,7 +188,8 @@ in_run() {
 
     expect_run 0 "hello from ckp" coral run /pkg/hello.ckp
     expect_run 0 "5" coral run /pkg/extapp.ckp
-    expect_run 0 "" coral run /pkg/tlsapp.ckp -- 1 /pkg/hello.ckp
+    # tlsapp connects to port 1, which is closed, so its exit code is its own; the check is that libssl loads from the package.
+    coral run /pkg/tlsapp.ckp -- 1 /pkg/hello.ckp >/dev/null 2>&1 || true
 
     entry=$(find "$XDG_CACHE_HOME/coral/ckp" -mindepth 2 -maxdepth 2 -type f -name hello 2>/dev/null | head -n 1)
     if [ -n "$entry" ] && ! ldd "$entry" | grep -q 'not found'; then
@@ -201,6 +202,13 @@ in_run() {
         pass "ldd of the unpacked extapp has no 'not found' line"
     else
         fail "ldd of the unpacked extapp: ${ext_entry:-no unpacked extapp}"
+    fi
+
+    tls_entry=$(find "$XDG_CACHE_HOME/coral/ckp" -mindepth 2 -maxdepth 2 -type f -name tlsapp 2>/dev/null | head -n 1)
+    if [ -n "$tls_entry" ] && ldd "$tls_entry" | grep -q "libssl.so.3 => $XDG_CACHE_HOME" && ! ldd "$tls_entry" | grep -q 'not found'; then
+        pass "tlsapp loads libssl.so.3 from its package lib/"
+    else
+        fail "tlsapp libssl: ${tls_entry:-no unpacked tlsapp}"
     fi
 
     # The archive built on fedora (glibc 2.42 in its own container) runs here, because its references are old.
