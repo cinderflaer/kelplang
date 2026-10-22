@@ -23,6 +23,7 @@ set -eu
 
 die() { echo "ckp-matrix.sh: $*" >&2; exit 1; }
 
+DOCKER=${DOCKER:-docker}
 TARGETS="debian-trixie ubuntu-noble fedora arch"
 VERSION=${CKP_VERSION:-26.10.6}
 
