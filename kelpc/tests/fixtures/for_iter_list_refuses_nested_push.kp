@@ -1,0 +1,13 @@
+// An inner borrowed walk does not hide the outer one: the list is still walked
+// by the outer loop, so a push from the inner body is refused.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for a in xs.iter() {
+        for b in xs.iter() {
+            if b == a {
+                xs.push(b)
+            }
+        }
+    }
+}

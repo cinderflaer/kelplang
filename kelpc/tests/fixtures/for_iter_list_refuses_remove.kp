@@ -1,0 +1,8 @@
+// `remove` on the list a borrowed walk is reading is refused while the walk runs.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs.iter() {
+        xs.remove(0)
+    }
+}

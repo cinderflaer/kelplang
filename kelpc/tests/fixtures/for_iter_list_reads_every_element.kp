@@ -1,0 +1,40 @@
+// `for x in xs.iter()` reads every element once, in order, and a borrowed
+// walk may nest. The body may change a different list, and `xs` may change
+// again after the loops end.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(2)
+    xs.push(4)
+    xs.push(6)
+    xs.push(8)
+    xs.push(10)
+    var ys: List<i32> = List.empty()
+    var count: usize = 0
+    var sum: i32 = 0
+    for x in xs.iter() {
+        count += 1
+        sum += x
+        ys.push(x / 2)
+    }
+    print(count)
+    print(sum)
+    print(ys.get(i = 4))
+    var pairs: usize = 0
+    for a in xs.iter() {
+        for b in xs.iter() {
+            pairs += 1
+        }
+    }
+    print(pairs)
+    xs.push(12)
+    print(xs.len())
+    var names: List<String> = List.empty()
+    names.push("ab")
+    names.push("cde")
+    names.push("f")
+    var letters: usize = 0
+    for name in names.iter() {
+        letters += name.len()
+    }
+    print(letters)
+}

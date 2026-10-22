@@ -1,0 +1,9 @@
+// `set` is a `mut` receiver method on the list `for x in xs.iter()` walks, so
+// the refusal is the one a plain `for x in xs` gives.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs.iter() {
+        xs.set(i = 0, v = x)
+    }
+}

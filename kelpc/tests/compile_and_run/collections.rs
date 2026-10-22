@@ -209,6 +209,34 @@ pub(crate) fn a_for_loop_over_list_iter_refuses_a_mutation_of_the_list() {
 }
 
 #[test]
+pub(crate) fn a_borrowed_list_iteration_reads_every_element_once() {
+    // `for x in xs.iter()` walks all five elements (count 5, sum 30), nests,
+    // lets the body change another list, and allows `xs` to change after the
+    // loops. The string walk reads each name through its borrow (6 letters).
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_list_reads_every_element.kp",
+        "5\n30\n5\n25\n6\n6\n",
+    );
+}
+
+#[test]
+pub(crate) fn a_borrowed_list_iteration_refuses_every_mutator_of_the_list() {
+    // The borrow is the walk itself, so a mutator of `xs` while the loop runs
+    // is refused by the same rule as `for x in xs`, including from a nested
+    // borrowed walk.
+    for fixture in [
+        "for_iter_list_refuses_set",
+        "for_iter_list_refuses_remove",
+        "for_iter_list_refuses_nested_push",
+    ] {
+        assert_rejected_with(
+            &format!("tests/fixtures/{fixture}.kp"),
+            "cannot mutate 'xs' while iterating over it",
+        );
+    }
+}
+
+#[test]
 pub(crate) fn a_for_loop_over_map_iter_walks_the_entries() {
     assert_compiles_and_runs("tests/fixtures/for_iter_map.kp", "1\n2\n3\n");
 }
