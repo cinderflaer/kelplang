@@ -107,9 +107,9 @@ sudo pacman -U kelpc-26.10.6-1-x86_64.pkg.tar.zst       # Arch Linux
 
 What each package needs:
 
-- **Debian and Ubuntu (`.deb`).** LLVM 21 is not in the distribution archives, so the package bundles `libLLVM.so.21.1` and `ld.lld` under `/usr/lib/kelpc`. The launcher sets `LD_LIBRARY_PATH` and `KELPC_LLD` to those copies. The package depends on `gcc`, the C library and its development files, `libstdc++6`, and the other libraries kelpc links. `apt show kelpc` lists them.
-- **Fedora (`.rpm`).** The distribution's `llvm21` and `lld21` packages, and the libraries kelpc links. `rpm -qpR` on the file lists them.
-- **Arch Linux (`.pkg.tar.zst`).** The same owners, from the `extra` repository (`llvm21`, `lld21`). `pacman -Qip` on the file lists them.
+- **Debian and Ubuntu (`.deb`).** LLVM 21 is not in the distribution archives, so the package bundles `libLLVM.so.21.1` and `ld.lld` under `/usr/lib/kelpc`. The launcher sets `LD_LIBRARY_PATH` and `KELPC_LLD` to those copies. The package depends on `gcc`, the C library and its development files, `libssl-dev` (the `libssl.so` and `libcrypto.so` links that a TLS program needs), `libstdc++6`, and the other libraries kelpc links. `apt show kelpc` lists them.
+- **Fedora (`.rpm`).** The distribution's `llvm21` and `lld21` packages, `openssl-devel`, and the libraries kelpc links. `rpm -qpR` on the file lists them.
+- **Arch Linux (`.pkg.tar.zst`).** The same owners, from the `extra` repository (`llvm21`, `lld21`), and `openssl`. `pacman -Qip` on the file lists them.
 
 Every hosted link runs `ld.lld` and `cc`. `kelpc` finds `ld.lld` in `KELPC_LLD`, then on `PATH`. The collector archive is inside the compiler, so no other variable is needed.
 

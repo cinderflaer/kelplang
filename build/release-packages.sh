@@ -347,6 +347,15 @@ container_build() {
         grep -vxF -f /work/drop.txt /work/deps.txt > /work/deps.new || true
         mv /work/deps.new /work/deps.txt
     fi
+    # A program that uses TLS links with -lssl and -lcrypto, which need the unversioned
+    # libssl.so and libcrypto.so. Those belong to the development package, not to a
+    # runtime library that ldd on kelpc reports, so each family names its owner here.
+    case $FAMILY in
+        deb) echo libssl-dev ;;
+        rpm) echo openssl-devel ;;
+        arch) echo openssl ;;
+    esac >> /work/deps.txt
+    sort -u /work/deps.txt -o /work/deps.txt
     echo "deps for $TARGET:" && cat /work/deps.txt
     case $TARGET in
         debian-trixie) package_deb trixie ;;
