@@ -198,6 +198,12 @@ unsafe fn reset() {
     s.bytes_since = 0;
     s.trigger = s.heap_min;
     s.live = 0;
+    // The next trigger is set from the two latest live sizes (trigger::next_trigger),
+    // so a test that ends with a large live set would otherwise set the next test's
+    // trigger high. Test order decides which test runs last, so that made the
+    // churn test's peak heap depend on load.
+    s.live_prev = 0;
+    s.live_last = 0;
     s.alloc_block = 0;
     s.alloc_line = 0;
     s.cursor = 0;

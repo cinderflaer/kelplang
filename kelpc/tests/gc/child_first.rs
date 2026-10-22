@@ -205,6 +205,32 @@ pub(crate) fn churn_ten_million_sixteen_byte_cells_keeps_heap_bounded() {
     }
 }
 
+/// A test that ends with a large live set must not leave it in the trigger's
+/// history: the next test's first clearing would otherwise start high.
+#[test]
+pub(crate) fn a_large_live_set_does_not_leak_into_the_next_run() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        root(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
+        for _ in 0..((40usize << 20) / 16) {
+            let n = kelp_gc_alloc(&LINK) as usize;
+            core::ptr::write(n as *mut usize, *ROOT_SLOT.0.get());
+            *ROOT_SLOT.0.get() = n;
+        }
+        kelp_gc_collect();
+        *ROOT_SLOT.0.get() = 0;
+        kelp_gc_collect();
+        assert!(st().live_prev >= 32 << 20, "the large live set was not measured: {}", st().live_prev);
+        kelp_gc_thread_detach();
+        reset();
+        assert_eq!(st().live_prev, 0, "reset must clear the trigger history");
+        assert_eq!(st().live_last, 0, "reset must clear the trigger history");
+        assert_eq!(st().trigger, st().heap_min);
+    }
+}
+
 pub(crate) unsafe fn wr_scalar(p: usize, v: usize) {
     core::ptr::write((p + 8) as *mut usize, v);
 }
