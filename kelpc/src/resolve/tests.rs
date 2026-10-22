@@ -570,6 +570,7 @@ fn heap_max_is_accepted_in_a_hosted_section_and_refused_when_freestanding() {
     assert!(err.message.contains("only meaningful with 'mode = \"hosted\"'"), "{}", err.message);
 }
 
+#[test]
 fn a_hosted_target_section_is_accepted_with_the_default_heap() {
     let m = manifest("name = \"x\"\n[target]\nmode = \"hosted\"\n");
     assert!(m.target.has_shared_pool());
