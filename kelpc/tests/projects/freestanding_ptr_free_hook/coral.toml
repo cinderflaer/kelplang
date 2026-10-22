@@ -1,0 +1,22 @@
+name = "freestandingptrfreehook"
+
+# A freestanding riscv64 project with the `[target] alloc`/`dealloc` pair set.
+# `Ptr.alloc` is allowed there, but `Ptr.free` names the hosted `free`, which a
+# project allocator cannot take without the block size, so this project is
+# refused by name.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+
+[unsafe]
+modules = ["main", "uart"]
+
+# The NS16550's register window, held by the entry module and delegated to
+# `uart`, the one module that builds a pointer from the device's address.
+[caps]
+mmio = ["0x10000000+0x100"]

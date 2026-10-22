@@ -72,6 +72,80 @@ pub(crate) fn freestanding_containers_allocate_through_the_project_allocator() {
     }
 }
 
+/// `Ptr.alloc` with the manifest's `[target] alloc`/`dealloc` pair lowers to the
+/// project's own allocator, the same call `Box` and `List` make, and not to libc's
+/// `malloc`. The image has no undefined symbol and the IR calls `@kelp_alloc`.
+///
+/// It needs `ld.lld` and `llvm-nm` from `dev-kernel.nix`.
+#[test]
+pub(crate) fn freestanding_ptr_alloc_goes_through_the_project_allocator() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding Ptr.alloc test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = build_freestanding(
+        "freestanding_ptr_alloc_hook",
+        &project("freestanding_ptr_alloc_hook"),
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the Ptr.alloc image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+    let ir = std::fs::read_to_string(bin.with_extension("ll"))
+        .expect("the LLVM backend writes textual IR beside the object");
+    assert!(
+        ir.contains("@kelp_alloc("),
+        "Ptr.alloc should call the project's '@kelp_alloc'"
+    );
+    assert!(
+        !ir.contains("call ptr @malloc"),
+        "a freestanding Ptr.alloc must not call libc's 'malloc'"
+    );
+}
+
+/// The boot half: `Ptr.alloc` hands back an aligned block the program can write
+/// and read back through the project's allocator.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+pub(crate) fn freestanding_ptr_alloc_boots_on_the_project_allocator() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the Ptr.alloc boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_ptr_alloc_hook",
+        &project("freestanding_ptr_alloc_hook"),
+        &["ptr 0", "align 0", "val 1234"],
+    );
+}
+
+/// `Ptr.free` is still refused in a freestanding build, even with the allocator
+/// pair configured: a project's `dealloc` takes the block's byte size, which a
+/// pointer does not carry.
+#[test]
+pub(crate) fn freestanding_ptr_free_is_refused_with_an_allocator() {
+    assert_project_rejected(
+        "freestanding_ptr_free_hook",
+        &project("freestanding_ptr_free_hook"),
+        "'Ptr#free' is unavailable in a freestanding build",
+    );
+}
+
 /// Kernel stage 7's acceptance boot: `examples/kernel0-heap` defines a bump
 /// allocator over a `static mut` arena, builds a `List<i32>` of 1..=10 with no
 /// `realloc` (the alloc + copy + dealloc fallback), sums it and prints

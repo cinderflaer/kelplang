@@ -613,6 +613,15 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     self.g.v_i64(size),
                     "ptr.bytes",
                 );
+                // A freestanding project's own allocator: the
+                // same call `Box`/`List` make, with the null check that turns a
+                // failed allocation into the 'out of memory' panic.
+                if self.g.alloc_fns.is_some() {
+                    let align = self.g.layout.abi_alignment_of(lty) as u64;
+                    let heap = self.g.heap_alloc(bytes, align)?;
+                    self.cur = self.g.check_alloc(heap, self.cur_fn)?;
+                    return Ok(Some(heap));
+                }
                 let (func, fty) = self.g.libc_fn("malloc")?;
                 let heap = self.g.builder.build_call(func, fty, &[bytes], "ptr.heap");
                 self.cur = self.g.check_alloc(heap, self.cur_fn)?;

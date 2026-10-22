@@ -477,10 +477,17 @@ fn unavailable_builtin(name: &str, heap_ok: bool) -> Option<&'static str> {
         // same handler the bounds and overflow checks use, so it is allowed and
         // routed (see `Codegen::panic_fn`).
         "assert" => Some("it calls the hosted runtime's 'kelp_assert'"),
-        // `Ptr<T>` is allowed; the allocator behind `Ptr.alloc`/`Ptr.free` is
-        // not, because it is the hosted `malloc`/`free`.
-        "Ptr#alloc" => Some("it allocates through the hosted runtime's 'malloc'"),
-        "Ptr#free" => Some("it frees through the hosted runtime's 'free'"),
+        // `Ptr<T>` is allowed. `Ptr.alloc` lowers to the
+        // project's own allocator when the manifest names the `[target]`
+        // pair, the same as `Ptr.try_alloc`, and is refused without it.
+        "Ptr#alloc" if !heap_ok => Some(
+            "it needs an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions",
+        ),
+        // `Ptr.free` has no size to give a project allocator: its `dealloc`
+        // takes the byte count and alignment, and a pointer carries neither.
+        "Ptr#free" => Some(
+            "it frees through the hosted runtime's 'free', and a project allocator's 'dealloc' needs the block's byte size, which a pointer does not carry; free through Box, List or Map instead",
+        ),
         // `Ptr.try_alloc` (kernel stage 13) lowers to the project's own
         // allocator, so it is exactly as available as `Box`/`List`/`Map` are:
         // only with the manifest's `[target] alloc`/`dealloc` pair.

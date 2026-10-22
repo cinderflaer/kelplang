@@ -1,0 +1,93 @@
+// `coral.toml`'s `[target] alloc`/`dealloc` name the two functions below, so a
+// `Ptr.alloc` call lowers to this bump allocator. The program then calls
+// `Ptr.free`, which stays refused in a freestanding build: a project's `dealloc`
+// needs the block's byte size, and a pointer does not carry it. The bump
+// allocator frees nothing, so `dealloc` only counts.
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+
+static mut HEAP: [u8; 256] = [0; 256]
+static mut USED: usize = 0
+static mut DEALLOCS: usize = 0
+
+const HEAP_CAP: usize = 256
+
+// The project's allocator. It returns an aligned pointer into `HEAP`, or the
+// null pointer when the aligned request does not fit.
+fun alloc(size: usize, align: usize) => Ptr<u8> {
+    return unsafe {
+        val misalign: usize = (USED % align)
+        val padding: usize = (align - misalign) % align
+        if padding > HEAP_CAP - USED {
+            Ptr.null()
+        } else {
+            val start: usize = USED + padding
+            if size > HEAP_CAP - start {
+                Ptr.null()
+            } else {
+                USED = start + size
+                val heap: Ptr<[u8; 256]> = Ptr.from_mut(HEAP)
+                val base: Ptr<u8> = heap.cast<u8>()
+                base.byte_offset(start.to_isize())
+            }
+        }
+    }
+}
+
+// A bump allocator frees nothing, so `dealloc` is a no-op beyond its count. A
+// null pointer is not an allocation, so it is not counted.
+fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
+    unsafe {
+        if p.is_null() == false {
+            DEALLOCS = DEALLOCS + 1
+        }
+    }
+}
+
+fun flag(value: bool) => usize {
+    if value {
+        return 1
+    }
+    return 0
+}
+
+fun put_num(value: usize) {
+    if value == 0 {
+        uart.putc(48)
+        return
+    }
+    var digits: [u8; 20] = [0; 20]
+    var i: usize = 20
+    var v: usize = value
+    while v > 0 {
+        i = i - 1
+        digits.set(i = i, v = (48 + (v % 10)).to_u8())
+        v = v / 10
+    }
+    while i < 20 {
+        uart.putc(digits.get(i = i))
+        i = i + 1
+    }
+}
+
+fun line(label: str, value: usize) {
+    uart.puts(label)
+    put_num(value)
+    uart.puts("\n")
+}
+
+section(".text.boot") fun kmain() {
+    val p: Ptr<u32> = unsafe { Ptr.alloc<u32>(4) }
+    unsafe {
+        p.free()
+    }
+    uart.halt()
+}
+
+// The handler `[target] panic` names. Nothing here should reach it: a failed
+// Nothing here should reach it.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}
