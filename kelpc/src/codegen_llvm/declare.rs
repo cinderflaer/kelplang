@@ -290,6 +290,17 @@ impl<'a> Gen<'a> {
                 // caller passes is built by the same filter in
                 // `emit_call`'s argument loop, so the two cannot disagree
                 // about which argument goes where.
+                // An `interrupt fun` on x86-64 (kernel stage 5): `x86_intrcc` takes
+                // the interrupt frame as its first pointer argument. The Kelp
+                // declaration has no parameters, and the hidden one is never read.
+                if f.interrupt
+                    && self
+                        .freestanding
+                        .as_ref()
+                        .is_some_and(|fs| fs.triple.starts_with("x86_64"))
+                {
+                    params.push(ctx.opaque_ptr());
+                }
                 params.extend(
                     f.params
                         .iter()
@@ -326,6 +337,26 @@ impl<'a> Gen<'a> {
             if f.naked {
                 func.mark_naked();
                 func.mark_noinline();
+            }
+            // An `interrupt fun` (kernel stage 5): the CPU enters it, so it is
+            // never inlined, and the backend's interrupt lowering does the rest:
+            // `x86_intrcc` on x86-64, the `interrupt` attribute on riscv64.
+            if f.interrupt {
+                func.mark_noinline();
+                let triple = self.freestanding.as_ref().map(|fs| fs.triple.as_str()).unwrap_or("");
+                if triple.starts_with("x86_64") {
+                    // `x86_intrcc` takes the interrupt frame by value as its
+                    // first argument: the CPU pushes RIP, CS, RFLAGS, RSP and SS.
+                    let frame = ctx.literal_struct(&[ctx.i64(), ctx.i64(), ctx.i64(), ctx.i64(), ctx.i64()]);
+                    func.add_parameter_byval(1, frame);
+                    func.set_calling_conv(llvm_sys::LLVMCallConv::LLVMX86INTRCallConv);
+                } else if triple.starts_with("riscv64") {
+                    func.mark_interrupt("machine");
+                } else {
+                    return Err(format!(
+                        "an 'interrupt fun' has no lowering for the triple '{triple}': kelpc lowers it for riscv64 and x86_64"
+                    ));
+                }
             }
             // A `mut` parameter is an exclusive borrow (`borrowck`), so no other
             // live pointer reaches the same object through the call and LLVM may

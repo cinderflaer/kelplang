@@ -553,6 +553,7 @@ impl Parser {
             must_use: false,
             variadic,
             naked,
+            interrupt: false,
             receiver,
             params,
             return_type,

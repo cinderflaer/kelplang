@@ -619,6 +619,9 @@ mod irq_sv39_defer;
 
 #[path = "compile_and_run/alloc_hooks.rs"]
 mod alloc_hooks;
+
+#[path = "compile_and_run/interrupt.rs"]
+mod interrupt;
 pub(crate) use alloc_hooks::*;
 
 #[path = "compile_and_run/arch_stack.rs"]

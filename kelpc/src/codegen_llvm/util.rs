@@ -237,6 +237,7 @@ mod region_release_tests {
                 extern_: false,
                 env: None,
                 naked: false,
+                interrupt: false,
                 align: None,
                 section: None,
             }],

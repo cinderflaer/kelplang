@@ -194,6 +194,12 @@ pub struct FunctionDecl {
     /// body must be exactly one `asm(...)` statement, so no prologue or
     /// epilogue is emitted around it.
     pub naked: bool,
+    /// `interrupt fun ...` (kernel stage 5): a CPU interrupt or trap handler.
+    /// LLVM saves every register the body touches and returns with the
+    /// target's interrupt-return instruction (`mret` on riscv64, `iretq` on
+    /// x86-64). Only legal in a freestanding build, with no parameters, no
+    /// result and no direct call from Kelp code.
+    pub interrupt: bool,
     /// The `align(N)` clause, when one was written (kernel gap 2): the
     /// function's alignment in bytes, so a trap vector (`mtvec`/`VBAR`) can
     /// point at it. `None` is the target's default function alignment.

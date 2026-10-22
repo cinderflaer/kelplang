@@ -393,6 +393,7 @@ pub(crate) fn base_ctx(
         unsafe_depth: 0,
         unsafe_fns: project.unsafe_fns().clone(),
         must_use_fns: project.must_use_fns().clone(),
+        interrupt_fns: project.interrupt_fns().clone(),
         freestanding: project.target().is_freestanding(),
         cpus: project.target().cpus(),
         infer_scoped_ret: false,

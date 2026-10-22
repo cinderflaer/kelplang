@@ -270,6 +270,9 @@ pub(crate) struct Ctx {
     /// The functions declared `must_use fun`, by canonical key: a statement
     /// that is a call to one, with its result unread, is refused.
     pub(crate) must_use_fns: std::collections::HashSet<String>,
+    /// The `interrupt fun` handlers, by canonical key. A direct call to one is
+    /// refused: the CPU enters it.
+    pub(crate) interrupt_fns: std::collections::HashSet<String>,
     /// Whether the project is a freestanding build (kernel stage 8). The
     /// `percpu` storage class and its two intrinsics exist only there.
     pub(crate) freestanding: bool,

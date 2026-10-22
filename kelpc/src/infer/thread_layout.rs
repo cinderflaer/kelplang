@@ -755,6 +755,16 @@ pub(crate) fn check_call(
     // A function declared `unsafe fun` (MK9-S2 stage 1) is callable only from
     // an `unsafe { ... }` block or from another `unsafe fun`; the refusal names
     // the function so the reader knows which call in the statement it was.
+    if ctx.interrupt_fns.contains(&key) {
+        return Err(TypeError {
+            help: Some("take its address with 'Ptr.from_fn(handler).addr()' and install it in the trap vector".to_string()),
+            message: format!(
+                "'{}' is an 'interrupt fun': the CPU enters it when an interrupt arrives, and Kelp code cannot call it",
+                display_callee(&key)
+            ),
+            span,
+        });
+    }
     if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
         return Err(TypeError {
             help: None,

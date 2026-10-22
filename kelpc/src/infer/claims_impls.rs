@@ -157,6 +157,7 @@ pub(crate) fn register_variadic_wrapper(
                 env: None,
                 section: None,
                 naked: false,
+                interrupt: false,
                 align: None,
             },
         ));

@@ -57,6 +57,9 @@ pub struct Project {
     /// The functions written `must_use fun` (MISSING-Cn2Ym), by canonical key:
     /// a call to one used as a statement is refused.
     pub(crate) must_use_fns: std::collections::HashSet<String>,
+    /// The functions written `interrupt fun` (kernel stage 5), by canonical
+    /// key: the handlers the CPU enters, which Kelp code may not call.
+    pub(crate) interrupt_fns: std::collections::HashSet<String>,
     /// The manifest's `[target]` section (kernel stage 4), or the hosted default
     /// when there is none. `infer.rs` reads the entry name from it, the
     /// freestanding checker its allowed set, and the driver the triple and
@@ -129,6 +132,11 @@ impl Project {
     /// The functions declared `must_use fun`, by canonical key.
     pub fn must_use_fns(&self) -> &std::collections::HashSet<String> {
         &self.must_use_fns
+    }
+
+    /// The `interrupt fun` handlers, by canonical key (kernel stage 5).
+    pub fn interrupt_fns(&self) -> &std::collections::HashSet<String> {
+        &self.interrupt_fns
     }
 
     /// The manifest's `[target]` section, or the hosted default (kernel stage

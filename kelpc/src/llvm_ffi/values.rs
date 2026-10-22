@@ -257,6 +257,26 @@ impl<'ctx> Function<'ctx> {
         self.add_enum_attribute(index as LLVMAttributeIndex, "noalias");
     }
 
+    /// Attach `byval(ty)` to parameter `index` (1-based): the argument is
+    /// passed by value as a copy of `ty`. An x86-64 `x86_intrcc` handler's
+    /// first argument is the interrupt frame, which LLVM requires to be byval.
+    pub fn add_parameter_byval(&self, index: usize, ty: Type<'_>) {
+        assert!(index >= 1, "parameter attribute indices are 1-based");
+        let name = "byval";
+        // SAFETY: the name is a NUL-free static string and the length is its
+        // own byte count; the kind is looked up in this context's table.
+        let kind = unsafe {
+            LLVMGetEnumAttributeKindForName(name.as_ptr() as *const c_char, name.len())
+        };
+        assert!(kind != 0, "this LLVM has no 'byval' attribute");
+        // SAFETY: the kind is a type attribute kind, the type is live in this
+        // context, and the created attribute is owned by the context.
+        let attr = unsafe { LLVMCreateTypeAttribute(self.context, kind, ty.raw) };
+        // SAFETY: the function is live and `index` is a parameter index of its
+        // own signature.
+        unsafe { LLVMAddAttributeAtIndex(self.raw, index as LLVMAttributeIndex, attr) };
+    }
+
     /// Attach `ext` to this function's return value
     /// (`LLVMAddAttributeAtIndex` at `LLVMAttributeReturnIndex`), the other half
     /// of the sub-word C ABI: a body returning a narrow integer extends it
@@ -279,6 +299,22 @@ impl<'ctx> Function<'ctx> {
     /// implies it on most targets but not all.
     pub fn mark_noinline(&self) {
         self.add_enum_attribute(LLVMAttributeFunctionIndex, "noinline");
+    }
+
+    /// Attach the `interrupt` string attribute with `mode` (kernel stage 5):
+    /// LLVM's riscv backend then saves every register the body touches and
+    /// returns with `mret` (`"machine"`), instead of a plain `ret`.
+    pub fn mark_interrupt(&self, mode: &str) {
+        self.add_string_attribute(LLVMAttributeFunctionIndex, "interrupt", mode);
+    }
+
+    /// Set this function's calling convention (`LLVMSetFunctionCallConv`). An
+    /// `interrupt fun` on x86-64 uses `x86_intrcc`, which saves and restores
+    /// the registers and returns with `iretq`.
+    pub fn set_calling_conv(&self, cc: llvm_sys::LLVMCallConv) {
+        // SAFETY: the function is live; the calling convention is a plain
+        // enum value LLVM stores on the function.
+        unsafe { LLVMSetFunctionCallConv(self.raw, cc as u32) };
     }
 
     /// Attach `optnone` and `noinline` to this function (kernel stage 7): the

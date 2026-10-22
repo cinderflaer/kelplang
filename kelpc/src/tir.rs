@@ -234,6 +234,9 @@ pub struct Function {
     /// body is exactly one `asm(...)` statement, so no prologue or epilogue is
     /// emitted around it.
     pub naked: bool,
+    /// `interrupt fun` (kernel stage 5): the handler's LLVM lowering, see
+    /// `ast::FunctionDecl::interrupt`.
+    pub interrupt: bool,
     /// The `align(N)` clause a declaration carried (kernel gap 2), or `None`
     /// for the target's default function alignment. Each backend sets the
     /// function's alignment to this value.

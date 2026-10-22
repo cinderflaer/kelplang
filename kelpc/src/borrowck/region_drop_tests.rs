@@ -47,6 +47,7 @@ fn program_with(body: tir::Block) -> tir::Program {
             extern_: false,
             env: None,
             naked: false,
+            interrupt: false,
             align: None,
             section: None,
         }],

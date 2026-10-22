@@ -744,6 +744,21 @@ pub fn load(
             }
         }
     }
+    // The `interrupt fun` handlers (kernel stage 5). `infer` refuses a direct
+    // call to one: the CPU enters it, and nothing returns through a call.
+    let mut interrupt_fns = std::collections::HashSet::new();
+    for m in &loader.modules {
+        let parsed = &loader.parsed[&m.id];
+        for f in &parsed.functions {
+            if f.interrupt {
+                let key = match &f.receiver {
+                    Some(r) => format!("{}{}#{}", m.prefix, r.type_name, f.name),
+                    None => format!("{}{}", m.prefix, f.name),
+                };
+                interrupt_fns.insert(key);
+            }
+        }
+    }
     let mut must_use_fns = std::collections::HashSet::new();
     for m in &loader.modules {
         let parsed = &loader.parsed[&m.id];
@@ -806,6 +821,7 @@ pub fn load(
         extern_modules: loader.extern_modules,
         unsafe_fns,
         must_use_fns,
+        interrupt_fns,
         target: manifest_target,
         incremental: manifest_incremental,
         sanitize: manifest_sanitize,

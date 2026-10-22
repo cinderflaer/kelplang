@@ -948,6 +948,7 @@ pub(crate) fn check_fn_literal_pass(
         extern_: false,
         env,
         naked: false,
+        interrupt: false,
         align: None,
         section: None,
     });

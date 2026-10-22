@@ -71,7 +71,7 @@ use llvm_sys::core::{
     LLVMConstNamedStruct,
     LLVMAppendModuleInlineAsm,
     LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute,
-    LLVMCreateStringAttribute,
+    LLVMCreateStringAttribute, LLVMCreateTypeAttribute, LLVMSetFunctionCallConv,
     LLVMDisposeBuilder,
     LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
     LLVMFunctionType, LLVMGetEnumAttributeKindForName, LLVMGetFirstFunction,

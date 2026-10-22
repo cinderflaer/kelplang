@@ -628,7 +628,7 @@ impl Parser {
         matches!(self.peek_kind(), TokenKind::Fun)
             || (matches!(self.peek_kind(), TokenKind::Extern)
                 && matches!(self.peek2_kind(), TokenKind::Fun))
-            || (matches!(self.peek_kind(), TokenKind::Ident(n) if n == "unsafe" || n == "naked" || n == "must_use")
+            || (matches!(self.peek_kind(), TokenKind::Ident(n) if n == "unsafe" || n == "naked" || n == "must_use" || n == "interrupt")
                 && matches!(self.peek2_kind(), TokenKind::Fun))
     }
 

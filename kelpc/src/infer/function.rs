@@ -247,6 +247,54 @@ pub(crate) fn check_function(
             });
         }
     }
+    // An `interrupt fun` (kernel stage 5) is a CPU handler: the CPU enters it
+    // with an interrupt frame, so it runs only in a freestanding image, on a
+    // target the backend lowers, and it takes and returns nothing.
+    if f.interrupt {
+        let triple = project.target().triple().unwrap_or("");
+        let refuse = |message: String| {
+            Err(TypeError { help: None, message, span: f.span })
+        };
+        if !project.target().is_freestanding() {
+            return refuse(format!(
+                "'{}' is an 'interrupt fun', which is only legal in a freestanding build: a CPU enters an interrupt handler only on a bare-metal target",
+                display_name(f)
+            ));
+        }
+        if !(triple.starts_with("riscv64") || triple.starts_with("x86_64")) {
+            return refuse(format!(
+                "'{}' is an 'interrupt fun', and the triple '{triple}' has no interrupt lowering: kelpc lowers it for riscv64 and x86_64",
+                display_name(f)
+            ));
+        }
+        if f.naked {
+            return refuse("an 'interrupt fun' cannot be 'naked': the compiler emits the handler's register save and its return".to_string());
+        }
+        if f.extern_ || f.receiver.is_some() || f.name == "main" {
+            return refuse(format!(
+                "'{}' cannot be an 'interrupt fun': an interrupt handler is a plain module-level function",
+                display_name(f)
+            ));
+        }
+        if !decl_type_params(f).is_empty() {
+            return refuse(format!(
+                "'{}' is an 'interrupt fun' and generic: a handler is one function the CPU enters, so it cannot have type parameters",
+                display_name(f)
+            ));
+        }
+        if !f.params.is_empty() {
+            return refuse(format!(
+                "'{}' is an 'interrupt fun' and takes parameters: the CPU enters it with its own interrupt frame, and the call binds nothing",
+                display_name(f)
+            ));
+        }
+        if sig.ret != Ty::Unit {
+            return refuse(format!(
+                "'{}' is an 'interrupt fun' and returns a value: a handler returns through the CPU's interrupt return, so it returns nothing",
+                display_name(f)
+            ));
+        }
+    }
     let receiver_struct = f
         .receiver
         .as_ref()
@@ -511,6 +559,7 @@ pub(crate) fn check_function(
         // a declaration never does (A-4 phase E).
         env: None,
         naked: f.naked,
+        interrupt: f.interrupt,
         align: f.align,
         section: f.section.clone(),
     })
