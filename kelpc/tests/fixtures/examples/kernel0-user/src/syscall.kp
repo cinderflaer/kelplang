@@ -1,14 +1,17 @@
 impl "uart"
 impl "vm"
 
-// The syscall layer: numbers, the two calls, and the copy that never reads a
-// user address. `trap_dispatch` reads the number and the arguments out of the
-// trap frame and calls `handle` (`language/kernel.md` (kelp wiki)).
+// The syscall layer: the number table, the decoding of the six argument words,
+// the two calls, and the copy that never reads a user address. `trap_dispatch`
+// reads the number and the arguments out of the trap frame and calls `dispatch`
+// (`language/kernel.md` (kelp wiki)).
 //
 // Every byte a syscall takes from a program goes through the kernel buffer, and
-// only after `vm.user_page_pa` has answered for the page the byte is on. That
-// check is the whole trust boundary: a program's `Ptr` is a number, and the
+// only after `vm.user_page_pa` has answered for every page the range touches.
+// That check is the whole trust boundary: a program's `Ptr` is a number, and the
 // kernel's job is to decide what it names before it uses it.
+
+// The number table. `a7` names one of these; anything else is `NoSys`.
 const SYS_WRITE: usize = 0
 const SYS_EXIT: usize = 1
 
@@ -35,6 +38,27 @@ const USER_LIMIT: usize = 0x4000000000
 // The buffer frame, handed over once at boot because a syscall has no allocator
 // to call and no place on the trap stack to keep 4 KiB.
 static mut BUFFER: usize = 0
+
+// The refusals a call can answer with. Inside the kernel a refusal is this
+// value, so a path cannot return a number that is not one of the ABI's errors;
+// `errno` is the only place a refusal becomes a register value.
+enum SysErr {
+    BadFd
+    Fault
+    NoSys
+}
+
+// What a call that returns a value answers with: the value, or the refusal.
+enum Reply {
+    Done(val value: u64)
+    Refused(val err: SysErr)
+}
+
+fun errno(e: SysErr) => u64 = when e {
+    BadFd -> EBADF
+    Fault -> EFAULT
+    NoSys -> ENOSYS
+}
 
 pub fun set_buffer(frame: usize) {
     unsafe {
@@ -64,48 +88,58 @@ pub fun exit(code: usize) {
     uart.putc(10)
 }
 
-// The calls that answer in `a0`. An unknown number is `ENOSYS`, not a fault;
-// the ABI names six argument registers, so the three calls no call uses are
-// passed and ignored rather than read at the call site.
-pub fun handle(root: usize, num: usize, a0: usize, a1: usize, a2: usize, _a3: usize, _a4: usize, _a5: usize) => u64 {
-    if num == SYS_WRITE { return write(root, a0, a1, a2) }
-    return ENOSYS
+// The pointer half of the boundary, as a pure check on the arithmetic: a length
+// over one page is refused, and so is a range that would reach past the user
+// limit. The subtraction is the point: `ptr + len` is never computed before the
+// range is known to fit, so the compiler's own overflow check cannot fire and
+// turn a bad pointer into a panic. `len` is checked first, so the subtraction
+// cannot wrap either.
+pub fun user_range_ok(ptr: usize, len: usize) => bool {
+    if len > MAX_COPY { return false }
+    if ptr > USER_LIMIT - len { return false }
+    return true
 }
 
-// Print the demo's own line and answer `EFAULT`. The line is the acceptance
-// signal: it is what says the kernel saw the bad pointer instead of dying on it.
-fun efault() => u64 {
-    uart.puts("user: efault ok")
-    uart.putc(10)
-    return EFAULT
+// Decode the number and the six argument words and run the call, without any
+// printing. `handle` is what the self test drives; `dispatch` is what a trap
+// calls. Argument words a call does not use are passed and ignored rather than
+// read at the call site, so every call sees the same six-word shape.
+pub fun handle(root: usize, num: usize, a0: usize, a1: usize, a2: usize, _a3: usize, _a4: usize, _a5: usize) => u64 {
+    if num == SYS_WRITE { return reply_value(write(root, a0, a1, a2)) }
+    return errno(SysErr.NoSys)
+}
+
+// The trap-facing call: `handle`, plus the demo's acceptance line for a refused
+// pointer from a program. The line is what says the kernel saw the bad pointer
+// from user mode instead of dying on it. Only the trap path prints it, so the
+// boot self test cannot satisfy that line by itself.
+pub fun dispatch(root: usize, num: usize, a0: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize) => u64 {
+    val result: u64 = handle(root, num, a0, a1, a2, a3, a4, a5)
+    if result == EFAULT {
+        uart.puts("user: efault ok")
+        uart.putc(10)
+    }
+    return result
+}
+
+fun reply_value(r: move Reply) => u64 = when r {
+    Done(value) -> value
+    Refused(err) -> errno(err)
 }
 
 // `write(fd, ptr, len)`: only stdout, at most one page, and only inside pages
-// the walk says a user may read.
-fun write(root: usize, fd: usize, ptr: usize, len: usize) => u64 {
-    if fd != STDOUT { return EBADF }
-    if len > MAX_COPY { return efault() }
-    // The subtraction is the point: `ptr + len` is never computed before the
-    // range is known to fit, so the compiler's own overflow check cannot fire
-    // and turn a bad pointer into a panic.
-    if ptr > USER_LIMIT - len { return efault() }
+// the walk says a user may read. Every page is checked before the first byte
+// moves, so a refused range prints nothing rather than a prefix of itself.
+fun write(root: usize, fd: usize, ptr: usize, len: usize) => Reply {
+    if fd != STDOUT { return Reply.Refused(SysErr.BadFd) }
+    if user_range_ok(ptr, len) == false { return Reply.Refused(SysErr.Fault) }
+    if user_range_readable(root, ptr, len) == false { return Reply.Refused(SysErr.Fault) }
     val buf: usize = buffer()
-    if buf == 0 { return EFAULT }
+    if buf == 0 { return Reply.Refused(SysErr.Fault) }
     var done: usize = 0
     while done < len {
         val uva: usize = ptr + done
-        var physical: usize = 0
-        var mapped: bool = false
-        when vm.user_page_pa(root, uva) {
-            Some(pa) -> {
-                physical = pa
-                mapped = true
-            }
-            None -> {
-                mapped = false
-            }
-        }
-        if mapped == false { return efault() }
+        val physical: usize = user_pa(root, uva)
         // Up to the end of this page, and no further than the caller asked.
         var chunk: usize = 4096 - vm.page_offset(uva)
         if len - done < chunk {
@@ -123,5 +157,74 @@ fun write(root: usize, fd: usize, ptr: usize, len: usize) => u64 {
         uart.puts_bytes(byte(buf), chunk)
         done = done + chunk
     }
-    return len.to_u64()
+    return Reply.Done(len.to_u64())
+}
+
+// The first pass: every page the range touches is a user-readable leaf. It
+// steps page by page, the same way the copy does, so the two passes agree on
+// which pages a range touches.
+fun user_range_readable(root: usize, ptr: usize, len: usize) => bool {
+    var done: usize = 0
+    while done < len {
+        val uva: usize = ptr + done
+        var mapped: bool = false
+        when vm.user_page_pa(root, uva) {
+            Some(_) -> {
+                mapped = true
+            }
+            None -> {
+                mapped = false
+            }
+        }
+        if mapped == false { return false }
+        var chunk: usize = 4096 - vm.page_offset(uva)
+        if len - done < chunk {
+            chunk = len - done
+        }
+        done = done + chunk
+    }
+    return true
+}
+
+// The physical address of a user byte the first pass already vouched for. The
+// copy calls it only after `user_range_readable`, so the `None` arm is a kernel
+// bug and halts rather than read through a guess.
+fun user_pa(root: usize, uva: usize) => usize {
+    var pa: usize = 0
+    when vm.user_page_pa(root, uva) {
+        Some(found) -> {
+            pa = found
+        }
+        None -> {
+            pa = 0
+        }
+    }
+    return pa
+}
+
+// The boot self test: each refusal the ABI names, run through `handle` against
+// a program's own table before any program runs. `stack` is the physical frame
+// that `USER_STACK_VA` maps in `root`; the valid call copies the first three
+// bytes of it, which the caller has written as "ok\n". Returns false on the
+// first reply that is not the one the ABI names.
+pub fun self_test(root: usize, stack: usize, user_stack_va: usize) => bool {
+    unsafe {
+        byte(stack).write_volatile(111)
+        byte(stack + 1).write_volatile(107)
+        byte(stack + 2).write_volatile(10)
+    }
+    val ok: u64 = 3
+    if handle(root, SYS_WRITE, 1, user_stack_va, 3, 0, 0, 0) != ok { return false }
+    if handle(root, SYS_WRITE, 2, user_stack_va, 3, 0, 0, 0) != EBADF { return false }
+    if handle(root, SYS_WRITE, 1, user_stack_va, 4097, 0, 0, 0) != EFAULT { return false }
+    if handle(root, SYS_WRITE, 1, USER_LIMIT - 4, 16, 0, 0, 0) != EFAULT { return false }
+    if handle(root, SYS_WRITE, 1, 0xFFFFFFFFFFFFFFF0, 32, 0, 0, 0) != EFAULT { return false }
+    if handle(root, SYS_WRITE, 1, USER_LIMIT, 1, 0, 0, 0) != EFAULT { return false }
+    if handle(root, SYS_WRITE, 1, 0x30000, 16, 0, 0, 0) != EFAULT { return false }
+    if handle(root, SYS_WRITE, 1, 0x80000000, 16, 0, 0, 0) != EFAULT { return false }
+    // The last byte of the stack page and one byte past it: the second page is
+    // not mapped, so the whole call is refused and nothing is printed.
+    if handle(root, SYS_WRITE, 1, user_stack_va + 4095, 2, 0, 0, 0) != EFAULT { return false }
+    if handle(root, 99, 0, 0, 0, 0, 0, 0) != ENOSYS { return false }
+    return true
 }

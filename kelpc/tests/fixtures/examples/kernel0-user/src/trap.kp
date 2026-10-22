@@ -166,7 +166,7 @@ fun trap_dispatch(frame: Ptr<TrapFrame>) => isize {
             syscall.exit(frame_get(frame, OFF_A0).to_usize())
             return 0
         }
-        val result: u64 = syscall.handle(
+        val result: u64 = syscall.dispatch(
             current_root(),
             num,
             frame_get(frame, OFF_A0).to_usize(),

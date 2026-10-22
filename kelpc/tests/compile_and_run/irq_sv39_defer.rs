@@ -202,11 +202,12 @@ pub(crate) fn the_scheduler_task_offsets_are_what_the_trap_entry_hardcodes() {
 }
 
 /// Kernel stage 11's acceptance test: `examples/kernel0-user` drops to U-mode
-/// and takes `ecall`s. The first program writes `hello from user`, earns
-/// `-14` from a write whose pointer names a mapped kernel page, turns the errno
-/// into a hex digit and writes `bad write -> E`, then exits with 7; the second
-/// loads from an unmapped address, and the kernel prints the cause and survives
-/// it. Every line is QEMU's own stdout.
+/// and takes `ecall`s. Before any program runs, the boot checks every refusal
+/// the ABI names (`syscall: refusals ok`). The first program writes `hello from
+/// user`, earns `-14` from a write whose pointer names a mapped kernel page, turns
+/// the errno into a hex digit and writes `bad write -> E`, then exits with 7; the
+/// second loads from an unmapped address, and the kernel prints the cause and
+/// survives it. Every line is QEMU's own stdout.
 ///
 /// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
 #[test]
@@ -226,6 +227,7 @@ pub(crate) fn kernel0_user_runs_a_syscall_abi_and_kills_a_faulting_program() {
             "user: s-mode",
             "user: paging on",
             "user: frame ok",
+            "syscall: refusals ok",
             "hello from user",
             "user: efault ok",
             "bad write -> E",

@@ -145,6 +145,25 @@ fun smain() {
     }
     syscall.set_buffer(buffer)
 
+    // The refusals the ABI names, checked against a throwaway address space
+    // built the same way a program's is, so a wrong answer is caught before any
+    // program can rely on it. The line is the acceptance signal for the
+    // pointer checks: the programs below only prove what they happen to touch.
+    val probe_code: usize = vm.alloc_frame()
+    val probe_stack: usize = vm.alloc_frame()
+    if probe_code == 0 || probe_stack == 0 {
+        setup_failed("no self-test frame")
+    }
+    val probe_root: usize = build_space(probe_code, probe_stack)
+    if probe_root == 0 {
+        setup_failed("no self-test tables")
+    }
+    if syscall.self_test(probe_root, probe_stack, USER_STACK_VA) == false {
+        setup_failed("syscall self test failed")
+    }
+    uart.puts("syscall: refusals ok")
+    uart.putc(10)
+
     start_program(user.one_start(), user.one_end())
     start_program(user.two_start(), user.two_end())
 
