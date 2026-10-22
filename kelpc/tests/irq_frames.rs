@@ -580,3 +580,29 @@ fn a_line_folds_at_its_own_width() {
     );
     refused(&outside, "would take the line 11");
 }
+
+/// Kernel stage 10's address-space owner, checked against the real example: the
+/// `Space` in `examples/kernel0-vm` maps its frames through the `frames` grant of
+/// `vm`. The example grants `vm` the whole resource, because `map_range` claims
+/// computed frames out of the frame region. Narrowing that grant to one range
+/// must refuse the claim at the check, before the boot.
+#[test]
+fn the_vm_example_cannot_claim_frames_outside_a_narrowed_grant() {
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/examples/kernel0-vm");
+    let read = |rel: &str| {
+        fs::read_to_string(example.join(rel))
+            .unwrap_or_else(|e| panic!("read '{}': {e}", example.join(rel).display()))
+    };
+    let main = read("src/main.kp");
+    let grant = "impl \"vm\" caps(mmio = [\"*\"], frames = [\"*\"])";
+    assert!(main.contains(grant), "the example no longer grants 'vm' its frames");
+    let narrowed = main.replace(grant, "impl \"vm\" caps(mmio = [\"*\"], frames = [\"0x80000000+0x400000\"])");
+    let dir = scratch("vm_narrowed_frames");
+    fs::write(dir.join("coral.toml"), read("coral.toml")).expect("write the manifest");
+    fs::write(dir.join("kernel.ld"), read("kernel.ld")).expect("write the linker script");
+    fs::write(dir.join("src").join("main.kp"), narrowed).expect("write main");
+    fs::write(dir.join("src").join("vm.kp"), read("src/vm.kp")).expect("write vm");
+    fs::write(dir.join("src").join("uart.kp"), read("src/uart.kp")).expect("write uart");
+    refused(&dir, "cannot fold");
+    refused(&dir, "caps(frames = [\"*\"])");
+}

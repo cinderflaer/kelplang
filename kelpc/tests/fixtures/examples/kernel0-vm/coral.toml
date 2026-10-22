@@ -20,5 +20,12 @@ modules = ["main", "uart", "vm"]
 # addresses (a mapped page, a page-table frame) into pointers, which the
 # compiler cannot fold, so they need the whole-address-space wildcard - the
 # escape hatch a reviewer greps for (`language/capabilities.md` (kelp wiki)).
+# `frames` is the same wildcard, for the owner: `main` claims the root table and
+# `vm` every mapped frame, and both are computed addresses from the frame region,
+# so the claim needs `["*"]`. A `[caps]` section that names a domain is the only
+# way the entry holds it, so `frames` is written here as well as delegated. What
+# keeps a mapping inside the owner's range is the run-time check in `Space`, not
+# the grant.
 [caps]
 mmio = ["*"]
+frames = ["*"]

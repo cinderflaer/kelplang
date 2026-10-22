@@ -1,4 +1,5 @@
 impl "std/option"
+impl "std/frame"
 
 // Sv39 page tables, in the language. The constants, the VPN split, the PTE
 // encoding and the `satp` encoding are the RISC-V privileged spec's, and the
@@ -162,25 +163,16 @@ fun walk(root: usize, va: usize) => usize {
 
 // Map one 4 KiB page. `flags` are the R/W/X/U/G bits; V, A and D are added
 // here. False means no frame was available or a superpage was in the way.
-pub fun map_page(root: usize, va: usize, pa: usize, flags: u64) => bool {
+fun map_page(root: usize, va: usize, pa: usize, flags: u64) => bool {
     val table: usize = walk(root, va)
     if table == 0 { return false }
     write_pte(table, vpn0(va), pte_encode(pa, flags | PTE_V | PTE_A | PTE_D))
     return true
 }
 
-pub fun map_range(root: usize, va: usize, pa: usize, len: usize, flags: u64) => bool {
-    var offset: usize = 0
-    while offset < len {
-        if map_page(root, va + offset, pa + offset, flags) == false { return false }
-        offset = offset + PAGE_SIZE
-    }
-    return true
-}
-
 // Clear the leaf for `va`, answering true only when a valid leaf was there.
 // A cleared entry needs `flush_tlb` before the walker's view is trustworthy.
-pub fun unmap_page(root: usize, va: usize) => bool {
+fun unmap_page(root: usize, va: usize) => bool {
     var table: usize = root
     var level: usize = TOP_LEVEL
     while level > 0 {
@@ -197,7 +189,7 @@ pub fun unmap_page(root: usize, va: usize) => bool {
 // The physical address `va` currently names, or `None`. A leaf at any level is
 // honoured, so a 2 MiB or 1 GiB superpage translates as the spec says, with the
 // bits the superpage ignores taken from `va`.
-pub fun translate(root: usize, va: usize) => option.Option<usize> {
+fun translate_root(root: usize, va: usize) => option.Option<usize> {
     var table: usize = root
     var level: usize = TOP_LEVEL
     while true {
@@ -212,6 +204,88 @@ pub fun translate(root: usize, va: usize) => option.Option<usize> {
         level = level - 1
     }
     return option.Option.None
+}
+
+// The address-space owner (kernel stage 10's checked half, the design in the
+// comment on kelp issue #253). A `Space` holds its root table as a `frame.Frame`,
+// so the table's physical frame is a capability the module claimed under its
+// `frames` grant, and it holds the virtual range `[lo, hi)` the owner may map.
+// Every mapping goes through `checked_map` or `checked_unmap`, which refuse a
+// page that is not aligned, that lies outside the range, or whose last byte
+// would pass `hi`. The walker above stays private, so no caller can write a
+// table entry the range check did not see.
+pub datac Space(
+    val root: frame.Frame,
+    val lo: usize,
+    val hi: usize
+)
+
+// The owner over the root table `root`, allowed to map `[lo, hi)`.
+pub fun new_space(root: move frame.Frame, lo: usize, hi: usize) => Space {
+    return Space(root = root, lo = lo, hi = hi)
+}
+
+// Is `va` inside `[lo, hi)`? Used by `translate`, which takes any byte.
+fun in_bounds(va: usize, lo: usize, hi: usize) => bool {
+    if va < lo { return false }
+    return va < hi
+}
+
+// Is the whole page at `va` inside `[lo, hi)`, with `va` page-aligned?
+fun in_range(va: usize, lo: usize, hi: usize) => bool {
+    if in_bounds(va, lo, hi) == false { return false }
+    if hi - va < PAGE_SIZE { return false }
+    return va % PAGE_SIZE == 0
+}
+
+fun checked_map(root: usize, lo: usize, hi: usize, va: usize, pa: usize, flags: u64) => bool {
+    if in_range(va, lo, hi) == false { return false }
+    return map_page(root, va, pa, flags)
+}
+
+fun checked_unmap(root: usize, lo: usize, hi: usize, va: usize) => bool {
+    if in_range(va, lo, hi) == false { return false }
+    return unmap_page(root, va)
+}
+
+// Map the page at `va` to the frame `pa`. False when `va` is not an aligned page
+// inside the range, when no table frame was left, or when a superpage is in the
+// way. Nothing is written in the refusing cases.
+fun Space.map(va: usize, pa: frame.Frame, flags: u64) => bool {
+    return checked_map(root.addr(), lo, hi, va, pa.addr(), flags)
+}
+
+// Map `pages` consecutive pages from `va`: page `i` goes to the frame `first`
+// plus `i` pages. Each frame is claimed here, so this needs the `frames` grant
+// the claim checks; a computed address needs the whole-resource `["*"]` grant.
+// The first refusal stops the loop, and the pages before it stay mapped.
+fun Space.map_range(va: usize, first: frame.Frame, pages: usize, flags: u64) => bool {
+    var i: usize = 0
+    while i < pages {
+        val pa: frame.Frame = frame.claim(first.addr() + i * PAGE_SIZE)
+        if checked_map(root.addr(), lo, hi, va + i * PAGE_SIZE, pa.addr(), flags) == false {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// Clear the leaf for the page at `va`, answering true only when a valid leaf
+// was there and `va` is inside the range. Call `flush_tlb` after it.
+fun Space.unmap(va: usize) => bool {
+    return checked_unmap(root.addr(), lo, hi, va)
+}
+
+// The physical address `va` names in this space, or `None` outside the range.
+fun Space.translate(va: usize) => option.Option<usize> {
+    if in_bounds(va, lo, hi) == false { return option.Option.None }
+    return translate_root(root.addr(), va)
+}
+
+// Install this space's table and drop every cached translation.
+fun Space.enable() {
+    enable_paging(root.addr())
 }
 
 // Install the table and drop every cached translation, because a store to a

@@ -17,4 +17,6 @@ exec "$here/../kernel0/run.sh" "$here" \
     "vm: s-mode" \
     "vm: paging on" \
     "vm: alias ok" \
-    "vm: unmap ok"
+    "vm: unmap ok" \
+    "vm: align refused" \
+    "vm: range refused"

@@ -95,7 +95,9 @@ pub(crate) fn assert_no_undefined_symbols(name: &str, target: &Path) {
 /// the UART and one high page, drops from machine mode to supervisor mode,
 /// turns the MMU on, and proves that the high virtual name and the
 /// identity-mapped physical name reach the same frame. Every step is a line on
-/// the UART.
+/// the UART. The mappings go through the `Space` owner, so the last two lines
+/// are its range check: an unaligned page and a page above the owner's range
+/// are both refused.
 ///
 /// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
 #[test]
@@ -121,6 +123,8 @@ pub(crate) fn kernel0_vm_boots_and_aliases_a_high_page() {
             "vm: paging on",
             "vm: alias ok",
             "vm: unmap ok",
+            "vm: align refused",
+            "vm: range refused",
         ],
     );
 }

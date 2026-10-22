@@ -1,5 +1,6 @@
 impl "uart" caps(mmio = ["0x10000000+0x100"])
-impl "vm" caps(mmio = ["*"])
+impl "vm" caps(mmio = ["*"], frames = ["*"])
+impl "std/frame"
 
 // Kernel stage 10, the address-space half: build Sv39 tables in machine mode,
 // identity-map what the kernel runs on and talks to, map one page at a high
@@ -24,12 +25,22 @@ const HIGH_VA: usize = 0x4000000000 - 4096
 
 const MAGIC: u64 = 0xC0FFEE
 
+// The space the kernel maps: the Sv39 low half, `[0, 2^38)`. Every address this
+// example maps is below it, and the refusal at the end of S-mode is above it.
+const SPACE_HI: usize = 0x4000000000
+
 // The root table has to survive the `mret`, so it lives at a fixed address the
 // S-mode entry reads rather than at a parameter S-mode cannot receive.
 static mut ROOT: usize = 0
 
 fun root_table() => usize {
     unsafe { ROOT }
+}
+
+// The owner over the root table. The root frame is claimed here, so the table
+// is a `frame.Frame` before any entry is written through it.
+fun space_over_root() => vm.Space {
+    return vm.new_space(frame.claim(root_table()), 0, SPACE_HI)
 }
 
 // Leave machine mode. Three things are a machine-mode promise about the next
@@ -59,7 +70,8 @@ fun smain() {
     uart.puts("vm: s-mode")
     uart.putc(10)
 
-    vm.enable_paging(root_table())
+    val space: vm.Space = space_over_root()
+    space.enable()
     uart.puts("vm: paging on")
     uart.putc(10)
 
@@ -73,7 +85,7 @@ fun smain() {
     val read_back: u64 = unsafe { high.read_volatile() }
 
     var seen: u64 = 0
-    when vm.translate(root_table(), HIGH_VA) {
+    when space.translate(HIGH_VA) {
         Some(pa) -> {
             val physical: Ptr<u64> = Ptr.from_addr(pa)
             seen = unsafe { physical.read_volatile() }
@@ -94,11 +106,11 @@ fun smain() {
 
     // The other half of the mapping API: clear the leaf and the walker answers
     // `None` for that address.
-    if vm.unmap_page(root_table(), HIGH_VA) {
+    if space.unmap(HIGH_VA) {
         vm.flush_tlb()
     }
     var still: bool = false
-    when vm.translate(root_table(), HIGH_VA) {
+    when space.translate(HIGH_VA) {
         Some(_) -> {
             still = true
         }
@@ -111,6 +123,23 @@ fun smain() {
         uart.putc(10)
     } else {
         uart.puts("vm: unmap bad")
+        uart.putc(10)
+    }
+
+    // The checked range: a page that is not aligned, and a page above the
+    // owner's `[0, SPACE_HI)`, are both refused without a table entry written.
+    if space.map(UART_BASE + 1, frame.claim(UART_BASE), vm.PTE_R) == false {
+        uart.puts("vm: align refused")
+        uart.putc(10)
+    } else {
+        uart.puts("vm: align bad")
+        uart.putc(10)
+    }
+    if space.map(SPACE_HI, frame.claim(UART_BASE), vm.PTE_R) == false {
+        uart.puts("vm: range refused")
+        uart.putc(10)
+    } else {
+        uart.puts("vm: range bad")
         uart.putc(10)
     }
     uart.halt()
@@ -132,7 +161,8 @@ section(".text.boot") fun kmain() {
     uart.puts("vm: root")
     uart.putc(10)
 
-    if vm.map_range(root, IMAGE_START, IMAGE_START, IMAGE_SPAN, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
+    val space: vm.Space = space_over_root()
+    if space.map_range(IMAGE_START, frame.claim(IMAGE_START), IMAGE_SPAN / 4096, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
         uart.puts("vm: identity failed")
         uart.putc(10)
         uart.halt()
@@ -140,7 +170,7 @@ section(".text.boot") fun kmain() {
     uart.puts("vm: identity")
     uart.putc(10)
 
-    if vm.map_page(root, UART_BASE, UART_BASE, vm.PTE_R | vm.PTE_W) == false {
+    if space.map(UART_BASE, frame.claim(UART_BASE), vm.PTE_R | vm.PTE_W) == false {
         uart.puts("vm: uart failed")
         uart.putc(10)
         uart.halt()
@@ -154,7 +184,7 @@ section(".text.boot") fun kmain() {
         uart.putc(10)
         uart.halt()
     }
-    if vm.map_page(root, HIGH_VA, high_frame, vm.PTE_R | vm.PTE_W) == false {
+    if space.map(HIGH_VA, frame.claim(high_frame), vm.PTE_R | vm.PTE_W) == false {
         uart.puts("vm: high failed")
         uart.putc(10)
         uart.halt()
