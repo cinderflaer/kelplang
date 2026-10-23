@@ -6,9 +6,9 @@
 // (`bump`, it has no hidden parameter of its own, so what it passes is the
 // generated global's own address, while `add` receives a hidden parameter and
 // writes through it).
-pd val base = 10
+pd val base: i32 = 10
 pd val doubled = base * 2
-pd var total = 0
+pd var total: i32 = 0
 pd val origin = Point(x = 1, y = 2)
 
 datac Point(val x: i32, val y: i32)

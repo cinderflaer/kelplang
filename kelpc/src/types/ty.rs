@@ -335,6 +335,9 @@ impl Ty {
         Some(match name {
             "i32" => Ty::I32,
             "i64" => Ty::I64,
+            // `int` is the default integer type (decision 72, issue #275): the
+            // 64-bit signed integer, the type an unannotated literal takes.
+            "int" => Ty::I64,
             "u32" => Ty::U32,
             "u64" => Ty::U64,
             "f32" => Ty::F32,

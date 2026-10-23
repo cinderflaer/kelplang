@@ -3,7 +3,7 @@
 fun main() {
     var b: Box<i32> = Box.empty()
     b.set(7)
-    val n = 3
+    val n: i32 = 3
     val f = fun() => i32 = n + 1
     var xs: List<i32> = List.empty()
     xs.push(f())

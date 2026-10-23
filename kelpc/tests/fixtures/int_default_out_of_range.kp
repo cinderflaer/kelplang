@@ -1,0 +1,6 @@
+// The default `int` is 64-bit, so an unannotated literal past `i64::MAX` is
+// refused at its own line, naming `int` as the type it does not fit (issue #275).
+fun main() {
+    val big = 9223372036854775808
+    print(big)
+}

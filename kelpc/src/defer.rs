@@ -437,10 +437,21 @@ impl Lowerer {
     ) {
         // With an errdefer owed, the value is bound with the declared return
         // type: the failure test then sees a value of the function's own type.
+        // A numeric return type is named too, so a bare literal returned from a
+        // block with defers takes the function's type and not the default `int`
+        // (issue #275).
+        let numeric = self.ret_ty.as_ref().filter(|t| {
+            t.tuple.is_none()
+                && t.args.is_empty()
+                && matches!(
+                    t.name.as_str(),
+                    "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "usize" | "isize" | "int" | "f32" | "f64"
+                )
+        });
         let typed = if self.shape.is_some() && exit.has_errdefer() {
             self.ret_ty.clone()
         } else {
-            None
+            numeric.cloned()
         };
         let ret = value.map(|value| {
             let name = self.fresh(RET_PREFIX);

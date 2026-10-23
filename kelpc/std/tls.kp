@@ -734,7 +734,7 @@ fun server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes) => result.Result<Se
 fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions) => result.Result<ServerConfig, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
-    val min13 = if opts.floor == 13 { 1 } else { 0 }
+    val min13: i32 = if opts.floor == 13 { 1 } else { 0 }
     val ctx = server_ctx_try_raw(
         cert,
         key,
@@ -769,7 +769,7 @@ fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions) => res
 must_use fun ServerConfig.reload_pem(cert: Bytes, key: Bytes, opts: &ServerOptions) => option.Option<TlsError> {
     var code: i32 = 0
     var reason = String.empty()
-    val min13 = if opts.floor == 13 { 1 } else { 0 }
+    val min13: i32 = if opts.floor == 13 { 1 } else { 0 }
     reload_try_raw(
         ctx,
         cert,

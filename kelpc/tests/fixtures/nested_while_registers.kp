@@ -4,10 +4,10 @@
 // same physical location across every outer iteration, and the inner loop's
 // own locals must not be assigned that location while it is still live.
 fun grid_sum(rows: i32, cols: i32) => i32 {
-    var total = 0
-    var r = 0
+    var total: i32 = 0
+    var r: i32 = 0
     while r < rows {
-        var c = 0
+        var c: i32 = 0
         while c < cols {
             total = total + r * cols + c
             c = c + 1

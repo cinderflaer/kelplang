@@ -1,7 +1,7 @@
 // A block that writes a capture may still return an owned value, and `return`
 // inside it leaves only the block.
 fun map_all(xs: List<i32>, f: scoped fun(i32) => i32) => i32 {
-    var acc = 0
+    var acc: i32 = 0
     var i: usize = 0
     while i < xs.len() {
         acc += f(xs.get(i))

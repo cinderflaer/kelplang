@@ -3,7 +3,7 @@
 // before the return.
 fun f(n: i32) => i32 {
     defer print("f-out")
-    var i = 0
+    var i: i32 = 0
     while i < n {
         defer print("loop-out")
         if i == 2 {

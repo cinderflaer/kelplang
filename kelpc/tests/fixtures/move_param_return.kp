@@ -16,7 +16,7 @@ fun taken(s: move String, take: bool) => option.Option<usize> {
 
 // A `return` from inside a loop is the same drop point.
 fun length_if_any(s: move String, n: i32) => usize {
-    var i = 0
+    var i: i32 = 0
     while i < n {
         return s.len()
     }

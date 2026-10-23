@@ -288,8 +288,8 @@ fun run_opacity() {
     boot(b, p, &tree)
     // A pixel inside the button's fill, away from the glyphs and the border.
     val rr = b.rect_of_slot(0)
-    var px = 0
-    var py = 0
+    var px: i32 = 0
+    var py: i32 = 0
     when rr {
         Some(r) -> {
             px = r.x + 3

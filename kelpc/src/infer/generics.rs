@@ -476,7 +476,7 @@ pub(crate) fn check_generic_datac_construction(
     // expected type is consulted first, because it is the only thing that can
     // pin a parameter *before* an argument is probed - which is what makes
     // `xs.push(Option.Some(value = 7))` infer `Option<i64>` from the list's
-    // element type rather than defaulting the literal to `i32`.
+    // element type rather than defaulting the literal to `int`.
     let type_args = if explicit.is_empty() {
         let mut bindings = HashMap::new();
         bind_from_expected(&tmpl, expected, ctx, &mut bindings);

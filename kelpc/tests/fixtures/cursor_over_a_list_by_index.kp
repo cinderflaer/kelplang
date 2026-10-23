@@ -12,7 +12,7 @@ fun main() {
     xs.push(Node(value = 30))
     var i: usize = 0
     var cur = xs.get(0)
-    var total = 0
+    var total: i32 = 0
     while i < xs.len() {
         cur = xs.get(i)
         total += cur.value

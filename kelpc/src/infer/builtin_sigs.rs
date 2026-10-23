@@ -530,15 +530,15 @@ pub(crate) fn char_fits(cp: u32, ty: &Ty) -> bool {
     }
 }
 
-/// The type an integer literal takes, and whether that is the `i32` a literal
-/// falls back to when nothing determines one (syntax.md 2.4) rather than a
-/// type its context supplied. `check_expr_inner` and the constant evaluator
+/// The type an integer literal takes, and whether that is the `int` (64-bit) a
+/// literal falls back to when nothing determines one (decision 72, issue #275)
+/// rather than a type its context supplied. `check_expr_inner` and the constant evaluator
 /// have to answer this the same way, because both refuse an out-of-range
 /// literal and the refusal says which of the two applied.
 pub(crate) fn int_lit_ty(expected: Option<&Ty>) -> (Ty, bool) {
     match expected {
         Some(t) if t.is_integer() => (t.clone(), false),
-        _ => (Ty::I32, true),
+        _ => (Ty::I64, true),
     }
 }
 
@@ -578,7 +578,7 @@ pub(crate) fn check_int_literal(value: i128, ty: &Ty, defaulted: bool, span: Spa
     let repair = int_lit_repair(value);
     let message = if defaulted {
         format!(
-            "'{value}' does not fit 'i32', the type a literal takes when nothing determines one: write the type it needs, as in 'val big: {repair} = {value}'"
+            "'{value}' does not fit 'int', the type a literal takes when nothing determines one: write the type it needs, as in 'val big: {repair} = {value}'"
         )
     } else {
         format!(

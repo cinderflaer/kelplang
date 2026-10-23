@@ -7,7 +7,7 @@
 // sees a literal that does not fit any more.
 //
 // One literal wider than its type survives, and it is the one a sign covers:
-// `-2147483648` is an `i32`, and the 2147483648 under the sign is a value no
+// `-2147483648` is an `i32` when an `i32` is asked for, and the 2147483648 under the sign is a value no
 // `i32` holds on its own. Both backends still have to cut that literal to `i32`
 // the same way, which is what the boundary cases below pin.
 fun main() {
@@ -20,10 +20,12 @@ fun main() {
     print(wide)
     print(wide % 1000000007)
 
-    // The largest literal an `i32` holds, inline in the default `i32` the
-    // literal falls back to.
+    // The largest literal an `i32` holds. An unannotated literal is `int` now
+    // (issue #275), so the overflow below is written in an `i32` binding, where
+    // it still wraps as it always did.
     print(2147483647 % 1000000007)
-    print(2147483647 + 1)
+    val top: i32 = 2147483647
+    print(top + 1)
 
     // Narrow declared types, where the literal still fits.
     val b: u8 = 255

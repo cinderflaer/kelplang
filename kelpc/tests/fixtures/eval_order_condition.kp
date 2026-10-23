@@ -1,4 +1,4 @@
-pd var log = 0
+pd var log: i32 = 0
 
 fun step(n: i32) => i32 {
     log = log * 10 + n

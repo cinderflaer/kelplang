@@ -8,7 +8,7 @@
 // once, which only the memory gate can see. `list_basic.kp` never grows past
 // four elements.
 fun total_of(xs: List<i32>) => i32 {
-    var total = 0
+    var total: i32 = 0
     var i: usize = 0
     while i < xs.len() {
         total += xs.get(i)

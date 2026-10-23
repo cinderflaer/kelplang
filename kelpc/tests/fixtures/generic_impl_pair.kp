@@ -19,8 +19,8 @@ fun show<T: Describe>(x: &T) => i32 {
 }
 
 fun main() {
-    val p = Pair(a = 1, b = 2)
+    val p: Pair<i32, i32> = Pair(a = 1, b = 2)
     print(show(p))
-    val nested = Pair(a = Pair(a = 3, b = 4), b = 5)
+    val nested: Pair<Pair<i32, i32>, i32> = Pair(a = Pair(a = 3, b = 4), b = 5)
     print(show(nested))
 }

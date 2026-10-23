@@ -4,7 +4,7 @@
 fun take(f: move closure() => i32) => i32 = f()
 
 fun main() {
-    val k = 1
+    val k: i32 = 1
     val g = fun() => i32 = k
     print(take(g))
     print(g())

@@ -25,7 +25,7 @@ fun main() {
     // Already sorted, several thousand elements: the median-of-three pivot
     // is what has to keep this from degrading toward O(n^2).
     var a: List<i32> = List.empty()
-    var i = 0
+    var i: i32 = 0
     while i < 5000 {
         a.push(i)
         i = i + 1

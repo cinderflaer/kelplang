@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1187 ran=591 c_refused=558 excluded=38
+# counts candidates=1190 ran=592 c_refused=560 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -432,9 +432,12 @@ fixture_impl_trait_return_refused	c-refused		error: 'impl Trait' is not allowed 
 fixture_impl_where_constraints	ran	exit 0		751f43ef30ddf4d6c674a46de13ceb7c92008fe3a8b8f71cf49b291112dc120b
 fixture_int_conversion_overflow	ran	exit 1	panic: i64.to_u8: value out of range	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_int_conversions	ran	exit 0		11de98707dcb186253d0e97063289e2762f68a16be293901aec30d8eeb45a569
+fixture_int_default_is_not_i32	c-refused		error: argument 'x' has type 'i64', expected 'i32'	
+fixture_int_default_literal	ran	exit 0		a3fe537e37db09e25f0071cef295db45d3748adb3a5cdae849fe3390ccc0fb91
+fixture_int_default_out_of_range	c-refused		error: '9223372036854775808' does not fit 'int', the type a literal takes when nothing determines one	
 fixture_int_literal_const_out_of_range	c-refused		error: '4294967295' does not fit 'i32'	
-fixture_int_literal_method_receiver	c-refused		error: '4294967295' does not fit 'i32', the type a literal takes when nothing determines one	
-fixture_int_literal_out_of_range	c-refused		error: '4294967295' does not fit 'i32', the type a literal takes when nothing determines one	
+fixture_int_literal_method_receiver	c-refused		error: '18446744073709551615' does not fit 'int', the type a literal takes when nothing determines one	
+fixture_int_literal_out_of_range	c-refused		error: '4294967295' does not fit 'i32'	
 fixture_int_literal_typed	ran	exit 0		21986e308690ba6b5a406264621d9d9842d6e5fa36a8b0949c475a263c1b21d3
 fixture_int_literal_width	ran	exit 0		e1a9f998fa12fef33765c28bd88e5a4e08a8fc730e8d3ffe9aaea86b85bd64f4
 fixture_int_literals	ran	exit 0		f0f90f1e24fdf8a225921dc7d1f6e128e2ee904a4687a9e81fb1a459680fc219
@@ -838,7 +841,7 @@ fixture_tls_ca_file	excluded		needs command-line arguments from a harness; run w
 fixture_tls_concurrent	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_error	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_handle_not_an_integer	c-refused		error: cannot assign value of type 'std.tls.TlsHandle' to 'n' declared as 'usize'	
-fixture_tls_handle_not_forged	c-refused		error: function 'forge' declared to return 'std.tls.TlsHandle' but body evaluates to 'i32'	
+fixture_tls_handle_not_forged	c-refused		error: function 'forge' declared to return 'std.tls.TlsHandle' but body evaluates to 'i64'	
 fixture_tls_handshake_no_timeout	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_handshake_socket_timeout	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_partial	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
@@ -954,7 +957,7 @@ fixture_type_mismatch	c-refused		error: cannot assign value of type 'str' to 'x'
 fixture_u64_literal_beyond_max	c-refused		error: '18446744073709551616' is larger than the largest integer literal, 18446744073709551615	
 fixture_u64_literal_contexts	ran	exit 0		b742e3f21ea18f7ddc87f92abf585eed5d4d6d9d0d40ccf3876f5b5167098483
 fixture_u64_literal_does_not_narrow	c-refused		error: '18446744073709551615' does not fit 'i32'	
-fixture_u64_literal_needs_a_context	c-refused		error: '18446744073709551615' does not fit 'i32', the type a literal takes when nothing determines one	
+fixture_u64_literal_needs_a_context	c-refused		error: '18446744073709551615' does not fit 'int', the type a literal takes when nothing determines one	
 fixture_u64_literal_range	ran	exit 0		85be6a67829178e2c915c0e2ed925b66fed95aeabdd7f35927253f7e269c1cff
 fixture_unit_return_value	ran	exit 0		14f3cba70f4dd8e17f76f6897ac4a8993aab0ce265ea401f8d4ea440272db9c6
 fixture_unit_val_binding	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865

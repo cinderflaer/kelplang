@@ -16,7 +16,7 @@ fun column(block: scoped fun(mut Kids)) => Kids {
 }
 
 fun view(s: Model) => Kids {
-    var done = 0
+    var done: i32 = 0
     return column { k ->
         var i: usize = 0
         while i < s.items.len() {

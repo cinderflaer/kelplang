@@ -2,7 +2,7 @@
 // a function the passdown is an *exclusive* hidden borrow of the global, so
 // writes reach the one storage location and the borrow checker still sees
 // every access. `main` writes the global directly.
-pd var count = 0
+pd var count: i32 = 0
 pd val label = "count"
 
 fun bump() {

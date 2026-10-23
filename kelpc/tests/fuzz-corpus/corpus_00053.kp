@@ -1,6 +1,6 @@
 // fuzz seed 53; shapes: scalar, datac, enum, strings, list_owned, box, array, pd
 
-pd val z_base = 11
+pd val z_base: i32 = 11
 pd val z_doubled = z_base * 2
 pd val z_name = String.from_str("hi")
 pd val z_origin = ZPoint(x = z_base, y = z_doubled)
@@ -42,8 +42,8 @@ fun z_pair_sum(p: [f64; 2]) => f64 = p.get(i = 0) + p.get(i = 1)
 
 fun main() {
     {
-        val a = (-14)
-        val b = (-37)
+        val a: i32 = (-14)
+        val b: i32 = (-37)
         val x = 10.0
         val y = 0.5
         print(((a + b) << 1))
@@ -55,8 +55,8 @@ fun main() {
         } else {
             print((a - (-3)))
         }
-        var i = 0
-        var acc = 0
+        var i: i32 = 0
+        var acc: i32 = 0
         while i < 4 {
             if false {
                 acc = acc + (a << 2)

@@ -320,11 +320,11 @@ pub(crate) fn a_string_with_zero_capacity_is_a_valid_empty_string() {
 pub(crate) fn an_out_of_range_literal_is_refused_at_its_own_line() {
     assert_rejected_with(
         "tests/fixtures/int_literal_out_of_range.kp",
-        "'4294967295' does not fit 'i32', the type a literal takes when nothing determines one",
+        "'4294967295' does not fit 'i32': write a type that holds it",
     );
     assert_rejected_with(
         "tests/fixtures/int_literal_method_receiver.kp",
-        "'4294967295' does not fit 'i32', the type a literal takes when nothing determines one",
+        "'18446744073709551615' does not fit 'int', the type a literal takes when nothing determines one",
     );
     assert_rejected_with(
         "tests/fixtures/int_literal_const_out_of_range.kp",
@@ -337,6 +337,23 @@ pub(crate) fn an_out_of_range_literal_is_refused_at_its_own_line() {
     assert_compiles_and_runs(
         "tests/fixtures/int_literal_width.kp",
         "-2147483648\n-147483634\n-2147483647\n2147483648\n147483634\n147483633\n-2147483648\n255\n65535\n999993014\n",
+    );
+}
+
+/// An unannotated integer literal is `int`, which is 64-bit (decision 72, issue
+/// #275), so a binding made from one is an `i64` and not an `i32`. A value past
+/// 2^31 is an ordinary value, an annotated `i32` or `u8` is unchanged, and a
+/// literal past `i64::MAX` with no annotation is refused, naming `int`.
+#[test]
+pub(crate) fn an_unannotated_integer_literal_is_int() {
+    assert_compiles_and_runs(
+        "tests/fixtures/int_default_literal.kp",
+        "3000000000\n10\n4294967296\n2147483647\n255\n",
+    );
+    assert_rejected("tests/fixtures/int_default_is_not_i32.kp");
+    assert_rejected_with(
+        "tests/fixtures/int_default_out_of_range.kp",
+        "'9223372036854775808' does not fit 'int', the type a literal takes when nothing determines one",
     );
 }
 
@@ -373,7 +390,7 @@ pub(crate) fn a_u64_literal_takes_the_range_of_its_context() {
     );
     assert_rejected_with(
         "tests/fixtures/u64_literal_needs_a_context.kp",
-        "'18446744073709551615' does not fit 'i32', the type a literal takes when nothing determines one",
+        "'18446744073709551615' does not fit 'int', the type a literal takes when nothing determines one",
     );
 }
 

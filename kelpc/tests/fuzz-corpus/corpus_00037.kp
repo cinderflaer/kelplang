@@ -1,6 +1,6 @@
 // fuzz seed 37; shapes: scalar, datac, owns, enum, try, strings, list, list_float, map, pd
 
-pd val z_base = 5
+pd val z_base: i32 = 5
 pd val z_doubled = z_base * 2
 pd val z_name = String.from_str("beta")
 pd val z_origin = ZPoint(x = z_base, y = z_doubled)
@@ -50,8 +50,8 @@ fun z_val(r: ZRes) => i32 = when r {
 
 fun main() {
     {
-        val a = 2
-        val b = 35
+        val a: i32 = 2
+        val b: i32 = 35
         val x = 100.0
         val y = 0.5
         print(((34 << 2) / 1))
@@ -63,8 +63,8 @@ fun main() {
         } else {
             print(((-36) << 3))
         }
-        var i = 0
-        var acc = 0
+        var i: i32 = 0
+        var acc: i32 = 0
         while i < 6 {
             if ((!(((-40) / 8) >= i)) && (((10.0 * y) * (0.0625 / 100.0)) >= ((1.5 * x) / 7.5))) {
                 acc = acc + (a % 9)
@@ -160,7 +160,7 @@ fun main() {
         print(xs.get(1))
         print(xs.pop())
         var i: usize = 0
-        var sum = 0
+        var sum: i32 = 0
         while i < xs.len() {
             sum = sum + xs.get(i)
             i += 1

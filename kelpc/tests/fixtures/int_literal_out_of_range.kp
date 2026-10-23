@@ -1,7 +1,8 @@
-// A literal that does not fit the `i32` it falls back to is refused by name
+// A literal that does not fit the `i32` the binding asks for is refused by name
 // (BUG-t6Mz2): four billion read as -1 is a wrong answer at a line that is not
-// the one that is wrong.
+// the one that is wrong. An unannotated literal is `int` now (issue #275), so the
+// `i32` is written here, where the fixture is about that type.
 fun main() {
-    val big = 4294967295
+    val big: i32 = 4294967295
     print(big)
 }

@@ -31,6 +31,6 @@ fun twice<T: Doubled>(x: &T) => i32 {
 fun main() {
     val n: i32 = 5
     print(twice(n))
-    val p = Pair(a = 1, b = 2)
+    val p: Pair<i32, i32> = Pair(a = 1, b = 2)
     print(twice(p))
 }

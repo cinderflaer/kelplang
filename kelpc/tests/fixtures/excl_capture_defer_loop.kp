@@ -4,7 +4,7 @@
 datac State(var count: i32, var log: List<i32>)
 
 fun repeat(times: i32, f: scoped fun(i32)) {
-    var i = 0
+    var i: i32 = 0
     while i < times {
         f(i)
         i += 1

@@ -6,6 +6,6 @@ impl<A: Describe, B: Describe> Describe for Pair<A, B> {
 }
 fun show<T: Describe>(x: &T) => i32 { return x.describe() }
 fun main() {
-    val p = Pair(a = 1, b = true)
+    val p: Pair<i32, bool> = Pair(a = 1, b = true)
     print(show(p))
 }

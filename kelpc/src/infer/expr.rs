@@ -301,8 +301,8 @@ pub(crate) fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option
         }),
         ast::Expr::Ident(name, span) => check_ident_expr(name, span, ctx, expected),
         ast::Expr::Unary { op, expr: sub, span } => {
-            // `-2147483648` is an `i32`, but the literal under the sign is
-            // 2147483648, which no `i32` holds on its own. The sign is part of
+            // `-2147483648` fits an `i32` and an `int`, but the literal under the sign
+            // is 2147483648, which no `i32` holds on its own. The sign is part of
             // the value when the range is judged, so the pair is checked here
             // and the literal's own check, which cannot see the sign, is
             // skipped. Every other operand is checked below as it always was.

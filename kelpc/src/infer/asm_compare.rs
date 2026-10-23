@@ -626,10 +626,15 @@ pub(crate) fn print_error(callee: &str, ty: &Ty) -> String {
 /// `const N: i32 = 5` followed by `N + u32_expr` is a real mismatch rather
 /// than a literal to retype.
 pub(crate) fn is_untyped_literal(expr: &ast::Expr) -> bool {
-    matches!(
-        expr,
-        ast::Expr::IntLit(..) | ast::Expr::FloatLit(..) | ast::Expr::CharLit(..)
-    )
+    match expr {
+        ast::Expr::IntLit(..) | ast::Expr::FloatLit(..) | ast::Expr::CharLit(..) => true,
+        // A negated literal (`-1`) is the same literal for this purpose, so `-1 * c`
+        // takes the type of `c` as `1 * c` does (issue #275: the unannotated default is `int`).
+        ast::Expr::Unary { op: ast::UnOp::Neg, expr, .. } => {
+            matches!(**expr, ast::Expr::IntLit(..) | ast::Expr::FloatLit(..))
+        }
+        _ => false,
+    }
 }
 
 /// Both operands of a binary operator, with the rule that makes the language's

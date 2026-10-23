@@ -2,12 +2,12 @@
 // passdown. Both are drop points the milestone has to get right, the field
 // through the struct's generated drop function, the passdown through the
 // `atexit` handler (M6.2).
-pd val primes = List.of(2)
+pd val primes: List<i32> = List.of(2)
 
 datac Bag(val label: String, val xs: List<i32>)
 
 fun checksum(xs: List<i32>) => i32 {
-    var total = 0
+    var total: i32 = 0
     var i: usize = 0
     while i < xs.len() {
         total += xs.get(i)

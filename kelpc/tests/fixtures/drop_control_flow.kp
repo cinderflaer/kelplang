@@ -20,7 +20,7 @@ fun early(x: bool) => i32 {
 fun main() {
     print(early(x = true))
     print(early(x = false))
-    var i = 0
+    var i: i32 = 0
     while i < 2 {
         val c = Leaf(tag = 10 + i)
         print("loop")

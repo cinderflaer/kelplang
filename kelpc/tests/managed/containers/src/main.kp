@@ -17,7 +17,7 @@ fun main() {
     print(held.n)
     print(held.name)
 
-    val b = Box.of(41)
+    val b: Box<i32> = Box.of(41)
     val add = fun(x: i32) => i32 = x + b.get()
     print(add(1))
 }

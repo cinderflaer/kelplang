@@ -17,7 +17,7 @@ fun main() {
     }
 
     var cur = &list
-    var sum = 0
+    var sum: i32 = 0
     var walked = 0
     sum += cur.value
     while !cur.next.is_empty() {

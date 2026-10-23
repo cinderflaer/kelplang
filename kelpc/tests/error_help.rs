@@ -245,7 +245,6 @@ const NONE_HELP: &str = "None is not a Kelp value: an absent value is option.Opt
 const TRUE_HELP: &str = "True is not Kelp: write true";
 const PRINTLN_HELP: &str = "did you mean print? print adds the line end, so print(\"x\") needs no newline argument";
 const AS_HELP: &str = "there is no as: convert with a method, such as x.to_i64()";
-const INT_HELP: &str = "int is not a Kelp type: write i64, or i32 for a 32-bit integer";
 const STRING_HELP: &str = "string is not a Kelp type: write String, the text type";
 const ELSEIF_HELP: &str = "elseif is not Kelp: write else if";
 
@@ -341,13 +340,6 @@ fn as_in_a_call_gets_the_kelp_word() {
         "fun main() {\n    val x = 1\n    print(x as i64)\n}\n",
     );
     assert_site(&check(&file, &[]), "expected ')', found ", AS_HELP);
-}
-
-#[test]
-fn int_as_a_type_gets_the_kelp_type() {
-    let dir = scratch("foreign-int");
-    let file = write(&dir, "main.kp", "fun main() {\n    val n: int = 5\n    print(n)\n}\n");
-    assert_site(&check(&file, &[]), "unknown type 'int'", INT_HELP);
 }
 
 #[test]

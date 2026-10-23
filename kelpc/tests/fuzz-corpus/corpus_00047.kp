@@ -1,6 +1,6 @@
 // fuzz seed 47; shapes: scalar, datac, owns, enum, try, strings, list, list_float, list_owned, box, array, refs, pd
 
-pd val z_base = 20
+pd val z_base: i32 = 20
 pd val z_doubled = z_base * 2
 pd val z_name = String.from_str("data")
 pd val z_origin = ZPoint(x = z_base, y = z_doubled)
@@ -62,8 +62,8 @@ fun z_scale_f(p: mut f64, by: f64) {
 
 fun main() {
     {
-        val a = (-2)
-        val b = (-33)
+        val a: i32 = (-2)
+        val b: i32 = (-33)
         val x = 0.125
         val y = 3.75
         print(b)
@@ -75,8 +75,8 @@ fun main() {
         } else {
             print(b)
         }
-        var i = 0
-        var acc = 0
+        var i: i32 = 0
+        var acc: i32 = 0
         while i < 4 {
             if (true || ((i << 3) <= (i * i))) {
                 acc = acc + ((33 / 9) / 2)
@@ -172,7 +172,7 @@ fun main() {
         print(xs.get(1))
         print(xs.pop())
         var i: usize = 0
-        var sum = 0
+        var sum: i32 = 0
         while i < xs.len() {
             sum = sum + xs.get(i)
             i += 1

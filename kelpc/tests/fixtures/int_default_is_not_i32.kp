@@ -1,0 +1,9 @@
+// A binding made from an unannotated literal is `int`, not `i32` (issue #275),
+// so it does not pass where an `i32` parameter is asked for. The annotation is
+// the way to get an `i32`.
+fun narrow(x: i32) => i32 = x
+
+fun main() {
+    val m = 5
+    print(narrow(m))
+}

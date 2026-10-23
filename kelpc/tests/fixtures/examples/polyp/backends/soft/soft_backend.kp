@@ -1210,7 +1210,7 @@ fun mut SNode.arrange_linear(r: fb.Rect, vertical: bool, grow: bool, th: &Theme,
     if leftover < 0 {
         leftover = 0
     }
-    var share = 0
+    var share: i32 = 0
     if expand_n > 0 {
         share = leftover / expand_n
     }
@@ -1231,12 +1231,12 @@ fun mut SNode.arrange_linear(r: fb.Rect, vertical: bool, grow: bool, th: &Theme,
         if grow && k.props.expand {
             size += share
         }
-        val cross_avail = if vertical {
+        val cross_avail: i32 = if vertical {
             r.w - 2 * m
         } else {
             r.h - 2 * m
         }
-        var cross = if vertical {
+        var cross: i32 = if vertical {
             k.measured_w
         } else {
             k.measured_h
@@ -1252,7 +1252,7 @@ fun mut SNode.arrange_linear(r: fb.Rect, vertical: bool, grow: bool, th: &Theme,
         if cross < 0 {
             cross = 0
         }
-        var off = 0
+        var off: i32 = 0
         if a == core.ALIGN_CENTER {
             off = (cross_avail - cross) / 2
         } else if a == core.ALIGN_END {
@@ -1726,7 +1726,7 @@ fun mut SoftBackend.handle_key(code: i32, mods: i32, d: mut damage.Damage) {
     val k = kind_of_in(root, focus_id)
     if focus_id >= 0 && slot_disabled(root, focus_id) { return }
     if k == core.KIND_ENTRY {
-        var op = -1
+        var op: i32 = -1
         if code == event.KEY_BACKSPACE {
             op = OP_BACKSPACE
         } else if code == event.KEY_DELETE {

@@ -28,7 +28,7 @@ fun make(prefix: move String) => closure(i32) => i32 {
 
 fun main() {
     // A `Copy` capture: copied in, and the binding is still usable after.
-    val k = 10
+    val k: i32 = 10
     val add_k = fun(x: i32) => i32 = x + k
     print(add_k(1))
     print(k)

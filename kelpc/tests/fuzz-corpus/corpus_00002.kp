@@ -1,6 +1,6 @@
 // fuzz seed 2; shapes: scalar, calls, owns, try, list, list_float, box, refs, closure, pd
 
-pd val z_base = 2
+pd val z_base: i32 = 2
 pd val z_doubled = z_base * 2
 pd val z_name = String.from_str("data")
 pd val z_origin = ZPoint(x = z_base, y = z_doubled)
@@ -59,8 +59,8 @@ fun z_apply(f: fun(i32) => i32, v: i32) => i32 = f(v)
 
 fun main() {
     {
-        val a = 31
-        val b = (-30)
+        val a: i32 = 31
+        val b: i32 = (-30)
         val x = 3.75
         val y = 2.25
         print(((2 - a) | (a & b)))
@@ -72,8 +72,8 @@ fun main() {
         } else {
             print(((-38) & 6))
         }
-        var i = 0
-        var acc = 0
+        var i: i32 = 0
+        var acc: i32 = 0
         while i < 5 {
             if (((i + (-26)) * (17 ^ 6)) >= (i & (10 + b))) {
                 acc = acc + (((-7) + 28) / 2)
@@ -126,7 +126,7 @@ fun main() {
         print(xs.get(1))
         print(xs.pop())
         var i: usize = 0
-        var sum = 0
+        var sum: i32 = 0
         while i < xs.len() {
             sum = sum + xs.get(i)
             i += 1
@@ -210,14 +210,14 @@ fun main() {
         val s = String.from_str("kelp")
         val f = fun() => usize = s.len()
         print(f())
-        val k = (-23)
+        val k: i32 = (-23)
         val g = fun(x: i32) => i32 = x + k
         print(g((-29)))
         val h = z_double
         print(h((-29)))
         print(z_apply(z_double, (-29)))
         print(z_apply(h, (-29)))
-        var i = 0
+        var i: i32 = 0
         while i < 3 {
             val t = String.from_str("kelp")
             val c = fun() => usize = t.len()

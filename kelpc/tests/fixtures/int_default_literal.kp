@@ -1,0 +1,18 @@
+// An integer literal that nothing types is `int` (decision 72, issue #275), which
+// is 64-bit. The default is no longer `i32`: a value past 2^31 is an ordinary
+// value, and a binding made from a literal takes `int`, so it is an `i64` for
+// every function that asks for one. An annotated `i32` or `u8` is unchanged.
+fun wide(x: i64) => i64 = x * 2
+
+fun main() {
+    val n = 3000000000
+    print(n)
+    val m = 5
+    print(wide(m))
+    val big = 4294967295
+    print(big + 1)
+    val a: i32 = 2147483647
+    print(a)
+    val u: u8 = 255
+    print(u)
+}

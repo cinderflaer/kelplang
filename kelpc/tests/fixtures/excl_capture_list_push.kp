@@ -3,7 +3,7 @@
 impl "std/str"
 
 fun each(f: scoped fun(i32)) {
-    var i = 0
+    var i: i32 = 0
     while i < 3 {
         f(i)
         i += 1

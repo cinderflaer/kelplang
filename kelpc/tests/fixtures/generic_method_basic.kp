@@ -21,7 +21,7 @@ fun Pair<A, B>.tag(x: A) => i32 = describe(x = x) + 1
 fun total(p: &Pair<i32, i32>) => i32 = p.sum_of()
 
 fun main() {
-    val p = Pair(first = 1, second = 2)
+    val p: Pair<i32, i32> = Pair(first = 1, second = 2)
     print(p.first_of())
     print(p.sum_of())
     print(p.tag(x = 5))

@@ -2,6 +2,6 @@
 // a `datac`: printing a record is not defined in v1, and a caller prints its
 // positions instead (`plan/syntax.md` 3).
 fun main() {
-    val p = (1, 2)
+    val p: (i32, i32) = (1, 2)
     print(p)
 }

@@ -15,7 +15,7 @@ fun make() => result.Result<i32, BlockError> {
 
 fun looped() => result.Result<i32, BlockError> {
     val n = block request: Node {
-        var i = 0
+        var i: i32 = 0
         while i < 3 {
             val cell = request.box()?
             i = i + 1

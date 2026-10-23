@@ -83,7 +83,7 @@ fun main() {
     print("${v}")
     val b: Buf<4> = Buf(data = [0; 4])
     print(b.size())
-    var total = 0
+    var total: i32 = 0
     each { n ->
         total += n
     }

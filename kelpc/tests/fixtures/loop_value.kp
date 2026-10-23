@@ -1,8 +1,9 @@
 fun find_first_big(xs: List<i32>) => i32 {
     var i: usize = 0
+    val none_found: i32 = -1
     return loop {
         if i >= xs.len() {
-            break -1
+            break none_found
         }
         if xs.get(i) > 5 {
             break xs.get(i)

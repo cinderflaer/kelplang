@@ -30,14 +30,14 @@ fun main() {
 
     // A capturing callback: the environment carries `factor`, so `map` needs no
     // argument passed twice.
-    val factor = 3
+    val factor: i32 = 3
     val scaled = list.map(xs, fun(x: &i32) => i32 = x * factor)
     print(scaled.get(0))
     print(scaled.get(2))
 
     // A capturing predicate, a capturing action, and one that captures an
     // *owned* value, the environment owns it and frees it with the closure.
-    val limit = 1
+    val limit: i32 = 1
     print(list.any(xs, fun(x: &i32) => bool = x > limit))
     val tag = String.from_str("v")
     list.each(xs, fun(x: &i32) {
@@ -57,8 +57,8 @@ fun main() {
     print(list.map(xs, chosen).get(2))
 
     // The same widening through `option` and `result`.
-    val some = option.Option.Some(value = 7)
-    val add = 100
+    val some: option.Option<i32> = option.Option.Some(value = 7)
+    val add: i32 = 100
     print(option.expect(o = option.map(o = some, f = fun(x: &i32) => i32 = x + add), message = "none"))
     val ok: result.Result<i32, i32> = result.Result.Ok(value = 4)
     val err: result.Result<i32, i32> = result.Result.Err(error = 5)

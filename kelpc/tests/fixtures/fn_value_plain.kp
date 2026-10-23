@@ -45,7 +45,7 @@ fun main() {
 
     // A `Box` is the one container a closure may be an element of, and the
     // literal here captured `k`, so the box owns an environment.
-    val k = 5
+    val k: i32 = 5
     val boxed: Box<closure(i32) => i32> = Box.of(fun(x: i32) => i32 = x * k)
     val g = boxed.get()
     print(g(4))

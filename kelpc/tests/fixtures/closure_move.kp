@@ -31,7 +31,7 @@ fun main() {
     // One environment per iteration, each freed at the end of the iteration's
     // block, the loop body is checked twice and emitted once, so this is also
     // what proves the two walks agree about the environment.
-    var i = 0
+    var i: i32 = 0
     while i < 3 {
         val n = i + 10
         val f = fun(x: i32) => i32 = x + n

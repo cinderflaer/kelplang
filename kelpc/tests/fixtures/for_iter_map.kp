@@ -3,7 +3,7 @@ fun main() {
     var m: Map<String, i32> = Map.new()
     m.insert("a", 1)
     m.insert("bb", 2)
-    var total = 0
+    var total: i32 = 0
     for (k, v) in m.iter() {
         total += v
         print(k.len())

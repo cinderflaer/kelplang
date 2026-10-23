@@ -14,7 +14,7 @@ fun depth(t: &Tree<i32>) => i32 = when t {
 }
 
 fun main() {
-    val t = Tree.Branch(
+    val t: Tree<i32> = Tree.Branch(
         label = 9,
         left = Box.of(Tree.Leaf),
         right = Box.of(Tree.Branch(

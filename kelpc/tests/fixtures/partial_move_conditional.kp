@@ -7,7 +7,7 @@
 datac Bag(val xs: List<i32>, val name: String)
 
 fun take_it(bag: move Bag, take: bool) => i32 {
-    var out = 0
+    var out: i32 = 0
     if take {
         val xs = bag.xs
         out = xs.get(0)

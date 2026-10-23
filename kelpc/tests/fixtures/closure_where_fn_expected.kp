@@ -4,6 +4,6 @@
 fun apply(f: fun(i32) => i32, x: i32) => i32 = f(x)
 
 fun main() {
-    val k = 10
+    val k: i32 = 10
     print(apply(fun(x: i32) => i32 = x + k, 1))
 }

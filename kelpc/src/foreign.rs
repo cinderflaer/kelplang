@@ -31,7 +31,6 @@ pub fn hint(word: &str) -> Option<String> {
         "False" => "False is not Kelp: write false".to_string(),
         "println" => "did you mean print? print adds the line end, so print(\"x\") needs no newline argument".to_string(),
         "as" => "there is no as: convert with a method, such as x.to_i64()".to_string(),
-        "int" => "int is not a Kelp type: write i64, or i32 for a 32-bit integer".to_string(),
         "string" => "string is not a Kelp type: write String, the text type".to_string(),
         "elseif" => "elseif is not Kelp: write else if".to_string(),
         _ => return None,
@@ -46,18 +45,18 @@ mod tests {
     fn every_foreign_word_has_a_hint_and_an_unknown_word_has_none() {
         for word in [
             "let", "fn", "def", "function", "struct", "class", "match", "null", "nil", "None",
-            "True", "False", "println", "as", "int", "string", "elseif",
+            "True", "False", "println", "as", "string", "elseif",
         ] {
             assert!(hint(word).is_some(), "no hint for {word}");
         }
-        for word in ["total", "print", "var", "elif", "String", "i64"] {
+        for word in ["total", "print", "var", "elif", "String", "i64", "int"] {
             assert!(hint(word).is_none(), "{word} is a Kelp name or not a foreign word");
         }
     }
 
     #[test]
     fn a_hint_names_no_dash_and_no_bare_some() {
-        for word in ["let", "fn", "struct", "null", "None", "as", "int", "string"] {
+        for word in ["let", "fn", "struct", "null", "None", "as", "string"] {
             let text = hint(word).unwrap();
             assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "{text}");
             assert!(!text.contains("Some("), "{text}");

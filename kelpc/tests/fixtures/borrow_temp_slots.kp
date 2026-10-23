@@ -40,8 +40,8 @@ fun main() {
     // A nested struct literal, passed by value to a parameter that borrows it.
     print(trio_sum(Trio(x = Pair(a = 9, b = 10), y = 11)))
     // A borrow inside a loop: one slot, re-initialized per iteration.
-    var i = 0
-    var total = 0
+    var i: i32 = 0
+    var total: i32 = 0
     while i < 3 {
         total = total + sum(Pair(a = i, b = 1))
         i = i + 1

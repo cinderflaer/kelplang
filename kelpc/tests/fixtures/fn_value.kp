@@ -80,7 +80,7 @@ fun main() {
 
     // A `var` holding one can be reassigned, including inside a loop.
     var cur = double
-    var i = 0
+    var i: i32 = 0
     while i < 3 {
         print(cur(i))
         i += 1

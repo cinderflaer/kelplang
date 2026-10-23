@@ -1,4 +1,4 @@
-pd var log = 0
+pd var log: i32 = 0
 
 enum Pair {
     Two(val a: i32, val b: i32)

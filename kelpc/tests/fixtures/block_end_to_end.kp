@@ -8,7 +8,7 @@ datac Node(val value: i32)
 
 fun ordinary() => i32 {
     var xs: List<i32> = List.empty()
-    var i = 0
+    var i: i32 = 0
     while i < 4 {
         xs.push(i * i)
         i += 1
@@ -33,8 +33,8 @@ fun main() {
     var keep: List<i32> = List.empty()
     keep.push(7)
     print(keep.len().to_i32())
-    var round = 0
-    var sum = 0
+    var round: i32 = 0
+    var sum: i32 = 0
     while round < 1000 {
         when doubled(round) {
             Ok(v) -> sum = sum + v

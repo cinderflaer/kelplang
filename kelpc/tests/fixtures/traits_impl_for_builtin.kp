@@ -23,8 +23,9 @@ fun twice<T: Doubler>(x: T) => i32 = x.double() + x.double()
 fun label_of<T: Named>(s: &T) => String = s.label()
 
 fun main() {
-    val n = 6
-    print(twice(5))
+    val n: i32 = 6
+    val five: i32 = 5
+    print(twice(five))
     print(n.triple())
     val s = String.from_str("hi")
     print(label_of(s))

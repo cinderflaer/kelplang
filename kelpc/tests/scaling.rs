@@ -186,7 +186,7 @@ fn nested_function_literals_are_linear() {
         level(i + 1, n, out);
         out.push_str(&format!("{ind}}}\n{ind}return g{i}(x{i})\n"));
     }
-    let mut src = String::from("fun main() {\n    val k = 1\n    val f = fun(x0: i32) => i32 {\n");
+    let mut src = String::from("fun main() {\n    val k: i32 = 1\n    val f = fun(x0: i32) => i32 {\n");
     level(0, 50, &mut src);
     src.push_str("    }\n    print(f(1))\n}\n");
     run_shape("nested_closures", &src, "2");
@@ -194,7 +194,7 @@ fn nested_function_literals_are_linear() {
 
 #[test]
 fn a_long_sequence_of_closures_is_linear() {
-    let mut src = String::from("fun main() {\n    val k = 1\n    val f0 = fun(x: i32) => i32 = x + k\n");
+    let mut src = String::from("fun main() {\n    val k: i32 = 1\n    val f0 = fun(x: i32) => i32 = x + k\n");
     for i in 1..=150 {
         src.push_str(&format!("    val f{i} = fun(x: i32) => i32 = f{}(x) + 1\n", i - 1));
     }

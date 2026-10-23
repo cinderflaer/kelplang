@@ -20,7 +20,7 @@ fun unwrap_or(o: &Option<i32>, fallback: i32) => i32 = when o {
 
 fun main() {
     // Inferred from the arguments: A = i32, B = i32.
-    val n = Pair(first = 1, second = 2)
+    val n: Pair<i32, i32> = Pair(first = 1, second = 2)
     print(add_pair(p = n))
 
     // Inferred from the arguments, with a different second type, a separate
@@ -31,7 +31,7 @@ fun main() {
 
     // A generic instantiation nested inside another one: `A` is itself a
     // `Pair<i32, i32>`, so the field read is a chain.
-    val nested = Pair(first = Pair(first = 4, second = 5), second = 6)
+    val nested: Pair<Pair<i32, i32>, i32> = Pair(first = Pair(first = 4, second = 5), second = 6)
     print(nested.first.second)
     print(add_pair(p = nested.first))
     print(nested.second)
@@ -44,6 +44,6 @@ fun main() {
 
     // `option_payloadless` is a `Pair<i32, i32>` too, the same instance the
     // first construction produced.
-    val again = Pair(first = 9, second = 10)
+    val again: Pair<i32, i32> = Pair(first = 9, second = 10)
     print(add_pair(p = again))
 }

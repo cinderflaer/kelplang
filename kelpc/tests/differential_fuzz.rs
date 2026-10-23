@@ -369,8 +369,8 @@ impl Gen {
         (
             vec![],
             vec![
-                format!("val a = {a}"),
-                format!("val b = {b}"),
+                format!("val a: i32 = {a}"),
+                format!("val b: i32 = {b}"),
                 format!("val x = {x}"),
                 format!("val y = {y}"),
                 format!("print({e1})"),
@@ -382,8 +382,8 @@ impl Gen {
                 "} else {".to_string(),
                 format!("    print({f})"),
                 "}".to_string(),
-                "var i = 0".to_string(),
-                "var acc = 0".to_string(),
+                "var i: i32 = 0".to_string(),
+                "var acc: i32 = 0".to_string(),
                 format!("while i < {k} {{"),
                 format!("    if {lc} {{"),
                 format!("        acc = acc + {le}"),
@@ -592,7 +592,7 @@ impl Gen {
             "print(xs.get(1))".to_string(),
             "print(xs.pop())".to_string(),
             "var i: usize = 0".to_string(),
-            "var sum = 0".to_string(),
+            "var sum: i32 = 0".to_string(),
             "while i < xs.len() {".to_string(),
             "    sum = sum + xs.get(i)".to_string(),
             "    i += 1".to_string(),
@@ -846,14 +846,14 @@ impl Gen {
             format!("val s = String.from_str({q1})"),
             "val f = fun() => usize = s.len()".to_string(),
             "print(f())".to_string(),
-            format!("val k = {k}"),
+            format!("val k: i32 = {k}"),
             "val g = fun(x: i32) => i32 = x + k".to_string(),
             format!("print(g({n}))"),
             "val h = z_double".to_string(),
             format!("print(h({n}))"),
             format!("print(z_apply(z_double, {n}))"),
             format!("print(z_apply(h, {n}))"),
-            "var i = 0".to_string(),
+            "var i: i32 = 0".to_string(),
             "while i < 3 {".to_string(),
             format!("    val t = String.from_str({q2})"),
             "    val c = fun() => usize = t.len()".to_string(),
@@ -946,7 +946,7 @@ fn generate(seed: u64) -> Program {
     let base = g.rng.range(1, 20);
     let name = g.quoted();
     let globals = format!(
-        "pd val z_base = {base}\n\
+        "pd val z_base: i32 = {base}\n\
          pd val z_doubled = z_base * 2\n\
          pd val z_name = String.from_str({name})\n\
          pd val z_origin = ZPoint(x = z_base, y = z_doubled)\n\

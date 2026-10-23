@@ -1,6 +1,6 @@
 // fuzz seed 83; shapes: scalar, owns, strings, list, list_float, list_owned, map, pd
 
-pd val z_base = 15
+pd val z_base: i32 = 15
 pd val z_doubled = z_base * 2
 pd val z_name = String.from_str("text")
 pd val z_origin = ZPoint(x = z_base, y = z_doubled)
@@ -39,8 +39,8 @@ fun z_msg_int(m: ZMsg) => i32 = when m {
 
 fun main() {
     {
-        val a = (-20)
-        val b = 39
+        val a: i32 = (-20)
+        val b: i32 = 39
         val x = 1.5
         val y = 1.5
         print(((a ^ a) * ((-17) % 6)))
@@ -52,8 +52,8 @@ fun main() {
         } else {
             print((a << 3))
         }
-        var i = 0
-        var acc = 0
+        var i: i32 = 0
+        var acc: i32 = 0
         while i < 3 {
             if (x != ((y / 3.75) + 0.25)) {
                 acc = acc + (((-26) % 1) / 1)
@@ -106,7 +106,7 @@ fun main() {
         print(xs.get(1))
         print(xs.pop())
         var i: usize = 0
-        var sum = 0
+        var sum: i32 = 0
         while i < xs.len() {
             sum = sum + xs.get(i)
             i += 1

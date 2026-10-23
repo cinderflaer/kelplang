@@ -2,7 +2,7 @@
 // after it runs, and a function whose tail follows the loop returns normally.
 // A loop with no `break` (only `return`) has none and needs no fallthrough.
 fun first_over(limit: i32) => i32 {
-    var i = 0
+    var i: i32 = 0
     while true {
         i += 1
         if i > limit { return i }
@@ -10,7 +10,7 @@ fun first_over(limit: i32) => i32 {
 }
 
 fun count_to(limit: i32) => i32 {
-    var i = 0
+    var i: i32 = 0
     while true {
         i += 1
         if i > limit { break }
@@ -20,7 +20,7 @@ fun count_to(limit: i32) => i32 {
 
 fun label(n: i32) => String {
     var s = String.empty()
-    var i = 0
+    var i: i32 = 0
     while true {
         s.push('x')
         i += 1
