@@ -53,14 +53,14 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "kelp-rt"
-version = "26.10.5"
+version = "26.10.6"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "kelpc"
-version = "26.10.5"
+version = "26.10.6"
 dependencies = [
  "kelp-rt",
  "llvm-sys",

@@ -3,7 +3,7 @@ name = "kelp-rt"
 # The runtime is versioned with the compiler that embeds it. It is not a
 # published crate: `kelpc/build.rs` builds its static library and `kelpc`
 # reads the layout constants through a path dependency.
-version = "26.10.5"
+version = "26.10.6"
 edition = "2024"
 license = "MIT"
 publish = false
