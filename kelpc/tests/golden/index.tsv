@@ -213,7 +213,7 @@ fixture_endian_scalars	ran	exit 0		e840df667cbf84a90207f308f9c9511c83ea5f021f8ea
 fixture_enum_bare_variant	c-refused		error: variant 'Shape.Circle' carries payload (r) — construct it as 'Shape.Circle(r)'	
 fixture_enum_basic	ran	exit 0		c97caacaaee927709839a75d52131b2853599bb512607b440c379783880cfb45
 fixture_enum_bind_count	c-refused		error: pattern 'Circle(r, x)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s) (r)	
-fixture_enum_container	ran	exit 0		a87246e8ee937f02a9da0b1bdc026e6ad1cb792cf80e06779877f8ee1bab9285
+fixture_enum_container	ran	exit 0		e8a6a4812822aa602f5b5e9ad3c05d8445343e46ceca9036d8b21bde68085ddf
 fixture_enum_ctor_name	c-refused		error: 'Shape' is an enum — construct one of its variants	
 fixture_enum_datac_clash	c-refused		error: 'Shape' is used for both a datac and an enum	
 fixture_enum_datac_scrutinee	c-refused		error: 'when' with a scrutinee matches an 'enum', but 'Point' is a datac — read its fields with '.' instead	
@@ -223,7 +223,7 @@ fixture_enum_discriminant_with_payload	c-refused		error: enum 'E' has a variant 
 fixture_enum_duplicate_arm	c-refused		error: variant 'Circle' is matched more than once	
 fixture_enum_field_access	c-refused		error: enum 'Shape' has no field 'r' — match it with 'when Shape { ... }' to read a payload	
 fixture_enum_generic_method	ran	exit 0		f731091303cdfceb10669a38f8fe2ea471b04693cbdfc1e1326f75498d2c4045
-fixture_enum_in_containers	ran	exit 0		3380e687784bf7efc703455ede45a6bb34b4844c18edc123ec2cef7262961d38
+fixture_enum_in_containers	ran	exit 0		ff2bc56e3227c34a0785d2f553ee1eb2444e6cd3d506b0b8f1e2ea8f3ed889af
 fixture_enum_layout	ran	exit 0		787fbe5d6b2b4f4fe31eda17f6e4a49cf9755590ad755093fb2749b3c9b15cc7
 fixture_enum_liveness	ran	exit 0		f97c0359d1b464354eb9f9614c8ddfc732d6e5b4380f26b0f13911be3c5f2490
 fixture_enum_method	c-refused		error: an 'enum' method is called on a value, not on a variant path; bind the variant first, as in	
@@ -390,7 +390,7 @@ fixture_generic_method_on_plain	c-refused		error: 'Point' is not a generic type 
 fixture_generic_method_wrong_params	c-refused		error: receiver 'Pair' must write the type's own type parameters, in order	
 fixture_generic_needs_args	c-refused		error: 'Pair' is a generic type — it needs 2 type argument(s)	
 fixture_generic_nested_inference	ran	exit 0		14c5e74c4b96ccef41cd94db73a9ec3348038ac094feca4fd897cecffa07cdae
-fixture_generic_owned	ran	exit 0		f6808ffc64bfc3df465ab0e6d99bb57715dd393df94b81a745da2ffba6f8f86f
+fixture_generic_owned	ran	exit 0		15e1aa24438ccd732feab51b7eb01b52a039ca821c6b4edaaf5c5bdd7b0a247e
 fixture_generic_param_duplicate	c-refused		error: type parameter 'T' is declared more than once	
 fixture_generic_param_shadow	c-refused		error: type parameter 'i32' shadows the builtin type 'i32' — pick another name	
 fixture_generic_recursive	ran	exit 0		e0b58d6598d214cd414bc211b1e977021f1b7d289e9fa0e66e609b76c8e1653a
