@@ -1,0 +1,6 @@
+// Two digit separators in a row are refused: one `_` at a time, between two
+// digits.
+fun main() {
+    val x: i32 = 1__000
+    print(x)
+}

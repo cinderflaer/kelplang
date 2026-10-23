@@ -1,0 +1,19 @@
+// Digit separators (syntax issue 259). A `_` may sit between two digits of
+// a decimal, hex, binary or float literal. It never changes the value, so
+// each separated literal below is equal to its plain spelling.
+fun main() {
+    val a: i64 = 1000000
+    val b: i64 = 1_000_000
+    print(a == b)
+    print(b)
+
+    val h: u32 = 0x10000000
+    val hs: u32 = 0x1000_0000
+    print(h == hs)
+    print(hs)
+    print(0xFF_FF)
+    print(0b1010_1010)
+
+    print(1_000.5 == 1000.5)
+    print(1.2_5 == 1.25)
+}

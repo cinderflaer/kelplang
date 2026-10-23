@@ -481,7 +481,7 @@ impl<'a> Lexer<'a> {
                     if radix != 10 {
                         self.pos += 2; // the `0` and the prefix letter
                         let name = if radix == 16 { "hexadecimal" } else { "binary" };
-                        let digit = |c: u8| {
+                        let digit = move |c: u8| {
                             if radix == 16 {
                                 c.is_ascii_hexdigit()
                             } else {
@@ -489,10 +489,11 @@ impl<'a> Lexer<'a> {
                             }
                         };
                         let digits_start = self.pos;
-                        while matches!(self.peek(), Some(c) if digit(c)) {
+                        // Digits and separators: the run is checked below.
+                        while matches!(self.peek(), Some(c) if digit(c) || c == b'_') {
                             self.pos += 1;
                         }
-                        if self.pos == digits_start {
+                        if !self.bytes[digits_start..self.pos].iter().any(|&c| digit(c)) {
                             let example = if radix == 16 { "0x1f" } else { "0b1010" };
                             return Err(LexError {
                                 message: format!(
@@ -502,18 +503,11 @@ impl<'a> Lexer<'a> {
                                 span: Span::new(start, self.pos),
                             });
                         }
-                        // A digit the radix does not have, or a separator, is
-                        // named here rather than left to the parser: `0b12`
-                        // would otherwise be `0b1` and then `2`, and the parse
-                        // error would point at the wrong thing.
+                        // A digit the radix does not have is named here rather
+                        // than left to the parser: `0b12` would otherwise be
+                        // `0b1` and then `2`, and the parse error would point
+                        // at the wrong thing.
                         if let Some(c) = self.peek() {
-                            if c == b'_' {
-                                return Err(LexError {
-                                    message: "an integer literal takes no digit separators"
-                                        .to_string(),
-                                    span: Span::new(start, self.pos + 1),
-                                });
-                            }
                             if c.is_ascii_alphanumeric() {
                                 return Err(LexError {
                                     message: format!(
@@ -524,9 +518,13 @@ impl<'a> Lexer<'a> {
                                 });
                             }
                         }
-                        let digits = &self.src[digits_start..self.pos];
+                        self.check_digit_separators(digits_start, self.pos)?;
+                        let digits: String = self.src[digits_start..self.pos]
+                            .chars()
+                            .filter(|&c| c != '_')
+                            .collect();
                         let text = &self.src[start..self.pos];
-                        TokenKind::IntLit(u64::from_str_radix(digits, radix).map_err(|_| {
+                        TokenKind::IntLit(u64::from_str_radix(&digits, radix).map_err(|_| {
                             LexError {
                                 message: format!(
                                     "'{text}' is larger than the largest integer literal, {}",
@@ -536,44 +534,45 @@ impl<'a> Lexer<'a> {
                             }
                         })?)
                     } else {
-                        while matches!(self.peek(), Some(b'0'..=b'9')) {
-                            self.pos += 1;
-                        }
-                        let mut is_float = false;
                         // A number right after a single `.` is a tuple
-                        // position (`t.0.1`), never the start of a float.
+                        // position (`t.0.1`), never the start of a float, and
+                        // it takes no separators: `t.1_0` stays `t.1` and `_0`.
                         let after_dot = start > 0
                             && self.bytes[start - 1] == b'.'
                             && !(start > 1 && self.bytes[start - 2] == b'.');
+                        let digit = |c: u8| c.is_ascii_digit();
+                        let int_start = self.pos;
+                        while matches!(self.peek(), Some(c) if digit(c) || (c == b'_' && !after_dot)) {
+                            self.pos += 1;
+                        }
+                        let int_end = self.pos;
+                        let mut is_float = false;
                         if !after_dot
                             && self.peek() == Some(b'.')
                             && matches!(self.peek_at(1), Some(b'0'..=b'9'))
                         {
                             is_float = true;
                             self.pos += 1;
-                            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                            let frac_start = self.pos;
+                            while matches!(self.peek(), Some(c) if digit(c) || c == b'_') {
                                 self.pos += 1;
                             }
+                            self.check_digit_separators(frac_start, self.pos)?;
                         }
                         let text = &self.src[start..self.pos];
                         if is_float {
-                            TokenKind::FloatLit(text.parse().map_err(|_| LexError {
+                            self.check_digit_separators(int_start, int_end)?;
+                            let clean: String = text.chars().filter(|&c| c != '_').collect();
+                            TokenKind::FloatLit(clean.parse().map_err(|_| LexError {
                                 message: format!("invalid float literal '{text}'"),
                                 span: Span::new(start, self.pos),
                             })?)
                         } else {
-                            // A trailing identifier character is a suffix or a
-                            // separator, and a literal in this language has
-                            // neither: its width comes from its context (2.4).
-                            // Saying so beats the parser's "found 'u8'".
+                            // A trailing identifier character is a suffix, and a
+                            // literal in this language has none: its width comes
+                            // from its context (2.4). Saying so beats the
+                            // parser's "found 'u8'".
                             if let Some(c) = self.peek() {
-                                if c == b'_' {
-                                    return Err(LexError {
-                                        message: "an integer literal takes no digit separators"
-                                            .to_string(),
-                                        span: Span::new(start, self.pos + 1),
-                                    });
-                                }
                                 if c.is_ascii_alphabetic() {
                                     return Err(LexError {
                                         message: format!(
@@ -583,11 +582,13 @@ impl<'a> Lexer<'a> {
                                     });
                                 }
                             }
+                            self.check_digit_separators(int_start, int_end)?;
                             // The digit run is decimal digits already, so the
                             // only way the parse fails is a value wider than
                             // the widest integer type, and that is named as the
                             // limit it passed rather than as a malformed run.
-                            TokenKind::IntLit(text.parse().map_err(|_| LexError {
+                            let clean: String = text.chars().filter(|&c| c != '_').collect();
+                            TokenKind::IntLit(clean.parse().map_err(|_| LexError {
                                 message: format!(
                                     "'{text}' is larger than the largest integer literal, {}",
                                     u64::MAX

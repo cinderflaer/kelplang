@@ -175,6 +175,39 @@ fn lexes_hexadecimal_and_binary_literals() {
     );
 }
 
+/// A digit separator (`_` between two digits) reads as the same value, in
+/// every radix and in a float. `1_000_000` is `1000000`, not a name.
+#[test]
+fn a_digit_separator_between_digits_reads_the_same_value() {
+    assert_eq!(kinds("1_000_000"), kinds("1000000"));
+    assert_eq!(kinds("0x1000_0000"), kinds("0x10000000"));
+    assert_eq!(kinds("0b1010_1010"), kinds("0b10101010"));
+    assert_eq!(
+        kinds("1_000_000 0x1000_0000 0xFF_ff 0b1_0 1_000.5"),
+        vec![
+            TokenKind::IntLit(1_000_000),
+            TokenKind::IntLit(0x1000_0000),
+            TokenKind::IntLit(0xFFFF),
+            TokenKind::IntLit(2),
+            TokenKind::FloatLit(1000.5),
+            TokenKind::Eof,
+        ]
+    );
+    // A separator in the fraction of a float is read the same way.
+    assert_eq!(kinds("1.2_5"), kinds("1.25"));
+    // A tuple position is not a number literal, so no separator is read there.
+    assert_eq!(
+        kinds("t.1_0"),
+        vec![
+            TokenKind::Ident("t".to_string()),
+            TokenKind::Dot,
+            TokenKind::IntLit(1),
+            TokenKind::Ident("_0".to_string()),
+            TokenKind::Eof,
+        ]
+    );
+}
+
 /// `...` is one token (the variadic marker, gap 7), while a lone `.` stays
 /// the field-access token and `..` stays two of them: only three dots in a
 /// row are read together.
@@ -221,8 +254,15 @@ fn a_malformed_radix_literal_names_its_own_problem() {
         ("0b", "needs at least one binary digit"),
         ("0b12", "invalid digit '2' in a binary literal"),
         ("0x1g", "invalid digit 'g' in a hexadecimal literal"),
-        ("0x_ff", "needs at least one hex digit"),
-        ("1_000", "takes no digit separators"),
+        ("0x_ff", "not before the first digit"),
+        ("0b_1", "not before the first digit"),
+        ("0x1_", "not after the last digit"),
+        ("1_", "not after the last digit"),
+        ("1_.5", "not after the last digit"),
+        ("1.5_", "not after the last digit"),
+        ("1__000", "one at a time"),
+        ("0x1__0", "one at a time"),
+        ("1_u8", "takes no suffix"),
         ("5u8", "takes no suffix"),
         (
             "0x10000000000000000",

@@ -16,6 +16,44 @@ impl<'a> Lexer<'a> {
         self.bytes.get(i) != Some(&b'\'')
     }
 
+    /// Refuses a digit separator (`_`) in the digit run `run_start..run_end`
+    /// that is not between two digits. A separator is allowed only between
+    /// two digits: `1_000`, `0x1000_0000`, `0b1_0`. A separator first (`0x_1`),
+    /// last (`1_`) or doubled (`1__0`) is refused at its own position.
+    pub(crate) fn check_digit_separators(
+        &self,
+        run_start: usize,
+        run_end: usize,
+    ) -> Result<(), LexError> {
+        let run = &self.bytes[run_start..run_end];
+        for (i, &c) in run.iter().enumerate() {
+            if c != b'_' {
+                continue;
+            }
+            let at = run_start + i;
+            let refuse = |message: &str| LexError {
+                message: format!("a digit separator '_' {message}"),
+                span: Span::new(at, at + 1),
+            };
+            if i == 0 {
+                return Err(refuse(
+                    "must come between two digits, not before the first digit",
+                ));
+            }
+            if run[i - 1] == b'_' {
+                return Err(refuse(
+                    "takes one at a time: put one '_' between two digits, not two in a row",
+                ));
+            }
+            if i + 1 == run.len() {
+                return Err(refuse(
+                    "must come between two digits, not after the last digit",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Lexes a character literal, having consumed the opening `'`; `start`
     /// is that quote's offset (open item 53).
     ///

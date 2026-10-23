@@ -1,0 +1,6 @@
+// A digit separator after the last digit is refused: `_` must sit between
+// two digits.
+fun main() {
+    val x: i32 = 0x1F_
+    print(x)
+}

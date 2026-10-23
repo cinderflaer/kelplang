@@ -627,6 +627,9 @@ mod tuples;
 
 #[path = "compile_and_run/tuples_more.rs"]
 mod tuples_more;
+
+#[path = "compile_and_run/digit_separators.rs"]
+mod digit_separators;
 pub(crate) use tuples_more::*;
 
 #[path = "compile_and_run/asm_freestanding.rs"]
