@@ -44,8 +44,13 @@ pub(crate) fn check_pub_signatures(
         if !exported.contains(&c.name) {
             continue;
         }
+        // A const with no written type has a scalar type that names nothing a
+        // signature could reach, so there is nothing to check.
+        let Some(ty) = &c.ty else {
+            continue;
+        };
         SignatureScope::new(project, &c.module, &c.name, &c.name, &[], &exported, &declared)
-            .check_type(&c.ty)
+            .check_type(ty)
             .map_err(|e| e.in_module(&c.module))?;
     }
     for s in &program.statics {

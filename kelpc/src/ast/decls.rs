@@ -157,7 +157,9 @@ pub struct ConstDecl {
     /// private to its module unless this is written, which is what
     /// `infer.rs`'s visibility gate reads.
     pub is_pub: bool,
-    pub ty: TypeExpr,
+    /// The written type, `const NAME: T = ...`. `None` when the annotation is left
+    /// out, `const NAME = ...`: the const then takes the type of its value.
+    pub ty: Option<TypeExpr>,
     pub init: Expr,
     /// See `DatacDecl::module`.
     pub module: String,

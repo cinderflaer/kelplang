@@ -727,21 +727,27 @@ pub(crate) fn collect_consts(
         let prefix = project.prefix_of(&decl.module);
         let aliases = project.alias_prefixes_of(&decl.module);
         let bare = bare_name(&decl.name, prefix).to_string();
-        let declared = TypeScope {
-            structs,
-            enums,
-            env: env.clone(),
-            params: &EMPTY_PARAMS,
-            prefix,
-            aliases: &aliases,
-            later_datacs: None,
-            in_progress: None,
-            consts: Some(&out),
-            const_fns: Some(const_fns),
-            handles: &env.handles,
-        }
-        .resolve(&decl.ty, false)
-        .map_err(|e| e.in_module(&decl.module))?;
+        // `None` when the annotation is left out: the type then comes from the value.
+        let declared = match &decl.ty {
+            Some(ty) => Some(
+                TypeScope {
+                    structs,
+                    enums,
+                    env: env.clone(),
+                    params: &EMPTY_PARAMS,
+                    prefix,
+                    aliases: &aliases,
+                    later_datacs: None,
+                    in_progress: None,
+                    consts: Some(&out),
+                    const_fns: Some(const_fns),
+                    handles: &env.handles,
+                }
+                .resolve(ty, false)
+                .map_err(|e| e.in_module(&decl.module))?,
+            ),
+            None => None,
+        };
         if out.contains_key(&decl.name) {
             return Err(Diagnostic::new(
                 format!("const '{bare}' is declared more than once"),
@@ -765,19 +771,27 @@ pub(crate) fn collect_consts(
                 decl.module.clone(),
             ));
         }
+        // The evaluator borrows `out`, so it lives only inside this block, before the insert.
         let literal = {
-            if let Some(result) = const_int_array(decl, &declared) {
-                let elems = result.map_err(|message| Diagnostic::new(message, decl.span, decl.module.clone()))?;
-                tir::Expr {
-                    kind: tir::ExprKind::ArrayLit(elems),
-                    ty: declared.clone(),
-                    span: decl.init.span(),
+            let evaluator = ConstEvaluator::new(const_fns, structs, enums, env, &out);
+            match &declared {
+                Some(declared) => {
+                    if let Some(result) = const_int_array(decl, declared) {
+                        let elems = result.map_err(|message| Diagnostic::new(message, decl.span, decl.module.clone()))?;
+                        tir::Expr {
+                            kind: tir::ExprKind::ArrayLit(elems),
+                            ty: declared.clone(),
+                            span: decl.init.span(),
+                        }
+                    } else {
+                        evaluator
+                            .fold_const(&bare, &decl.init, declared, prefix, &aliases)
+                            .map_err(|e| e.in_module(&decl.module))?
+                    }
                 }
-            } else {
-                let evaluator = ConstEvaluator::new(const_fns, structs, enums, env, &out);
-                evaluator
-                    .fold_const(&bare, &decl.init, &declared, prefix, &aliases)
-                    .map_err(|e| e.in_module(&decl.module))?
+                None => evaluator
+                    .fold_const_inferred(&bare, &decl.init, prefix, &aliases)
+                    .map_err(|e| e.in_module(&decl.module))?,
             }
         };
         out.insert(decl.name.clone(), ConstInfo { value: literal });

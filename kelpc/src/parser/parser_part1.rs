@@ -637,8 +637,12 @@ impl Parser {
     pub(crate) fn parse_const_decl(&mut self, is_pub: bool, section: Option<String>) -> PResult<ConstDecl> {
         let start = self.expect(TokenKind::Const, "'const'")?.span;
         let (name, _) = self.expect_ident()?;
-        self.expect(TokenKind::Colon, "':' (a 'const' must declare its type)")?;
-        let ty = self.parse_type()?;
+        let ty = if self.check(&TokenKind::Colon) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
         self.expect(TokenKind::Eq, "'='")?;
         let init = self.parse_expr()?;
         let span = start.to(init.span());

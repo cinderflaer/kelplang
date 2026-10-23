@@ -79,6 +79,36 @@ impl<'a> ConstEvaluator<'a> {
         })
     }
 
+    /// Folds a `const` written without a type: the type is the one its value has
+    /// with no expected type (an integer is `int`, a float `f64`, and a typed
+    /// const or an operation on one keeps that type). Only a scalar is accepted,
+    /// because an array or a tuple has no type a value alone can name.
+    pub(crate) fn fold_const_inferred(
+        &self,
+        name: &str,
+        expr: &ast::Expr,
+        prefix: &str,
+        aliases: &HashMap<String, String>,
+    ) -> Result<tir::Expr> {
+        let mut scope = ConstScope::new(prefix.to_string(), aliases.clone());
+        let (value, found) = self.eval(expr, None, &mut scope)?;
+        let scalar = found.is_integer() || found.is_float() || matches!(found, Ty::Bool | Ty::Char | Ty::Str);
+        if !scalar {
+            return Err(TypeError {
+                help: None,
+                message: format!(
+                    "const '{name}' has no type, so its value must be a number, a bool, a char or a str: write the type, as in 'const {name}: T = ...'"
+                ),
+                span: expr.span(),
+            });
+        }
+        literal_for(&value, &found).map_err(|_| TypeError {
+            help: None,
+            message: format!("const '{name}' has no type, and its initializer is not a '{}' value", found.display()),
+            span: expr.span(),
+        })
+    }
+
     /// Folds the `N` of an array type or of a repeat literal (A-18): the one
     /// number a type or a literal needs, evaluated as a `usize` because a
     /// length is a count.
