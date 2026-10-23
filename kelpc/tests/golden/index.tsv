@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1190 ran=592 c_refused=560 excluded=38
+# counts candidates=1190 ran=583 c_refused=560 hosted_refused=9 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -176,7 +176,7 @@ fixture_defer_try_exit	c-refused		error: defer with an early `?` exit is not sup
 fixture_defer_use_after_move	c-refused		error: use of moved value 's'	
 fixture_defer_value_block	ran	exit 0		6d51b24299994492c2c153297d560ef24a8f5f228d6d6ff5f5c3479c56ec6de9
 fixture_derive_map_key_datac	ran	exit 0		e694259eaa6c406eaeb2a2650624fc0f1c51061894e001f90c23514badfa0a8f
-fixture_derive_map_key_enum	ran	exit 0		743422ce17caa12cb9f950e44796c2e8add34add9bdb928dc58284b968d1f043
+fixture_derive_map_key_enum	hosted-refused		error: hosted build does not describe an enum inside a collected object; enum map key needs enum descriptors (issue 326)	
 fixture_derive_refuse_bad_name	c-refused		error: 'derive' can derive 'eq' and 'hash', not 'show'	
 fixture_derive_refuse_field_without_eq	c-refused		error: derive(eq) on 'Outer' cannot compare field 'inner' of type 'Inner'	
 fixture_derive_refuse_float_field	c-refused		error: derive(hash) on 'Sample' cannot hash field 'ratio' of type 'f64'	
@@ -191,12 +191,12 @@ fixture_doc_no_dashes	c-refused		error: trait 'Reading' declares 'type Unit', an
 fixture_documentation_comment	ran	exit 0		10159baf262b43a92d95db59dae1f72c645127301661e0a3ce4e38b295a97c58
 fixture_double_move_in_loop	c-refused		error: use of moved value 'p'	
 fixture_drop_builtin_type	c-refused		error: 'i32' is a builtin type — its methods are provided by the compiler and cannot be declared	
-fixture_drop_container	ran	exit 0		36fde74a38beb8424049352600c6282ef455af8f505eab4a2d48fd09c78103ac
+fixture_drop_container	hosted-refused		error: 'Leaf' is a resource (a user drop); a resource never enters the collected heap, so a List of it is refused in a hosted build (issue 320 owner question)	
 fixture_drop_control_flow	ran	exit 0		fe29295ec84f1f6750d17da92a0bedf0ea848f6a7914536e1fb3503c56d02eec
 fixture_drop_declared_key	c-refused		error: 'Leaf.hash' cannot be declared	
 fixture_drop_enum	ran	exit 0		f2e6c50a8e1307b8a9e89d088f1988ce9b08cf7155ac033b992de8587d269074
 fixture_drop_guard_lock	ran	exit 0		acb2b288b9f028830645d94e3a4417e5ffc574a024576d6f69b53d989e9d93ea
-fixture_drop_map	ran	exit 0		47c027768397f582cffe4e3a65550aaafe014df46f8fc38ebafc87c3c9129279
+fixture_drop_map	hosted-refused		error: 'Guard' is a resource (a user drop); a resource never enters the collected heap, so a Map value of it is refused in a hosted build (issue 320 owner question)	
 fixture_drop_moved	ran	exit 0		2dd07acd8bc9377b7f999e3d9d693e2f05f1f6e605055c91f85634d8551bfcf2
 fixture_drop_not_copy	c-refused		error: List<Leaf>.clone is not defined	
 fixture_drop_order	ran	exit 0		f2516b2ffa4d7a7fc83c4c6715410dd9ca1660f4aa99b1f154d412d771dce54f
@@ -509,8 +509,8 @@ fixture_map_datac_key	ran	exit 0		0da23750059df8e8209f905588c5c55497f500c6997a7a
 fixture_map_datac_key_ok	ran	exit 0		9f87a5503a7f5f7a3a40bab5c42dfec3f74660255032d5236f1dfcce307841f1
 fixture_map_datac_value_clone	ran	exit 0		2edba8a3b2a3d92c8a9a87a5e8deb1c0bcd9000b4413c32646bff573c0d371ea
 fixture_map_declared_key	ran	exit 0		40a07eb20126c4f44ebe9cdf787176b82c630a5dd547aa7c6080abc5fabcd3cd
-fixture_map_declared_key_enum	ran	exit 0		deef798b1b0d290bd82f6eecc0a7397ae4d75ae2891172f81fd90fb82e6db9ac
-fixture_map_enum_key	ran	exit 0		c54133814c8f8cc073bc18853ba1ff6ddc728da83dc70362228f297e27fae66a
+fixture_map_declared_key_enum	hosted-refused		error: hosted build does not describe an enum inside a collected object; enum map key needs enum descriptors (issue 326)	
+fixture_map_enum_key	hosted-refused		error: hosted build does not describe an enum inside a collected object; enum map key needs enum descriptors (issue 326)	
 fixture_map_enum_value	c-refused		error: 'Status' cannot be a 'Map' value	
 fixture_map_float_key	c-refused		error: 'f64' cannot be a Map key	
 fixture_map_growth_and_rehash	ran	exit 0		4e3a7ffcc3f1ce9826064dcdcadaf0b11ac7576276635f975300e8c3b4106f1f
@@ -665,7 +665,7 @@ fixture_pd_var_read_only_datac	ran	exit 0		7a1a0ff7c6a379bf48d268ab2134d5a7a028c
 fixture_pd_var_read_only_shared	ran	exit 0		6a4cd3158a5b3434f54fb79be796548b861cdd520c8d77f13b6839b7b54eb635
 fixture_pd_var_write	ran	exit 0		31f75ca815e515fae9c2c28d073c588d0b06bc0b9e925ad05f4802575b99e55b
 fixture_pd_write_reaches_callers	ran	exit 0		b6d2dcff1abd56b5acef59328337e2bd3602cc9168059edd70566d97a3962054
-fixture_pool_drop_joins	ran	exit 0		51aee3cf692d8421368768a90601c008cc38b02e124743f8fc9f87fbc35bab9f
+fixture_pool_drop_joins	hosted-refused		error: 'std.sync.Sender<i64>' is a resource; a closure capturing it cannot enter the collected heap in a hosted build (issue 320 owner question)	
 fixture_pool_gate_strings	ran	exit 0		c1d6029dd36b35f6c455b166d6937e6b380d99f6cd7b13e6714abc59aa0f74d4
 fixture_pool_panics	ran	exit 0		c6a456485a6e0e11260f7a00907500070f376fa7b22cf6152ef4d1d481d06395
 fixture_pool_spawn_after_join	ran	exit 1	panic: Pool.spawn: the pool has been joined	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
@@ -871,9 +871,9 @@ fixture_traits_associated_type	c-refused		error: a default associated type is no
 fixture_traits_bound_second	c-refused		error: the call to 'grow_and_measure' needs 'OnlyShape' to implement the trait 'Grow', and it does not	
 fixture_traits_bound_transitive	c-refused		error: the call to 'needs_doubled' needs 'OnlyNamed' to implement the trait 'Doubled', and it does not	
 fixture_traits_bound_unimplemented	c-refused		error: the call to 'area_of' needs 'Point' to implement the trait 'Shape', and it does not	
-fixture_traits_boxdyn_enum	ran	exit 0		074b974af4200b08fd57bd02cb1cee603294bb9c4e77bed2a7093b25ccaccdcd
+fixture_traits_boxdyn_enum	hosted-refused		error: 'Circle' is a resource (a user drop); a Box payload of it is refused in a hosted build (issue 320 owner question)	
 fixture_traits_boxdyn_factory	ran	exit 0		73e327b0c236e1625b432cc8c584f85757abf8f7390ee0ef94b6ab51bb5f3b64
-fixture_traits_boxdyn_field	ran	exit 0		4dcec7e78a952065e97fd2502b236c1875327ccef92aaf40df3a2d89a6f432b7
+fixture_traits_boxdyn_field	hosted-refused		error: 'Circle' is a resource (a user drop); a Box payload of it is refused in a hosted build (issue 320 owner question)	
 fixture_traits_boxdyn_generic_trait	c-refused		error: 'Box<dyn convert.From>' is not allowed	
 fixture_traits_boxdyn_list	ran	exit 0		0a4f7e8898c742702b0049bcc1dd1c7cb04678250f37ddc871ed3cb8b9cb4df8
 fixture_traits_boxdyn_move	ran	exit 0		d0fb0b0ce0f76bc73b45d397d790d9229264de1bc09b0ba3ce4cf9d10cd07aa0
@@ -883,7 +883,7 @@ fixture_traits_boxdyn_object_safe	c-refused		error: 'Box<dyn Maker>' is not allo
 fixture_traits_boxdyn_partial_move	c-refused		error: use of moved value 'h.shape'	
 fixture_traits_boxdyn_plus	c-refused		error: `dyn` names one trait	
 fixture_traits_boxdyn_take	c-refused		error: 'Box<dyn Shape>.take' is not allowed	
-fixture_traits_boxdyn_thread	ran	exit 0		1079ad34d4383259de1b2189102cdf8136fff018b1bbed019fb3c71ea94ff5ff
+fixture_traits_boxdyn_thread	hosted-refused		error: 'Circle' is a resource (a user drop); a Box payload of it is refused in a hosted build (issue 320 owner question)	
 fixture_traits_boxdyn_thread_borrow	c-refused		error: 'thread.spawn' cannot send '&dyn Shape'	
 fixture_traits_boxdyn_use_after_move	c-refused		error: use of moved value 'b'	
 fixture_traits_datac_and_enum	ran	exit 0		d9395612052c49dd86c25e9f871d1ee29cfd24c392f5e5617f325aa9b085ddc4

@@ -13,9 +13,13 @@
 //! `kelpc/tests/golden/`:
 //!
 //! * `index.tsv` has a header line with the counts, a column line, and one row
-//!   per candidate target: `tag`, `status` (`ran`, `c-refused` or `excluded`),
+//!   per candidate target: `tag`, `status` (`ran`, `c-refused`, `hosted-refused`
+//!   or `excluded`),
 //!   `exit` (the run's exit code), the first stderr line, and the SHA-256 of the
-//!   stdout. A `c-refused` target is a compile-error fixture the C backend
+//!   stdout. A `hosted-refused` target is a fixture the hosted (managed) build
+//!   refuses by design, or refuses until a named follow-up lands; its
+//!   `stderr_first_line` names the reason and the issue. It has no golden and the
+//!   sweep skips it. A `c-refused` target is a compile-error fixture the C backend
 //!   rejected by design; it has no golden, the way `backend_coverage.rs` skips it.
 //! * `<tag>.out` is the frozen stdout of each `ran` target, byte for byte.
 //!
@@ -336,6 +340,7 @@ fn first_line(stderr: &[u8]) -> String {
 enum Status {
     Ran,
     CRefused,
+    HostedRefused,
     Excluded,
 }
 
@@ -344,6 +349,7 @@ impl Status {
         match self {
             Status::Ran => "ran",
             Status::CRefused => "c-refused",
+            Status::HostedRefused => "hosted-refused",
             Status::Excluded => "excluded",
         }
     }
@@ -352,6 +358,7 @@ impl Status {
         match text {
             "ran" => Some(Status::Ran),
             "c-refused" => Some(Status::CRefused),
+            "hosted-refused" => Some(Status::HostedRefused),
             "excluded" => Some(Status::Excluded),
             _ => None,
         }
@@ -375,6 +382,7 @@ struct Index {
     candidates: usize,
     ran: usize,
     c_refused: usize,
+    hosted_refused: usize,
     excluded: usize,
     rows: Vec<Row>,
 }
@@ -388,22 +396,24 @@ fn read_index() -> Index {
         )
     });
 
-    let mut counts: Option<(usize, usize, usize, usize)> = None;
+    let mut counts: Option<BTreeMap<String, usize>> = None;
     let mut rows = Vec::new();
     for line in text.lines() {
         if let Some(header) = line.strip_prefix("# counts ") {
-            let mut parts = header.split_whitespace().map(|p| {
-                p.split('=')
-                    .nth(1)
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .unwrap_or_else(|| panic!("bad counts line '{line}'"))
-            });
-            counts = Some((
-                parts.next().unwrap_or_default(),
-                parts.next().unwrap_or_default(),
-                parts.next().unwrap_or_default(),
-                parts.next().unwrap_or_default(),
-            ));
+            // `key=value` pairs; a status count the header omits is zero.
+            let parsed = header
+                .split_whitespace()
+                .map(|p| {
+                    let (key, value) = p
+                        .split_once('=')
+                        .unwrap_or_else(|| panic!("bad counts line '{line}'"));
+                    let value = value
+                        .parse::<usize>()
+                        .unwrap_or_else(|_| panic!("bad counts line '{line}'"));
+                    (key.to_string(), value)
+                })
+                .collect();
+            counts = Some(parsed);
             continue;
         }
         if line.starts_with('#') || line == INDEX_COLUMNS || line.is_empty() {
@@ -426,13 +436,15 @@ fn read_index() -> Index {
         });
     }
 
-    let (candidates, ran, c_refused, excluded) =
+    let counts =
         counts.unwrap_or_else(|| panic!("'{}' has no '# counts' header", path.display()));
+    let count = |key: &str| counts.get(key).copied().unwrap_or_default();
     Index {
-        candidates,
-        ran,
-        c_refused,
-        excluded,
+        candidates: count("candidates"),
+        ran: count("ran"),
+        c_refused: count("c_refused"),
+        hosted_refused: count("hosted_refused"),
+        excluded: count("excluded"),
         rows,
     }
 }
@@ -581,7 +593,7 @@ fn golden_manifest_matches_targets() {
                     path.display(),
                 );
             }
-            Status::CRefused | Status::Excluded => {
+            Status::CRefused | Status::HostedRefused | Status::Excluded => {
                 assert!(
                     !golden_file(&row.tag).exists(),
                     "'{}' has a golden file but its status is {}",
@@ -602,16 +614,22 @@ fn golden_manifest_matches_targets() {
     }
 
     println!(
-        "golden set: {} candidates; {} ran (goldens), {} c-refused, {} excluded",
+        "golden set: {} candidates; {} ran (goldens), {} c-refused, {} hosted-refused, {} excluded",
         index.candidates,
         index.ran,
         index.c_refused,
+        index.hosted_refused,
         index.excluded,
     );
     assert_eq!(
         tally.get("ran").copied().unwrap_or_default(),
         index.ran,
         "the header's ran count is wrong",
+    );
+    assert_eq!(
+        tally.get("hosted-refused").copied().unwrap_or_default(),
+        index.hosted_refused,
+        "the header's hosted-refused count is wrong",
     );
 }
 
