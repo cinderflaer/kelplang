@@ -13,8 +13,8 @@ fun mixed(host: move String, port: i32) => Job = Job(host, port, paths = 7)
 
 fun main() {
     val host = String.from_str("example")
-    val port = 8080
-    val paths = 3
+    val port: i32 = 8080
+    val paths: i32 = 3
 
     // Every argument bare: the same tree as the named form.
     val a = Job(host, port, paths)
