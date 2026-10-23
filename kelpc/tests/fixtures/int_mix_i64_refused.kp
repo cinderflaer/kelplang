@@ -1,5 +1,5 @@
 // `int` and `i64` are different types (issue #275): adding an `int` to an `i64`
-// is refused, and the message names both types. A conversion is the way across.
+// is refused, and the message names both types. A `to_<T>()` conversion is the way across.
 fun main() {
     val a: int = 2
     val b: i64 = 3

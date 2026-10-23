@@ -1,0 +1,17 @@
+// `int` is its own integer type of the target's native width (issue #275). It
+// converts to and from every other integer type with the `to_<T>` methods, in
+// both directions, and takes the same operators as `i64`.
+fun wide(x: i64) => i64 = x * 2
+
+fun main() {
+    val n = 3000000000
+    print(n)
+    print(wide(n.to_i64()))
+    val k: i64 = 7
+    val m = k.to_int()
+    print(m)
+    print(m + 1)
+    print(m.to_i32())
+    val u: u8 = 200
+    print(u.to_int() + 100)
+}

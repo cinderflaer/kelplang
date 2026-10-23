@@ -1,6 +1,6 @@
 // An integer literal that nothing types is `int` (decision 72, issue #275), the
 // target's native width. A value past 2^31 is an ordinary value. A binding made
-// from a literal is `int`, so it reaches an `i64` parameter through `as`. An
+// from a literal is `int`, so it reaches an `i64` parameter through `to_i64()`. An
 // annotated `i32` or `u8` is unchanged.
 fun wide(x: i64) => i64 = x * 2
 
@@ -8,7 +8,7 @@ fun main() {
     val n = 3000000000
     print(n)
     val m = 5
-    print(wide(m as i64))
+    print(wide(m.to_i64()))
     val big = 4294967295
     print(big + 1)
     val a: i32 = 2147483647

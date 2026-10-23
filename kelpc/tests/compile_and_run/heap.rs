@@ -360,7 +360,7 @@ pub(crate) fn an_unannotated_integer_literal_is_int() {
 /// `int` is a distinct integer type of the target's native width (issue #275),
 /// not a name for `i64` or `i32`. Mixing it with either without a conversion is
 /// refused, and the message names every type involved. A diagnostic for an
-/// `int` value prints `int`, never `i64`. `as` converts both ways, and existing
+/// `int` value prints `int`, never `i64`. the `to_<T>` methods convert both ways, and existing
 /// `i64` and `int` programs print the same output.
 #[test]
 pub(crate) fn int_is_a_distinct_type_that_does_not_mix_without_a_conversion() {
@@ -368,7 +368,7 @@ pub(crate) fn int_is_a_distinct_type_that_does_not_mix_without_a_conversion() {
     assert_rejected_naming("tests/fixtures/int_mix_i32_refused.kp", &["'int'", "'i32'"], &[]);
     assert_rejected_naming("tests/fixtures/int_diagnostic_names_int.kp", &["'int'"], &["i64"]);
     assert_compiles_and_runs(
-        "tests/fixtures/int_conversions_as.kp",
+        "tests/fixtures/int_conversions_methods.kp",
         "3000000000\n6000000000\n7\n8\n7\n300\n",
     );
 }
