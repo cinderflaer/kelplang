@@ -45,6 +45,27 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[path = "support/ffi_witness.rs"]
+mod ffi_witness;
+
+/// The projects that link the Rust witness library. The checked-in tree has no
+/// `native/` directory for them, so the sweep builds a copy that has one, the way
+/// `extern_aggregate.rs` does.
+const FFI_WITNESS_PROJECTS: &[&str] = &["project_ffi_aggregate", "project_ffi_aggregate_datac"];
+
+/// A copy of the ffi project `source` with the witness library beside it, built
+/// under a scratch directory named after the target.
+fn ffi_source(tag: &str, source: &Path) -> PathBuf {
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("golden_corpus")
+        .join("ffi")
+        .join(tag);
+    let _ = std::fs::remove_dir_all(&root);
+    let project = root.join("project");
+    ffi_witness::copy_project_with_witness(source, &project, &root);
+    project
+}
+
 /// Targets that are not frozen and not checked, with the reason. Each reason
 /// names where the behaviour is left open. Keep the list short: an entry here
 /// is a corner of the corpus nobody checks.
@@ -614,7 +635,13 @@ fn llvm_matches_every_golden() {
             .unwrap_or_else(|| panic!("no corpus source for '{}'", row.tag));
         let bin = scratch_bin("llvm", &row.tag);
         let is_fs = row.tag.starts_with("fixture_fs_");
-        let built_from = if is_fs { fs_source(source) } else { source.clone() };
+        let built_from = if is_fs {
+            fs_source(source)
+        } else if FFI_WITNESS_PROJECTS.contains(&row.tag.as_str()) {
+            ffi_source(&row.tag, source)
+        } else {
+            source.clone()
+        };
 
         let built = build(&built_from, &bin);
         if !built.status.success() {
