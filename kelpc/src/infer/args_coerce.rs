@@ -21,12 +21,17 @@ pub(crate) fn match_args(
 /// and a local of that name in scope; anything else is refused here, with the
 /// name in the message. Named and positional arguments are left as they are.
 /// Only constructors call this: a bare name in a function call stays positional.
-pub(crate) fn field_shorthand(
+pub(crate) fn field_shorthand<'a>(
     what: &str,
     params: &[(String, Ty)],
-    args: &[ast::CallArg],
+    args: &'a [ast::CallArg],
     ctx: &Ctx,
-) -> Result<Vec<ast::CallArg>> {
+) -> Result<std::borrow::Cow<'a, [ast::CallArg]>> {
+    // The common call has no bare name: borrow the list, so a deep nest of
+    // constructions never copies its arguments.
+    if !args.iter().any(|a| a.name.is_none() && matches!(a.value, ast::Expr::Ident(..))) {
+        return Ok(std::borrow::Cow::Borrowed(args));
+    }
     let mut out = Vec::with_capacity(args.len());
     for a in args {
         match (&a.name, &a.value) {
@@ -54,7 +59,7 @@ pub(crate) fn field_shorthand(
             _ => out.push(a.clone()),
         }
     }
-    Ok(out)
+    Ok(std::borrow::Cow::Owned(out))
 }
 
 /// `match_args`'s body. When `variadic` is set, trailing *positional*

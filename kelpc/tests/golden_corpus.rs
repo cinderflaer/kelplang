@@ -50,6 +50,9 @@ use std::process::{Command, Stdio};
 /// is a corner of the corpus nobody checks.
 const EXCLUDED: &[(&str, &str)] = &[
     ("fixture_float_format_edges", "prints the formatting of 0.0 / 0.0, whose sign bit the language leaves unspecified (plan/bugfix-pass.md:107-120, the NaN sign)"),
+    ("fixture_field_shorthand", "added with issue 258 after the C oracle was removed; its behaviour is checked by the field_shorthand tests in compile_and_run"),
+    ("fixture_field_shorthand_no_field", "added with issue 258 after the C oracle was removed; its behaviour is checked by the field_shorthand tests in compile_and_run"),
+    ("fixture_field_shorthand_no_local", "added with issue 258 after the C oracle was removed; its behaviour is checked by the field_shorthand tests in compile_and_run"),
     ("fixture_trace", "its stderr carries a clock reading and the source path, which change from run to run"),
     ("fixture_http_try_send", "needs command-line arguments from a harness; run with none it records a deterministic index panic"),
     ("fixture_https_try_dial", "needs command-line arguments from a harness; run with none it records a deterministic index panic"),
