@@ -1,0 +1,20 @@
+// A const with no type takes the type of its value: an integer literal is an
+// `int`, a float is an `f64`, and an operation on a typed const keeps that type.
+const UART_BASE = 0x10000000
+const LIMIT = 10
+const HALF = 3.0 / 2.0
+const NAME = "x"
+const BIG = LIMIT > 5
+const WIDE: u8 = 200
+const WRAPPED = WIDE + 100
+
+fun main() {
+    print(UART_BASE)
+    print(LIMIT)
+    print(HALF)
+    print(NAME)
+    print(BIG)
+    print(WRAPPED)
+    val n: int = LIMIT
+    print(n + 1)
+}

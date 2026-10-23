@@ -1,0 +1,7 @@
+// A const with no type takes its type from a scalar value. An array has no type a
+// value alone can name, so the annotation stays required.
+const TABLE = [1, 2, 3]
+
+fun main() {
+    print(TABLE[0])
+}

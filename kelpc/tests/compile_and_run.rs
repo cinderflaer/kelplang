@@ -610,6 +610,9 @@ mod std_os;
 #[path = "compile_and_run/consts_arrays.rs"]
 mod consts_arrays;
 
+#[path = "compile_and_run/const_infer.rs"]
+mod const_infer;
+
 #[path = "compile_and_run/collections.rs"]
 mod collections;
 pub(crate) use collections::*;

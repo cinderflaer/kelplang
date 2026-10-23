@@ -1,0 +1,8 @@
+// A const with no type is an `int`, and a use does not change it. An address
+// that must be a `usize` keeps its annotation, so this is refused.
+const BASE = 0x1000
+
+fun main() {
+    val p: usize = BASE
+    print(p)
+}
