@@ -524,9 +524,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let v = self.value_of(arg)?;
         let spec: &'static str = match &arg.ty {
             Ty::I32 => "%d",
-            Ty::I64 => "%lld",
+            Ty::I64 | Ty::Int => "%lld",
             Ty::U32 => "%u",
-            Ty::U64 => "%llu",
+            Ty::U64 | Ty::Uint => "%llu",
             // A vararg narrower than `int` must be promoted here: LLVM does not,
             // unlike C, whose default argument promotions do it for free.
             Ty::U8 | Ty::U16 => {
@@ -547,7 +547,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .build_fp_cast(true, v, self.g.ctx.f64(), "promote");
                 return Ok(("%f".to_string(), vec![promoted], Vec::new()));
             }
-            Ty::F64 => "%f",
+            Ty::F64 | Ty::Float => "%f",
             Ty::Bool => {
                 let t = self.string_global("true")?;
                 let f = self.string_global("false")?;

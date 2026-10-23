@@ -191,10 +191,13 @@ pub fn pointer_offsets(
         }
         Ty::I32
         | Ty::I64
+        | Ty::Int
         | Ty::U32
         | Ty::U64
+        | Ty::Uint
         | Ty::F32
         | Ty::F64
+        | Ty::Float
         | Ty::Bool
         | Ty::Char
         | Ty::Unit
@@ -820,7 +823,7 @@ mod container_layout {
         fn size_align(&self, ty: &Ty) -> Result<(u64, u64), String> {
             Ok(match ty {
                 Ty::I32 => (4, 4),
-                Ty::I64 => (8, 8),
+                Ty::I64 | Ty::Int => (8, 8),
                 Ty::U8 => (1, 1),
                 Ty::Box(_) => (8, 8),
                 Ty::String | Ty::Bytes | Ty::List(_) => (24, 8),

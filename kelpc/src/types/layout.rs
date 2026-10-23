@@ -126,7 +126,7 @@ pub fn type_layout(
         Ty::U8 | Ty::Bool => Layout { size: 1, align: 1 },
         Ty::U16 => Layout { size: 2, align: 2 },
         Ty::I32 | Ty::U32 | Ty::F32 | Ty::Char => Layout { size: 4, align: 4 },
-        Ty::I64 | Ty::U64 | Ty::F64 | Ty::Usize | Ty::Isize => Layout { size: 8, align: 8 },
+        Ty::I64 | Ty::Int | Ty::U64 | Ty::Uint | Ty::F64 | Ty::Float | Ty::Usize | Ty::Isize => Layout { size: 8, align: 8 },
         // `unit` stores nothing; a `unit` field is filtered out of every
         // aggregate, so the pair below only ever answers a direct query.
         Ty::Unit => Layout { size: 0, align: 1 },

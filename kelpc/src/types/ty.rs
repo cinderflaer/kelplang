@@ -4,10 +4,20 @@ use super::*;
 pub enum Ty {
     I32,
     I64,
+    /// `int`, the default integer (issue #275): its own type of the target's
+    /// native width (`NATIVE_INT_BITS`), with the operators of `i64`. It is not
+    /// `i64` under another name, so the two do not mix without `as`.
+    Int,
+    /// `uint`, the native unsigned integer (issue #275, owner direction): `u64`
+    /// on a 64-bit target, `u32` on a 32-bit one. Its own type, as `int` is.
+    Uint,
     U32,
     U64,
     F32,
     F64,
+    /// `float`, the native float (issue #275, owner direction): `f64` on a 64-bit
+    /// target, `f32` on a 32-bit one. Its own type, as `int` is.
+    Float,
     Bool,
     Char,
     Unit,
@@ -330,14 +340,46 @@ pub fn atomic_alias_name(elem: &Ty) -> Option<&'static str> {
     })
 }
 
+/// The width of `int` on the build target, in bits (issue #275): the target's
+/// native integer width. kelpc builds only the host triple, so this is the
+/// host's pointer width; a cross build asks [`native_int_bits_for_triple`].
+pub const NATIVE_INT_BITS: u32 = usize::BITS;
+
+/// The width of `float` on the build target, in bits (issue #275): the target's
+/// native float, `f64` on a 64-bit target and `f32` on a 32-bit one.
+pub const NATIVE_FLOAT_BITS: u32 = 64;
+
+/// The native integer width of a target triple, from its architecture name:
+/// 32 for the 32-bit architectures kelpc knows, 64 for the rest. A host build
+/// reads `NATIVE_INT_BITS`; a cross build asks this function for its triple.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn native_int_bits_for_triple(triple: &str) -> u32 {
+    let arch = triple.split('-').next().unwrap_or(triple);
+    let is_32 = matches!(arch, "i386" | "i486" | "i586" | "i686" | "arm" | "armv6" | "armv7" | "armv7a" | "armv7s" | "thumbv7em" | "thumbv7m" | "thumbv6m" | "thumb" | "riscv32" | "wasm32" | "mips" | "mipsel" | "powerpc" | "sparc" | "msp430" | "avr" | "xtensa");
+    if is_32 {
+        32
+    } else {
+        64
+    }
+}
+
+// The codegen maps `int` onto the same 64-bit arms as `i64`. A 32-bit target
+// needs those arms to read `NATIVE_INT_BITS` first; until then, refuse to build.
+const _: () = assert!(
+    NATIVE_INT_BITS == 64 && NATIVE_FLOAT_BITS == 64,
+    "int, uint and float map to 64-bit codegen arms; a 32-bit host needs them to read NATIVE_INT_BITS and NATIVE_FLOAT_BITS"
+);
+
 impl Ty {
     pub fn from_name(name: &str) -> Option<Ty> {
         Some(match name {
             "i32" => Ty::I32,
             "i64" => Ty::I64,
-            // `int` is the default integer type (decision 72, issue #275): the
-            // 64-bit signed integer, the type an unannotated literal takes.
-            "int" => Ty::I64,
+            // `int` is the default integer type (issue #275), a distinct integer of
+            // the target's native width, the type an unannotated literal takes.
+            "int" => Ty::Int,
+            "uint" => Ty::Uint,
+            "float" => Ty::Float,
             "u32" => Ty::U32,
             "u64" => Ty::U64,
             "f32" => Ty::F32,
@@ -434,10 +476,13 @@ impl Ty {
             self,
             Ty::I32
                 | Ty::I64
+                | Ty::Int
                 | Ty::U32
                 | Ty::U64
+                | Ty::Uint
                 | Ty::F32
                 | Ty::F64
+                | Ty::Float
                 | Ty::U8
                 | Ty::U16
                 | Ty::Usize
@@ -448,12 +493,12 @@ impl Ty {
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
-            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::U8 | Ty::U16 | Ty::Usize | Ty::Isize
+            Ty::I32 | Ty::I64 | Ty::Int | Ty::U32 | Ty::U64 | Ty::Uint | Ty::U8 | Ty::U16 | Ty::Usize | Ty::Isize
         )
     }
 
     pub fn is_float(&self) -> bool {
-        matches!(self, Ty::F32 | Ty::F64)
+        matches!(self, Ty::F32 | Ty::F64 | Ty::Float)
     }
 
     /// The full range of an integer type, as `(min, max)`: `min` signed so a
@@ -467,11 +512,11 @@ impl Ty {
     pub fn int_bounds(ty: &Ty) -> Option<(i128, u128)> {
         Some(match ty {
             Ty::I32 => (i32::MIN as i128, i32::MAX as u128),
-            Ty::I64 | Ty::Isize => (i64::MIN as i128, i64::MAX as u128),
+            Ty::I64 | Ty::Int | Ty::Isize => (i64::MIN as i128, i64::MAX as u128),
             Ty::U8 => (0, u8::MAX as u128),
             Ty::U16 => (0, u16::MAX as u128),
             Ty::U32 => (0, u32::MAX as u128),
-            Ty::U64 | Ty::Usize => (0, u64::MAX as u128),
+            Ty::U64 | Ty::Uint | Ty::Usize => (0, u64::MAX as u128),
             _ => return None,
         })
     }
@@ -480,6 +525,9 @@ impl Ty {
         match self {
             Ty::I32 => "i32".to_string(),
             Ty::I64 => "i64".to_string(),
+            Ty::Int => "int".to_string(),
+            Ty::Uint => "uint".to_string(),
+            Ty::Float => "float".to_string(),
             Ty::U32 => "u32".to_string(),
             Ty::U64 => "u64".to_string(),
             Ty::F32 => "f32".to_string(),

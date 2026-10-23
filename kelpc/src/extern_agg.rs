@@ -96,9 +96,9 @@ fn is_aggregate(ty: &Ty) -> bool {
 fn scalar_llvm<'a>(ctx: &'a Context, ty: &Ty) -> Option<Type<'a>> {
     Some(match ty {
         Ty::I32 | Ty::U32 | Ty::Char => ctx.i32(),
-        Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => ctx.i64(),
+        Ty::I64 | Ty::Int | Ty::U64 | Ty::Uint | Ty::Usize | Ty::Isize => ctx.i64(),
         Ty::F32 => ctx.f32(),
-        Ty::F64 => ctx.f64(),
+        Ty::F64 | Ty::Float => ctx.f64(),
         Ty::U8 => ctx.i8(),
         Ty::U16 => ctx.i16(),
         Ty::Bool => ctx.i1(),
@@ -115,8 +115,8 @@ fn scalar_leaf(ty: &Ty) -> Option<(u64, u64, Class)> {
     Some(match ty {
         Ty::I32 | Ty::U32 | Ty::Char => (4, 4, Class::Int),
         Ty::F32 => (4, 4, Class::Sse),
-        Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => (8, 8, Class::Int),
-        Ty::F64 => (8, 8, Class::Sse),
+        Ty::I64 | Ty::Int | Ty::U64 | Ty::Uint | Ty::Usize | Ty::Isize => (8, 8, Class::Int),
+        Ty::F64 | Ty::Float => (8, 8, Class::Sse),
         Ty::U8 | Ty::Bool => (1, 1, Class::Int),
         Ty::U16 => (2, 2, Class::Int),
         Ty::Str | Ty::Handle(_) | Ty::Ptr(_) => (8, 8, Class::Int),

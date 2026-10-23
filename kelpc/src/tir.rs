@@ -649,7 +649,7 @@ pub fn shift_width(ty: &Ty) -> Option<u32> {
         Ty::U8 => 8,
         Ty::U16 => 16,
         Ty::I32 | Ty::U32 => 32,
-        Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => 64,
+        Ty::I64 | Ty::Int | Ty::U64 | Ty::Uint | Ty::Usize | Ty::Isize => 64,
         _ => return None,
     })
 }

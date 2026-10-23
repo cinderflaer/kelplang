@@ -751,7 +751,7 @@ pub(crate) fn check_container_associated(
                 });
             }
             let cap = check_expr(&args[0].value, ctx, Some(&Ty::Usize))?;
-            if !matches!(cap.ty, Ty::Usize | Ty::I64) {
+            if !matches!(cap.ty, Ty::Usize | Ty::I64 | Ty::Int) {
                 return Err(TypeError {
                     help: None,
                     message: format!(

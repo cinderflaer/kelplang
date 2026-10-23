@@ -282,7 +282,7 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // lose a value is a checked narrowing that panics with the call's own
         // name (v1 has no `Option`), which the removed C backend emitted inline.
         pub(crate) const INT_TYPES: &[&str] =
-            &["i32", "i64", "u32", "u64", "u8", "u16", "usize", "isize"];
+            &["i32", "i64", "int", "u32", "u64", "uint", "u8", "u16", "usize", "isize"];
         for src in INT_TYPES {
             for dst in INT_TYPES {
                 add(
@@ -307,7 +307,7 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
             // lose a value, and v1 has no `Option` for it to report the loss
             // with. Write `math.trunc`/`math.floor` first and then a checked
             // integer conversion.
-            for dst in ["f64", "f32"] {
+            for dst in ["f64", "f32", "float"] {
                 add(
                     &format!("{src}#to_{dst}"),
                     vec![("self".to_string(), Ty::from_name(src).expect("integer type"))],
@@ -323,6 +323,11 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // can, so both are unchecked like the integer-to-float pair above.
         add("f32#to_f64", vec![("self".to_string(), Ty::F32)], Ty::F64, false);
         add("f64#to_f32", vec![("self".to_string(), Ty::F64)], Ty::F32, false);
+        // The native float (`float`, issue #275) converts to and from both fixed floats.
+        add("float#to_f64", vec![("self".to_string(), Ty::Float)], Ty::F64, false);
+        add("float#to_f32", vec![("self".to_string(), Ty::Float)], Ty::F32, false);
+        add("f64#to_float", vec![("self".to_string(), Ty::F64)], Ty::Float, false);
+        add("f32#to_float", vec![("self".to_string(), Ty::F32)], Ty::Float, false);
 
         // Byte-order conversion (kernel stage 3, MK9-S8 / roadmap B-10). Every
         // integer wider than a byte has `swap_bytes`, `to_be` and `to_le`, plus
@@ -335,7 +340,7 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // three names would only invite a reader to wonder which they meant.
         // `i16` is absent because v1 has no `i16` scalar to be one (the
         // `repr(i16)` tag storage in kernel stage 2 is a different thing).
-        for src in ["u16", "u32", "u64", "i32", "i64", "usize", "isize"] {
+        for src in ["u16", "u32", "u64", "uint", "i32", "i64", "int", "usize", "isize"] {
             let ty = Ty::from_name(src).expect("integer type");
             for op in ["swap_bytes", "to_be", "to_le"] {
                 add(

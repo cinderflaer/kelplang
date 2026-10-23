@@ -538,7 +538,7 @@ pub(crate) fn char_fits(cp: u32, ty: &Ty) -> bool {
 pub(crate) fn int_lit_ty(expected: Option<&Ty>) -> (Ty, bool) {
     match expected {
         Some(t) if t.is_integer() => (t.clone(), false),
-        _ => (Ty::I64, true),
+        _ => (Ty::Int, true),
     }
 }
 

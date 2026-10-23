@@ -1,2 +1,2 @@
-error: operator requires matching numeric operands, found 'i64' and 'str'
+error: operator requires matching numeric operands, found 'int' and 'str'
   --> <repl>:1:1

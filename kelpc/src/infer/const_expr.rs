@@ -131,8 +131,8 @@ impl<'a> ConstEvaluator<'a> {
                 }
                 Some(Ty::Char) => (ConstValue::Int(*v as i128), Ty::Char),
                 _ => {
-                    check_int_literal(*v as i128, &Ty::I64, true, *span)?;
-                    (ConstValue::Int(*v as i128), Ty::I64)
+                    check_int_literal(*v as i128, &Ty::Int, true, *span)?;
+                    (ConstValue::Int(*v as i128), Ty::Int)
                 }
             }),
             ast::Expr::CharLit(v, span) => Ok(match expected {

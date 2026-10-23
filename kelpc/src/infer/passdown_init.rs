@@ -217,7 +217,7 @@ pub(crate) fn collect_pds(
 pub(crate) fn check_thread_local(decl: &ast::PdDecl, ty: &Ty, init: &tir::Expr) -> std::result::Result<(), Diagnostic> {
     let scalar = matches!(
         ty,
-        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::F32 | Ty::F64 | Ty::Bool | Ty::Char | Ty::U8 | Ty::U16 | Ty::Usize | Ty::Isize
+        Ty::I32 | Ty::I64 | Ty::Int | Ty::U32 | Ty::U64 | Ty::Uint | Ty::F32 | Ty::F64 | Ty::Float | Ty::Bool | Ty::Char | Ty::U8 | Ty::U16 | Ty::Usize | Ty::Isize
     );
     if !scalar {
         return Err(Diagnostic::new(

@@ -511,11 +511,11 @@ pub(crate) fn llvm_type<'a>(
 ) -> Result<Type<'a>, String> {
     Ok(match ty {
         Ty::I32 | Ty::U32 | Ty::Char => ctx.i32(),
-        Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => ctx.i64(),
+        Ty::I64 | Ty::Int | Ty::U64 | Ty::Uint | Ty::Usize | Ty::Isize => ctx.i64(),
         Ty::U8 => ctx.i8(),
         Ty::U16 => ctx.i16(),
         Ty::F32 => ctx.f32(),
-        Ty::F64 => ctx.f64(),
+        Ty::F64 | Ty::Float => ctx.f64(),
         Ty::Bool => ctx.i1(),
         // `str` is a bare `const char*`, which is the pointer LLVM 21 uses for
         // every pointer. S1 needs it so `print("...")` has a string to hand

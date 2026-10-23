@@ -45,14 +45,14 @@ pub(crate) fn symbol_name(name: &str) -> String {
 /// because it is a code point (`uint32_t`), and `bool` is neither (it never
 /// reaches a division).
 pub(crate) fn is_signed(ty: &Ty) -> bool {
-    matches!(ty, Ty::I32 | Ty::I64 | Ty::Isize)
+    matches!(ty, Ty::I32 | Ty::I64 | Ty::Int | Ty::Isize)
 }
 
 /// The bit width of an integer-like type, or `None` for anything else.
 pub(crate) fn int_width(ty: &Ty) -> Option<u32> {
     Some(match ty {
         Ty::I32 | Ty::U32 | Ty::Char => 32,
-        Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => 64,
+        Ty::I64 | Ty::Int | Ty::U64 | Ty::Uint | Ty::Usize | Ty::Isize => 64,
         Ty::U8 => 8,
         Ty::U16 => 16,
         Ty::Bool => 1,
@@ -69,7 +69,7 @@ pub(crate) fn endian_bits(ty: &Ty) -> Option<u32> {
     Some(match ty {
         Ty::U16 => 16,
         Ty::U32 | Ty::I32 => 32,
-        Ty::U64 | Ty::I64 | Ty::Usize | Ty::Isize => 64,
+        Ty::U64 | Ty::Uint | Ty::I64 | Ty::Int | Ty::Usize | Ty::Isize => 64,
         _ => return None,
     })
 }
@@ -147,14 +147,17 @@ pub(crate) fn llvm_scalar_type(ty: &Ty) -> bool {
         ty,
         Ty::I32
             | Ty::I64
+            | Ty::Int
             | Ty::U32
             | Ty::U64
+            | Ty::Uint
             | Ty::Usize
             | Ty::Isize
             | Ty::U8
             | Ty::U16
             | Ty::F32
             | Ty::F64
+            | Ty::Float
             | Ty::Bool
             | Ty::Char
     )

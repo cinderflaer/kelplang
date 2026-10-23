@@ -176,10 +176,13 @@ fn classify(ty: &Ty, walk: &mut Walk<'_>) -> ResourceKind {
         // Scalars and the `str` pointer: no owned value, nothing to collect.
         Ty::I32
         | Ty::I64
+        | Ty::Int
         | Ty::U32
         | Ty::U64
+        | Ty::Uint
         | Ty::F32
         | Ty::F64
+        | Ty::Float
         | Ty::Bool
         | Ty::Char
         | Ty::Unit

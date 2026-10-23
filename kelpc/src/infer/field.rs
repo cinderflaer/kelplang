@@ -59,7 +59,7 @@ pub(crate) fn check_field_expr(base: &Box<ast::Expr>, field: &String, span: &Spa
                         let sig = &ctx.sigs[*k];
                         match &wants {
                             Some(p) => sig.params.iter().map(|(_, t)| t).eq(p.iter()),
-                            None => sig.params.iter().all(|(_, t)| *t == Ty::F64),
+                            None => sig.params.iter().all(|(_, t)| matches!(t, Ty::F64 | Ty::Float)),
                         }
                     });
                     if let Some(key) = pick {

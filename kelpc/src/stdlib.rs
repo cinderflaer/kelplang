@@ -517,7 +517,7 @@ pub fn range_covers(domain: &str, patterns: &[String], value: u128) -> bool {
 pub fn const_int(expr: &tir::Expr) -> Option<u128> {
     let bits = crate::tir::shift_width(&expr.ty).unwrap_or(64);
     let mask: u128 = if bits >= 128 { u128::MAX } else { (1u128 << bits) - 1 };
-    let signed = matches!(expr.ty, Ty::I32 | Ty::I64 | Ty::Isize);
+    let signed = matches!(expr.ty, Ty::I32 | Ty::I64 | Ty::Int | Ty::Isize);
     let sext = |v: u128| -> i128 {
         if signed && v & (1u128 << (bits - 1)) != 0 {
             (v | !mask) as i128

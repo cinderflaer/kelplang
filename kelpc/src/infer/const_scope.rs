@@ -363,7 +363,7 @@ impl ConstScope {
 pub(crate) fn int_bits(ty: &Ty) -> Option<u32> {
     Some(match ty {
         Ty::I32 | Ty::U32 => 32,
-        Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => 64,
+        Ty::I64 | Ty::Int | Ty::U64 | Ty::Uint | Ty::Usize | Ty::Isize => 64,
         Ty::U8 => 8,
         Ty::U16 => 16,
         _ => return None,
@@ -372,7 +372,7 @@ pub(crate) fn int_bits(ty: &Ty) -> Option<u32> {
 
 /// Whether an integer type's values are non-negative.
 pub(crate) fn int_unsigned(ty: &Ty) -> bool {
-    matches!(ty, Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize)
+    matches!(ty, Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Uint | Ty::Usize)
 }
 
 /// `v` reduced into `ty`'s range, so a folding arithmetic step behaves like the

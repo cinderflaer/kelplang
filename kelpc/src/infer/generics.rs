@@ -750,7 +750,7 @@ pub(crate) fn block_result_key(ctx: &Ctx, span: Span) -> Result<String> {
 /// or a `datac` whose fields are all scalars. A container or a box is refused.
 pub(crate) fn block_elem_ok(ty: &Ty, ctx: &Ctx) -> bool {
     match ty {
-        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::F32 | Ty::F64 | Ty::Bool | Ty::Char => true,
+        Ty::I32 | Ty::I64 | Ty::Int | Ty::U32 | Ty::U64 | Ty::Uint | Ty::F32 | Ty::F64 | Ty::Float | Ty::Bool | Ty::Char => true,
         Ty::U8 | Ty::U16 | Ty::Usize | Ty::Isize => true,
         Ty::Struct(name) => {
             !ctx.enums.contains_key(name)

@@ -256,12 +256,15 @@ pub(crate) fn layout_query_value(
             | Ty::U16
             | Ty::I32
             | Ty::I64
+            | Ty::Int
             | Ty::U32
             | Ty::U64
+            | Ty::Uint
             | Ty::Usize
             | Ty::Isize
             | Ty::F32
             | Ty::F64
+            | Ty::Float
             | Ty::Bool
             | Ty::Char
             | Ty::Handle(_)

@@ -82,12 +82,16 @@ fun abs(x: i32) => i32 = if x < 0 { -x } else { x }
 /// The absolute value of `x`.
 fun abs(x: i64) => i64 = if x < 0 { -x } else { x }
 /// The absolute value of `x`.
+fun abs(x: int) => int = if x < 0 { -x } else { x }
+/// The absolute value of `x`.
 fun abs(x: f64) => f64 = if x < 0.0 { -x } else { x }
 
 /// The smaller of `a` and `b`.
 fun min(a: i32, b: i32) => i32 = if a < b { a } else { b }
 /// The smaller of `a` and `b`.
 fun min(a: i64, b: i64) => i64 = if a < b { a } else { b }
+/// The smaller of `a` and `b`.
+fun min(a: int, b: int) => int = if a < b { a } else { b }
 /// The smaller of `a` and `b`.
 fun min(a: f64, b: f64) => f64 = if a < b { a } else { b }
 
@@ -96,12 +100,16 @@ fun max(a: i32, b: i32) => i32 = if a > b { a } else { b }
 /// The larger of `a` and `b`.
 fun max(a: i64, b: i64) => i64 = if a > b { a } else { b }
 /// The larger of `a` and `b`.
+fun max(a: int, b: int) => int = if a > b { a } else { b }
+/// The larger of `a` and `b`.
 fun max(a: f64, b: f64) => f64 = if a > b { a } else { b }
 
 /// `x` limited to the range `lo` to `hi`.
 fun clamp(x: i32, lo: i32, hi: i32) => i32 = if x < lo { lo } else { if x > hi { hi } else { x } }
 /// `x` limited to the range `lo` to `hi`.
 fun clamp(x: i64, lo: i64, hi: i64) => i64 = if x < lo { lo } else { if x > hi { hi } else { x } }
+/// `x` limited to the range `lo` to `hi`.
+fun clamp(x: int, lo: int, hi: int) => int = if x < lo { lo } else { if x > hi { hi } else { x } }
 /// `x` limited to the range `lo` to `hi`.
 fun clamp(x: f64, lo: f64, hi: f64) => f64 = if x < lo { lo } else { if x > hi { hi } else { x } }
 

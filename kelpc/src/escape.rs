@@ -705,6 +705,7 @@ fn may_hold(ty: &Ty) -> bool {
             | Ty::Ptr(_)
             | Ty::Usize
             | Ty::Isize
+            | Ty::Int
             | Ty::Struct(_)
             | Ty::Array(..)
             | Ty::Closure { .. }
@@ -743,7 +744,7 @@ fn container_check(form: &str, ty: &Ty) -> (String, Option<&'static str>) {
 fn number_element(ty: &Ty) -> bool {
     matches!(
         ty,
-        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::F32 | Ty::F64 | Ty::Bool | Ty::Char | Ty::U8 | Ty::U16
+        Ty::I32 | Ty::I64 | Ty::Int | Ty::U32 | Ty::U64 | Ty::Uint | Ty::F32 | Ty::F64 | Ty::Float | Ty::Bool | Ty::Char | Ty::U8 | Ty::U16
     )
 }
 

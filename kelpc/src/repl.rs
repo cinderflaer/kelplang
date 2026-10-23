@@ -328,7 +328,7 @@ fn value_type(path: &str) -> Option<Ty> {
 fn displayed(ty: &Ty, line: &str) -> Result<Option<String>, String> {
     match ty {
         Ty::Unit => Ok(None),
-        Ty::I32 | Ty::I64 | Ty::F32 | Ty::F64 | Ty::Bool | Ty::Str | Ty::String => {
+        Ty::I32 | Ty::I64 | Ty::Int | Ty::F32 | Ty::F64 | Ty::Float | Ty::Bool | Ty::Str | Ty::String => {
             Ok(Some(format!("{HEAD}print({line}\n){TAIL}")))
         }
         other => Err(format!(

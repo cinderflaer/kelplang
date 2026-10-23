@@ -612,7 +612,7 @@ pub(crate) fn a_tls_handle_cannot_be_forged_from_an_integer() {
     // so "no TLS" cannot be spelled `0` at a handle's type.
     assert_rejected_with(
         "tests/fixtures/tls_handle_not_forged.kp",
-        "declared to return 'std.tls.TlsHandle' but body evaluates to 'i64'",
+        "declared to return 'std.tls.TlsHandle' but body evaluates to 'int'",
     );
 }
 

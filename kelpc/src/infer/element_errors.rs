@@ -31,14 +31,17 @@ pub(crate) fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         // conversion methods below (`n.to_u8()`) have a receiver to sit on.
         Ty::I32 => Some("i32"),
         Ty::I64 => Some("i64"),
+        Ty::Int => Some("int"),
         Ty::U32 => Some("u32"),
         Ty::U64 => Some("u64"),
+        Ty::Uint => Some("uint"),
         Ty::U8 => Some("u8"),
         Ty::U16 => Some("u16"),
         Ty::Usize => Some("usize"),
         Ty::Isize => Some("isize"),
         Ty::F32 => Some("f32"),
         Ty::F64 => Some("f64"),
+        Ty::Float => Some("float"),
         // An owned parameter is a borrow (M4's rule: every owned parameter is
         // borrowed), so `b.len()` on one arrives here as `&Bytes`/`&String`.
         Ty::Ref { inner, .. } => builtin_type_name(inner),

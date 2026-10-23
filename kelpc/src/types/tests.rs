@@ -14,6 +14,24 @@ fn the_existing_mappings_are_unchanged() {
     );
 }
 
+/// `int` is its own integer type (issue #275): it is named `int`, it is not
+/// `i64` or `i32` under another name, it has the bounds of a 64-bit signed
+/// integer on a 64-bit target, and its width follows the target triple.
+#[test]
+fn int_is_a_distinct_integer_of_the_targets_native_width() {
+    assert_eq!(Ty::from_name("int"), Some(Ty::Int));
+    assert_eq!(Ty::Int.display(), "int");
+    assert_ne!(Ty::Int, Ty::I64);
+    assert_ne!(Ty::Int, Ty::I32);
+    assert!(Ty::Int.is_integer() && Ty::Int.is_numeric());
+    assert_eq!(Ty::int_bounds(&Ty::Int), Ty::int_bounds(&Ty::I64));
+    assert_eq!(native_int_bits_for_triple("x86_64-unknown-linux-gnu"), 64);
+    assert_eq!(native_int_bits_for_triple("aarch64-apple-darwin"), 64);
+    assert_eq!(native_int_bits_for_triple("i686-unknown-linux-gnu"), 32);
+    assert_eq!(native_int_bits_for_triple("riscv32-unknown-elf"), 32);
+    assert_eq!(native_int_bits_for_triple("wasm32-unknown-unknown"), 32);
+}
+
 /// BUG-zR8Wm: a module name is a file stem, and a file stem may hold any
 /// byte but `/` and NUL, so the result has to be a C identifier for a name
 /// no mapping above names. A byte outside `[A-Za-z0-9_]` gets its own
@@ -41,6 +59,7 @@ fn the_variadic_extra_argument_types_are_the_ones_a_va_arg_can_read() {
     for ty in [
         Ty::I32,
         Ty::I64,
+        Ty::Int,
         Ty::U32,
         Ty::U64,
         Ty::U8,

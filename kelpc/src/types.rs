@@ -570,7 +570,7 @@ pub fn variadic_wrapper_name(extern_key: &str, extra: &[Ty]) -> String {
 /// error rather than a cast.
 pub fn is_variadic_abi_ty(ty: &Ty) -> bool {
     ty.is_integer()
-        || matches!(ty, Ty::Bool | Ty::F32 | Ty::F64 | Ty::Str | Ty::Handle(_))
+        || matches!(ty, Ty::Bool | Ty::F32 | Ty::F64 | Ty::Float | Ty::Str | Ty::Handle(_))
         || matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str))
 }
 
