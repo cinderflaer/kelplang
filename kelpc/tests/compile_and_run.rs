@@ -613,6 +613,9 @@ mod consts_arrays;
 #[path = "compile_and_run/const_infer.rs"]
 mod const_infer;
 
+#[path = "compile_and_run/index_int.rs"]
+mod index_int;
+
 #[path = "compile_and_run/collections.rs"]
 mod collections;
 pub(crate) use collections::*;

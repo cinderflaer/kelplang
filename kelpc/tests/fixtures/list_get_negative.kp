@@ -1,0 +1,7 @@
+// A negative index is refused by the bounds check with today's message
+// (issue #278): the check compares unsigned, so -1 is past the end.
+fun main() {
+    var xs: List<i32> = List.of(10, 20, 30)
+    print(xs.get(-1))
+    print("unreachable")
+}

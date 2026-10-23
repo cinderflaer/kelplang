@@ -1,0 +1,9 @@
+// A negative byte index into a string panics with the str.byte bounds message
+// (issue #278).
+impl "std/str"
+
+fun main() {
+    val s = "hello"
+    print(str.byte(s, -1))
+    print("unreachable")
+}

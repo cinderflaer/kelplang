@@ -1,0 +1,18 @@
+// Index and length results are `int` (issue #278): a length binds to an `int`
+// with no conversion, an index is an `int`, and the values print as before.
+impl "std/str"
+
+fun main() {
+    var xs: List<i32> = List.of(10, 20, 30)
+    val n: int = xs.len()
+    val i: int = 1
+    print(n)
+    print(xs.get(i))
+    val b: Bytes = Bytes.from_str("ab")
+    val m: int = b.len()
+    print(m)
+    val s: String = "hey"
+    val k: int = s.len()
+    print(k)
+    print(str.byte(s, k - 1) == b'y')
+}

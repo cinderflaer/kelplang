@@ -1,0 +1,5 @@
+// A negative element count panics before any allocation (issue #278).
+fun main() {
+    var xs: List<i32> = List.with_capacity(-1)
+    print(xs.len())
+}
