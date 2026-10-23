@@ -500,7 +500,9 @@ pub(crate) fn check_generic_datac_construction(
         .iter()
         .map(|f| (f.name.clone(), f.ty.clone()))
         .collect();
-    let checked = match_args(&format!("datac '{}'", key), &params, args, span, ctx)?;
+    let what = format!("datac '{}'", key);
+    let shorthand = field_shorthand(&what, &params, args, ctx)?;
+    let checked = match_args(&what, &params, &shorthand, span, ctx)?;
     Ok(tir::Expr {
         kind: tir::ExprKind::StructLit {
             name: key,
@@ -586,13 +588,9 @@ pub(crate) fn check_generic_enum_construction(
         .iter()
         .map(|f| (f.name.clone(), f.ty.clone()))
         .collect();
-    let checked = match_args(
-        &format!("variant '{}.{}'", key, variant),
-        &params,
-        args,
-        span,
-        ctx,
-    )?;
+    let what = format!("variant '{}.{}'", key, variant);
+    let shorthand = field_shorthand(&what, &params, args, ctx)?;
+    let checked = match_args(&what, &params, &shorthand, span, ctx)?;
     Ok(tir::Expr {
         kind: tir::ExprKind::EnumLit {
             enum_name: key.clone(),

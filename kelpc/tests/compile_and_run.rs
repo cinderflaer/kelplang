@@ -212,6 +212,24 @@ fn named_and_positional_args_match_correctly() {
 }
 
 #[test]
+fn field_shorthand_builds_the_same_values_as_the_named_form() {
+    assert_compiles_and_runs(
+        "tests/fixtures/field_shorthand.kp",
+        "example\n8080\n3\n7\n9\n1\n2.500000\n",
+    );
+}
+
+#[test]
+fn field_shorthand_without_a_local_is_refused_with_the_name() {
+    assert_rejected_with("tests/fixtures/field_shorthand_no_local.kp", "no local named 'host'");
+}
+
+#[test]
+fn field_shorthand_naming_no_field_is_refused_with_the_name() {
+    assert_rejected_with("tests/fixtures/field_shorthand_no_field.kp", "has no field named 'hostname'");
+}
+
+#[test]
 fn use_after_move_is_rejected() {
     assert_rejected("tests/fixtures/use_after_move.kp");
 }

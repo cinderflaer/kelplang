@@ -382,13 +382,9 @@ pub(crate) fn check_enum_construction(
         .iter()
         .map(|f| (f.name.clone(), f.ty.clone()))
         .collect();
-    let fields = match_args(
-        &format!("variant '{}.{}'", ename, variant),
-        &params,
-        args,
-        span,
-        ctx,
-    )?;
+    let what = format!("variant '{}.{}'", ename, variant);
+    let shorthand = field_shorthand(&what, &params, args, ctx)?;
+    let fields = match_args(&what, &params, &shorthand, span, ctx)?;
     Ok(tir::Expr {
         kind: tir::ExprKind::EnumLit {
             enum_name: ename.to_string(),

@@ -1,0 +1,43 @@
+// Field shorthand (#258): inside a constructor's argument list, a bare name
+// `host` means `host = host`. It mixes with named and positional arguments.
+datac Job(val host: String, val port: i32, val paths: i32)
+
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+// A bare name in a parameter list is the local of the same name: the
+// shorthand reads `host`, `port` from here.
+fun mixed(host: move String, port: i32) => Job = Job(host, port, paths = 7)
+
+fun main() {
+    val host = String.from_str("example")
+    val port = 8080
+    val paths = 3
+
+    // Every argument bare: the same tree as the named form.
+    val a = Job(host, port, paths)
+    print(a.host)
+    print(a.port)
+    print(a.paths)
+
+    // Bare and named arguments mixed in one list.
+    val b = mixed(String.from_str("mixed"), 9)
+    print(b.paths)
+    print(b.port)
+
+    // The long form still compiles, and so does a positional literal.
+    val h2 = String.from_str("long")
+    val c = Job(host = h2, port = 1, paths = 2)
+    print(c.port)
+
+    // Enum variants take the same shorthand.
+    val r = 2.5
+    val s = Shape.Circle(r)
+    val t = when s {
+        Circle(x) -> x
+        Empty -> 0.0
+    }
+    print(t)
+}

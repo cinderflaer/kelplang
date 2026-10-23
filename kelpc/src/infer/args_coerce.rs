@@ -16,6 +16,47 @@ pub(crate) fn match_args(
     Ok(fixed)
 }
 
+/// Field shorthand (#258): in a constructor's argument list (`datac` or enum
+/// variant), a bare name `host` is `host = host`. It needs a field of that name
+/// and a local of that name in scope; anything else is refused here, with the
+/// name in the message. Named and positional arguments are left as they are.
+/// Only constructors call this: a bare name in a function call stays positional.
+pub(crate) fn field_shorthand(
+    what: &str,
+    params: &[(String, Ty)],
+    args: &[ast::CallArg],
+    ctx: &Ctx,
+) -> Result<Vec<ast::CallArg>> {
+    let mut out = Vec::with_capacity(args.len());
+    for a in args {
+        match (&a.name, &a.value) {
+            (None, ast::Expr::Ident(name, at)) => {
+                if !params.iter().any(|(p, _)| p == name) {
+                    return Err(TypeError {
+                        help: Some(format!("write the field's own name, '<field> = {name}', or pass the value positionally")),
+                        message: format!(
+                            "'{name}' is shorthand for '{name} = {name}', but {what} has no field named '{name}'"
+                        ),
+                        span: *at,
+                    });
+                }
+                if ctx.lookup(name).is_none() {
+                    return Err(TypeError {
+                        help: Some(format!("declare a local named '{name}' before the call, or write '{name} = <value>'")),
+                        message: format!(
+                            "'{name}' is shorthand for '{name} = {name}', but no local named '{name}' is in scope"
+                        ),
+                        span: *at,
+                    });
+                }
+                out.push(ast::CallArg { name: Some(name.clone()), value: a.value.clone() });
+            }
+            _ => out.push(a.clone()),
+        }
+    }
+    Ok(out)
+}
+
 /// `match_args`'s body. When `variadic` is set, trailing *positional*
 /// arguments after the declared parameters are returned unchecked instead of
 /// being refused: the caller of a variadic user `extern fun` (gap 7) checks

@@ -1,0 +1,8 @@
+// Field shorthand (#258): a bare name must also be a field of the constructor.
+datac Job(val host: str, val port: i32)
+
+fun main() {
+    val hostname = "example"
+    val j = Job(hostname, port = 1)
+    print(j.port)
+}

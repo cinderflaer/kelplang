@@ -645,7 +645,9 @@ pub(crate) fn check_call(
             }
         }
         let params: Vec<(String, Ty)> = sdef.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
-        let checked = match_args(&format!("datac '{}'", sdef.name), &params, args, span, ctx)?;
+        let what = format!("datac '{}'", sdef.name);
+        let shorthand = field_shorthand(&what, &params, args, ctx)?;
+        let checked = match_args(&what, &params, &shorthand, span, ctx)?;
         let borrowed_fields = aggregate_borrowed_fields(&sdef.fields, &checked, span)?;
         let fields = sdef
             .fields

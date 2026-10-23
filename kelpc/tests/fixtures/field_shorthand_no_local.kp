@@ -1,0 +1,7 @@
+// Field shorthand (#258): a bare name needs a local of that name in scope.
+datac Job(val host: str, val port: i32)
+
+fun main() {
+    val j = Job(host, port = 1)
+    print(j.port)
+}
