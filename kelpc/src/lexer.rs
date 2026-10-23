@@ -251,7 +251,14 @@ impl<'a> Lexer<'a> {
 
             if b == b'"' {
                 self.advance();
-                self.lex_string(start)?;
+                // `"""` opens a multi-line block (literals.rs); `""` alone is
+                // still the empty string.
+                if self.peek() == Some(b'"') && self.peek_at(1) == Some(b'"') {
+                    self.pos += 2;
+                    self.lex_block_string(start)?;
+                } else {
+                    self.lex_string(start)?;
+                }
                 continue; // the tokens (one, or a template's run) are queued
             }
 

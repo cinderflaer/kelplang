@@ -452,6 +452,96 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
+    /// Lexes a multi-line string block, having consumed the opening `"""`;
+    /// `start` is the offset of its first quote.
+    ///
+    /// The opening `"""` is followed by spaces or tabs and then a line break,
+    /// which is not part of the value. The block ends at the first line that
+    /// holds `"""` after its indentation (the closing line). Its indentation
+    /// is removed from every other line: a non-blank line must start with it
+    /// (else refused), and a blank line that is shorter than it becomes empty.
+    /// Each line then gets a newline, so the value always ends with one, and
+    /// the string escapes apply to the dedented text. A line that would begin
+    /// with `"""` is written `\"""`, so it stays content. A `$` is
+    /// text: a block is never a template. A CR just before a line break is
+    /// part of that break, so CRLF files give LF values.
+    pub(crate) fn lex_block_string(&mut self, start: usize) -> Result<(), LexError> {
+        let line_no = |offset: usize| self.src[..offset].matches('\n').count() + 1;
+
+        while matches!(self.peek(), Some(b' ') | Some(b'\t')) {
+            self.pos += 1;
+        }
+        let opened = match self.peek() {
+            Some(b'\n') => 1,
+            Some(b'\r') if self.peek_at(1) == Some(b'\n') => 2,
+            _ => {
+                return Err(LexError {
+                    message: "a multi-line string opens with \"\"\" and then a line break: write the text on the lines below it".to_string(),
+                    span: Span::new(start, self.pos),
+                })
+            }
+        };
+        self.pos += opened;
+
+        // Find the closing line and collect the content lines with their offsets.
+        let mut lines: Vec<(usize, &str)> = Vec::new();
+        let mut line_start = self.pos;
+        let (indent, close_at) = loop {
+            // The last line of the file may have no line break, and it may be
+            // the closing line.
+            let line_end = self.src[line_start..].find('\n').map_or(self.src.len(), |i| line_start + i);
+            let raw = &self.src[line_start..line_end];
+            let line = raw.strip_suffix('\r').unwrap_or(raw);
+            let trimmed = line.trim_start_matches([' ', '\t']);
+            if trimmed.starts_with("\"\"\"") {
+                let indent = &line[..line.len() - trimmed.len()];
+                break (indent, line_start + indent.len() + 3);
+            }
+            if line_end == self.src.len() {
+                return Err(LexError {
+                    message: format!(
+                        "unterminated multi-line string literal: it opened at line {} and needs a line holding only \"\"\" to close it",
+                        line_no(start)
+                    ),
+                    span: Span::new(start, self.src.len()),
+                });
+            }
+            lines.push((line_start, line));
+            line_start = line_end + 1;
+        };
+
+        let mut value = String::new();
+        for (offset, line) in lines {
+            let body = if line.bytes().all(|b| b == b' ' || b == b'\t') {
+                // A blank line: keep what is past the indentation, or nothing.
+                line.strip_prefix(indent).unwrap_or("")
+            } else {
+                match line.strip_prefix(indent) {
+                    Some(rest) => rest,
+                    None => {
+                        return Err(LexError {
+                            message: format!(
+                                "line {} of the multi-line string is less indented than its closing \"\"\": every line must start with the same indentation as the closing line",
+                                line_no(offset)
+                            ),
+                            span: Span::new(offset, offset + line.len()),
+                        })
+                    }
+                }
+            };
+            let body_start = offset + (line.len() - body.len());
+            decode_block_line(body, body_start, &mut value)?;
+            value.push('\n');
+        }
+
+        self.pos = close_at;
+        self.pending.push_back(Token {
+            kind: TokenKind::StringLit(value),
+            span: Span::new(start, self.pos),
+        });
+        Ok(())
+    }
+
     /// True right after a `$` that starts an interpolation: `$name` or
     /// `${expr}`. A `$` followed by anything else (a space, a digit, end of
     /// string) stays literal text, so `"cost $5"` needs no escaping.
@@ -462,4 +552,72 @@ impl<'a> Lexer<'a> {
             None => false,
         }
     }
+}
+
+/// Decodes one dedented line of a multi-line string block into `out`, with the
+/// string escapes (`\n \t \r \" \\ \$ \xNN`). `offset` is where `line` starts in
+/// the source, so an error names the escape's own bytes.
+fn decode_block_line(line: &str, offset: usize, out: &mut String) -> Result<(), LexError> {
+    let mut chars = line.char_indices();
+    while let Some((i, c)) = chars.next() {
+        let at = offset + i;
+        match c {
+            '\0' => {
+                return Err(LexError {
+                    message: "a 'str' is NUL-terminated, so a raw NUL byte cannot be in a string literal".to_string(),
+                    span: Span::new(at, at + 1),
+                })
+            }
+            '\\' => match chars.next() {
+                Some((_, 'n')) => out.push('\n'),
+                Some((_, 't')) => out.push('\t'),
+                Some((_, 'r')) => out.push('\r'),
+                Some((_, '"')) => out.push('"'),
+                Some((_, '\\')) => out.push('\\'),
+                Some((_, '$')) => out.push('$'),
+                Some((_, 'x')) => {
+                    let hi = chars.next().and_then(|(_, h)| h.to_digit(16));
+                    let lo = chars.next().and_then(|(_, l)| l.to_digit(16));
+                    let (Some(hi), Some(lo)) = (hi, lo) else {
+                        return Err(LexError {
+                            message: "a hex escape is written '\\xNN', with exactly two hex digits".to_string(),
+                            span: Span::new(at, offset + line.len()),
+                        });
+                    };
+                    let byte = (hi * 16 + lo) as u8;
+                    if byte == 0 {
+                        return Err(LexError {
+                            message: "a 'str' is NUL-terminated, so '\\x00' cannot be in a string literal".to_string(),
+                            span: Span::new(at, at + 4),
+                        });
+                    }
+                    if !byte.is_ascii() {
+                        return Err(LexError {
+                            message: format!(
+                                "a string literal is UTF-8: '\\x{byte:02X}' is not a text character. Write the character itself, or build the bytes with 'Bytes'"
+                            ),
+                            span: Span::new(at, at + 4),
+                        });
+                    }
+                    out.push(byte as char);
+                }
+                Some((j, other)) => {
+                    return Err(LexError {
+                        message: format!(
+                            "unknown escape '\\{other}' in a multi-line string literal: the escapes are \\n, \\t, \\r, \\\", \\\\, \\$ and \\xNN"
+                        ),
+                        span: Span::new(offset + j - 1, offset + j + other.len_utf8()),
+                    })
+                }
+                None => {
+                    return Err(LexError {
+                        message: "a backslash at the end of a line is not a line continuation in a multi-line string: write \\n, or the rest of the text on this line".to_string(),
+                        span: Span::new(at, at + 1),
+                    })
+                }
+            },
+            c => out.push(c),
+        }
+    }
+    Ok(())
 }

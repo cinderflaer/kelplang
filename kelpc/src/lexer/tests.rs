@@ -707,3 +707,135 @@ fn describes_a_token_as_its_source_text() {
     assert_eq!(TokenKind::Ident("count".to_string()).describe(), "'count'");
     assert_eq!(TokenKind::IntLit(7).describe(), "7");
 }
+
+// Multi-line string blocks: `"""` opens one, a line holding only `"""` (after
+// its indentation) closes it. The value is the lines between, with the closing
+// line's indentation removed, a final newline, and the string escapes.
+
+fn block_value(src: &str) -> String {
+    let tokens = Lexer::new(src).tokenize().expect("lex failed");
+    tokens
+        .into_iter()
+        .find_map(|t| match t.kind {
+            TokenKind::StringLit(s) => Some(s),
+            _ => None,
+        })
+        .expect("no string literal")
+}
+
+fn block_error(src: &str) -> LexError {
+    Lexer::new(src).tokenize().expect_err("lex should fail")
+}
+
+#[test]
+fn a_block_keeps_its_lines_and_drops_the_closing_indentation() {
+    let src = "val s = \"\"\"\n    first\n      second\n\n    end\n    \"\"\"\n";
+    // The same text written with escapes.
+    assert_eq!(block_value(src), "first\n  second\n\nend\n");
+}
+
+#[test]
+fn a_block_ends_with_a_newline_and_the_opening_line_break_is_not_part_of_it() {
+    assert_eq!(block_value("\"\"\"\n    one\n    \"\"\""), "one\n");
+    assert_eq!(block_value("\"\"\"\n    one\n    two\n    \"\"\""), "one\ntwo\n");
+}
+
+#[test]
+fn an_empty_block_is_the_empty_string() {
+    assert_eq!(block_value("\"\"\"\n\"\"\""), "");
+}
+
+#[test]
+fn a_block_with_no_indentation_on_its_closing_line_keeps_every_line_whole() {
+    assert_eq!(block_value("\"\"\"\n  a\nb\n\"\"\""), "  a\nb\n");
+}
+
+#[test]
+fn a_blank_line_is_empty_and_a_whitespace_line_keeps_what_is_past_the_indentation() {
+    // Closing indentation is 4 spaces. A 2-space blank line is shorter than
+    // that, so it becomes empty; a 6-space line keeps its last 2 spaces.
+    let src = "\"\"\"\n    a\n  \n      b\n    \"\"\"";
+    assert_eq!(block_value(src), "a\n\n  b\n");
+}
+
+#[test]
+fn a_literal_quote_needs_no_escape_inside_a_block() {
+    let src = "\"\"\"\n    say \"\"\"hi\"\"\" and \"x\"\n    \"\"\"";
+    assert_eq!(block_value(src), "say \"\"\"hi\"\"\" and \"x\"\n");
+}
+
+#[test]
+fn a_line_that_starts_with_three_quotes_is_escaped_to_stay_content() {
+    // `\"""` is the content line `"""`; it does not close the block.
+    let src = "\"\"\"\n    \\\"\"\"\n    \"\"\"";
+    assert_eq!(block_value(src), "\"\"\"\n");
+}
+
+#[test]
+fn a_block_takes_the_string_escapes_after_the_indentation_is_removed() {
+    let src = "\"\"\"\n    tab\\there\\\\ \\x41 \\\"q\\\" \\$5\n    \"\"\"";
+    assert_eq!(block_value(src), "tab\there\\ A \"q\" $5\n");
+}
+
+#[test]
+fn a_block_with_crlf_line_endings_has_lf_in_its_value() {
+    let src = "\"\"\"\r\n    a\r\n    b\r\n    \"\"\"\r\n";
+    assert_eq!(block_value(src), "a\nb\n");
+}
+
+#[test]
+fn a_block_keeps_non_ascii_text() {
+    assert_eq!(block_value("\"\"\"\n    héllo 中\n    \"\"\""), "héllo 中\n");
+}
+
+#[test]
+fn a_block_can_be_followed_by_more_tokens_on_its_closing_line() {
+    let tokens = kinds("f(\"\"\"\n    a\n    \"\"\")");
+    assert_eq!(
+        tokens,
+        vec![
+            TokenKind::Ident("f".to_string()),
+            TokenKind::LParen,
+            TokenKind::StringLit("a\n".to_string()),
+            TokenKind::RParen,
+            TokenKind::Eof,
+        ]
+    );
+}
+
+#[test]
+fn an_unterminated_block_is_refused_at_its_opening_with_a_clear_message() {
+    let err = block_error("val s = \"\"\"\n    never closed\n    more\n");
+    assert!(
+        err.message.contains("unterminated multi-line string literal"),
+        "message was: {}",
+        err.message
+    );
+    assert!(err.message.contains("line 1"), "message was: {}", err.message);
+    assert_eq!(err.span.start, 8);
+}
+
+#[test]
+fn a_block_line_less_indented_than_its_closing_line_is_refused() {
+    let err = block_error("\"\"\"\n  short\n    \"\"\"");
+    assert!(err.message.contains("less indented"), "message was: {}", err.message);
+    assert!(err.message.contains("line 2"), "message was: {}", err.message);
+}
+
+#[test]
+fn text_after_the_opening_delimiter_on_its_line_is_refused() {
+    let err = block_error("\"\"\"abc\"\"\"");
+    assert!(err.message.contains("opens with"), "message was: {}", err.message);
+}
+
+#[test]
+fn an_unknown_escape_inside_a_block_is_refused() {
+    let err = block_error("\"\"\"\n    \\q\n    \"\"\"");
+    assert!(err.message.contains("unknown escape '\\q'"), "message was: {}", err.message);
+}
+
+#[test]
+fn a_nul_escape_inside_a_block_is_refused() {
+    let err = block_error("\"\"\"\n    \\x00\n    \"\"\"");
+    assert!(err.message.contains("NUL-terminated"), "message was: {}", err.message);
+}
