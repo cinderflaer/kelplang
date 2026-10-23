@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1184 ran=590 c_refused=556 excluded=38
+# counts candidates=1187 ran=591 c_refused=558 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -182,6 +182,9 @@ fixture_derive_refuse_field_without_eq	c-refused		error: derive(eq) on 'Outer' c
 fixture_derive_refuse_float_field	c-refused		error: derive(hash) on 'Sample' cannot hash field 'ratio' of type 'f64'	
 fixture_derive_refuse_generic_field	c-refused		error: derive(eq) on generic 'Wrap' cannot check field 'item' of type 'T'	
 fixture_derive_refuse_hand_written	c-refused		error: derive(eq) on 'Point' would declare 'fun Point.eq' a second time, and the hand-written 'fun Point.eq' already declares it. Fix	
+fixture_digit_separator_doubled	c-refused		error: a digit separator '_' takes one at a time	
+fixture_digit_separator_trailing	c-refused		error: a digit separator '_' must come between two digits, not after the last digit	
+fixture_digit_separators	ran	exit 0		5f8a59bc2ddd009af530d74dedc402f98ed28edf786a6e1a7d7eaa125fdd0083
 fixture_discard_wide_return	ran	exit 0		c652f3dc9fbb7d67758198c696e30a7ecf47ebc92151183514e296929cb1e6fd
 fixture_doc_comment_trailing	c-refused		error: '//!' is a documentation comment and must start a line	
 fixture_doc_no_dashes	c-refused		error: trait 'Reading' declares 'type Unit', and 'impl Reading for Gauge' does not bind it	
