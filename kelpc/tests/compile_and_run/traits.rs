@@ -471,8 +471,12 @@ pub(crate) fn a_freestanding_image_dispatches_through_a_dyn_and_boots() {
 /// the list drops.
 #[test]
 pub(crate) fn a_list_of_owned_trait_objects_is_dispatched_through_each_vtable() {
-    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("traits_boxdyn_list", "'Box<dyn Shape>' cannot be a List element");
+    // Both implementors are memory, so a `Box<dyn Shape>` is memory and the list
+    // may hold it in a hosted build (the classifier counts the coerced types).
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_list.kp",
+        "circle\nsquare\n21.000000\n",
+    );
 }
 
 /// A-12 slice 7: a factory function returns a `Box<dyn Shape>` chosen by a flag,
@@ -508,8 +512,46 @@ pub(crate) fn an_enum_payload_holds_an_owned_trait_object_and_drops_it_through_t
 /// by value.
 #[test]
 pub(crate) fn an_owned_trait_object_moves_between_lists_and_through_a_move_parameter() {
-    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("traits_boxdyn_move", "'Box<dyn Shape>' cannot be a List element");
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_move.kp",
+        "true\n12.000000\n0\nfalse\n12.000000\n0\n",
+    );
+}
+
+/// The classifier gap, named: a `Box<dyn Trait>` whose implementors are all
+/// memory is a memory value, so it may be a `List` element in a hosted build.
+/// A trait with a resource implementor stays refused.
+#[test]
+pub(crate) fn a_box_of_a_trait_with_a_resource_implementor_is_still_refused_in_a_list() {
+    let source = "trait Shape { fun Self.area() => f64 }\n\
+datac Circle(val r: f64)\n\
+fun mut Circle.drop() { print(\"drop\") }\n\
+impl Shape for Circle { fun Self.area() => f64 = r }\n\
+fun main() {\n\
+    var xs: List<Box<dyn Shape>> = List.empty()\n\
+    xs.push(Box.of(Circle(r = 1.0)))\n\
+    print(xs.len())\n\
+}\n";
+    let name = "box_dyn_resource_implementor";
+    let src = out_path(name).with_extension("kp");
+    std::fs::write(&src, source).expect("failed to write the regression source");
+    let build = kelpc()
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(out_path(name))
+        .output()
+        .expect("failed to spawn kelpc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(!build.status.success(), "a hosted build must refuse a resource implementor, got:\n{text}");
+    assert!(
+        text.contains("'Box<dyn Shape>' is a resource"),
+        "expected the resource refusal for the trait object, got:\n{text}"
+    );
 }
 
 /// A-12 slice 7: an owned trait object crosses a thread boundary (an owned value

@@ -149,6 +149,11 @@ pub fn pointer_offsets(
 ) -> Result<(), String> {
     match ty {
         Ty::Box(_) | Ty::String | Ty::Bytes | Ty::List(_) => out.push(base),
+        // An owned trait object is the fat pair `{ data, vtable }` (A-12 slice 7).
+        // `data` is the box's own allocation, a collected object that names its
+        // descriptor in its header, so it is a pointer at offset 0. The vtable is
+        // code, not a collected pointer.
+        Ty::BoxDyn { .. } => out.push(base),
         // A `Map` header is `{ entries, len, cap, cap2, index, count, mask }`
         // (`codegen_llvm.rs` `emit_map_bodies`): the entries buffer at offset 0
         // and the `u32` index buffer at `MAP_INDEX_OFFSET`. Both are base

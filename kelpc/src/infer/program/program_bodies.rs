@@ -411,8 +411,20 @@ pub(crate) fn finish_program(program: &ast::Program, project: &Project, wiring: 
     // declaration's facts are known (`managed::check_heap_uses`).
     if env.managed {
         let uses = env.heap_uses.borrow().clone();
+        // Every `(trait, concrete type)` pair a coercion used. A vtable with no
+        // slots does not name its concrete type, so that trait stays undecided.
+        let coerced: Vec<(String, Option<Ty>)> = dyn_vtables
+            .iter()
+            .map(|v| {
+                let concrete = (!v.slots.is_empty()).then(|| v.concrete.clone());
+                (v.trait_name.clone(), concrete)
+            })
+            .collect();
         managed::check_heap_uses(&uses, &|name: &str| {
-            managed::decl_facts(&records, &sums, &declared_drops, name)
+            match name.strip_prefix("dyn ") {
+                Some(trait_name) => managed::trait_object_facts(trait_name, &coerced),
+                None => managed::decl_facts(&records, &sums, &declared_drops, name),
+            }
         })?;
     }
 

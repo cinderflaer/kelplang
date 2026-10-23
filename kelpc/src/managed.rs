@@ -219,14 +219,65 @@ fn classify(ty: &Ty, walk: &mut Walk<'_>) -> ResourceKind {
         // owned, so a borrow is a pointer and never a heap owner.
         Ty::Ref { .. } | Ty::Dyn { .. } => Memory,
         // A trait object's concrete type is known only where it is coerced into
-        // the box, so the program's declarations decide it.
-        Ty::BoxDyn { .. } => Declared,
+        // the box, so the program's declarations decide it: the box is memory
+        // exactly when every type the program coerces into this trait is.
+        Ty::BoxDyn { trait_name } => trait_object_kind(trait_name, walk),
         // A function value is a code pointer. A closure owns a heap environment,
         // which the collector traces. Its captured values are checked at capture.
         Ty::Fn { .. } | Ty::ScopedFn { .. } | Ty::Closure { .. } => Memory,
         // Exists only inside an instantiation; a scalar value when it appears.
         Ty::ConstInt { .. } => Memory,
     }
+}
+
+/// The key under which `decls` answers for a trait object's implementors. A
+/// space keeps it from every Kelp declaration name, so it cannot shadow a
+/// `datac` or `enum` of the same spelling.
+fn trait_object_key(trait_name: &str) -> String {
+    format!("dyn {trait_name}")
+}
+
+/// The kind of a `Box<dyn Trait>`: the join of the types the program coerces into
+/// `Trait`, read through `decls` under [`trait_object_key`]. Without that answer,
+/// the kind stays `Declared`.
+fn trait_object_kind(trait_name: &str, walk: &mut Walk<'_>) -> ResourceKind {
+    use ResourceKind::*;
+    let key = trait_object_key(trait_name);
+    // A concrete type that holds its own trait object (through a `Box`) ends the
+    // walk, as a recursive `datac` does.
+    if walk.path.iter().any(|p| *p == key) {
+        return Memory;
+    }
+    let Some(facts) = (walk.decls)(&key) else {
+        return Declared;
+    };
+    walk.path.push(key);
+    let kind = facts
+        .fields
+        .iter()
+        .fold(Memory, |acc, field| join(acc, classify(field, walk)));
+    walk.path.pop();
+    kind
+}
+
+/// The declaration facts `decls` gives for a `Box<dyn Trait>`, built from the
+/// program's coercions. A caller answers the lookup of [`trait_object_key`]
+/// with this. `coerced` lists one `(trait, concrete)` per `(trait, type)`
+/// pair a coercion used; a `None` concrete means the program does not say which
+/// type it is, so the trait stays undecided. A trait with no coercion has no
+/// implementor, and its boxes can only be empty.
+pub fn trait_object_facts(
+    trait_name: &str,
+    coerced: &[(String, Option<Ty>)],
+) -> Option<DeclFacts> {
+    let mut fields = Vec::new();
+    for (name, concrete) in coerced {
+        if name != trait_name {
+            continue;
+        }
+        fields.push(concrete.clone()?);
+    }
+    Some(DeclFacts { has_user_drop: false, fields })
 }
 
 fn struct_kind(name: &str, walk: &mut Walk<'_>) -> ResourceKind {

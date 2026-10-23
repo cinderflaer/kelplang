@@ -4,6 +4,12 @@ fn span() -> Span {
     Span::new(0, 0)
 }
 
+/// The trait-object answers of a program whose coercions are `coerced`, for a
+/// lookup under the key [`trait_object_key`] builds.
+fn dyn_decls(name: &str, coerced: &[(String, Option<Ty>)]) -> Option<DeclFacts> {
+    name.strip_prefix("dyn ").and_then(|t| trait_object_facts(t, coerced))
+}
+
 fn list(t: Ty) -> Ty {
     Ty::List(Box::new(t))
 }
@@ -556,4 +562,50 @@ fn a_spawn_entry_capture_takes_the_crossing_rule() {
             err.message
         );
     }
+}
+
+/// A `Box<dyn Shape>` is judged by the types the program coerces into `Shape`:
+/// a box of memory implementors is memory, so it may sit in a `List` (the
+/// classifier gap behind `fixture_traits_boxdyn_list`).
+#[test]
+fn a_box_of_a_trait_is_memory_when_every_coerced_implementor_is() {
+    let coerced = vec![
+        ("Shape".to_string(), Some(Ty::Struct("Circle".into()))),
+        ("Shape".to_string(), Some(Ty::Struct("Square".into()))),
+        ("Other".to_string(), Some(Ty::Struct("Guard".into()))),
+    ];
+    let decls = |name: &str| -> Option<DeclFacts> {
+        match name {
+            "Circle" | "Square" => Some(DeclFacts { has_user_drop: false, fields: vec![Ty::F64] }),
+            "Guard" => Some(DeclFacts { has_user_drop: true, fields: vec![Ty::I32] }),
+            _ => dyn_decls(name, &coerced),
+        }
+    };
+    let shape = Ty::BoxDyn { trait_name: "Shape".into() };
+    assert_eq!(resolve(&shape, &decls), ResourceKind::Memory);
+    assert_eq!(resolve(&list(shape.clone()), &decls), ResourceKind::Memory);
+    assert_eq!(resolve(&Ty::BoxDyn { trait_name: "Other".into() }, &decls), ResourceKind::Resource);
+    assert_eq!(resolve(&Ty::BoxDyn { trait_name: "Unknown".into() }, &decls), ResourceKind::Memory);
+}
+
+/// One implementor with a destructor makes the trait object a resource, and a
+/// coercion whose concrete type is not recoverable keeps the trait undecided.
+#[test]
+fn a_trait_object_with_a_resource_or_unknown_implementor_is_not_memory() {
+    let coerced = vec![
+        ("Shape".to_string(), Some(Ty::Struct("Circle".into()))),
+        ("Shape".to_string(), Some(Ty::Struct("Guard".into()))),
+    ];
+    let decls = |name: &str| -> Option<DeclFacts> {
+        match name {
+            "Circle" => Some(DeclFacts { has_user_drop: false, fields: vec![Ty::F64] }),
+            "Guard" => Some(DeclFacts { has_user_drop: true, fields: vec![Ty::I32] }),
+            _ => dyn_decls(name, &coerced),
+        }
+    };
+    assert_eq!(resolve(&Ty::BoxDyn { trait_name: "Shape".into() }, &decls), ResourceKind::Resource);
+
+    let undecided = vec![("Shape".to_string(), None)];
+    let decls = |name: &str| dyn_decls(name, &undecided);
+    assert_eq!(resolve(&Ty::BoxDyn { trait_name: "Shape".into() }, &decls), ResourceKind::Declared);
 }
