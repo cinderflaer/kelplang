@@ -1,7 +1,8 @@
 #!/bin/sh
 # Tidepool GC benchmark runner (bench/gc). For each program in bench/gc/progs it builds a
-# managed project (coral.toml with [target] mode = "managed" and heap_max) and an unmanaged
-# project (no mode line: the malloc / Box free-list path). Each build runs once as a discarded
+# managed project (coral.toml with [target] mode = "hosted" and heap_max) and an unmanaged
+# project (mode = "hosted", no heap_max: the malloc / Box free-list path). "hosted" is the only
+# build mode now; the old managed mode was removed. Each build runs once as a discarded
 # warm-up and then RUNS times (default 3). It writes:
 #   bench/gc/raw.csv      one row per run (the spread is read from here)
 #   bench/gc/results.csv  one row per bench/variant with the median of the runs (gate.sh reads it)
@@ -21,11 +22,8 @@
 # pauses are never read as zero.
 #
 # A managed row counts as managed only when the linked binary has kelp_gc_* symbols. Otherwise it
-# is marked NO-GC. At the commit this was measured on (4dcdc5b) the manifest accepts
-# mode = "managed" and the checker applies its managed rules, but the production driver calls the
-# code generator with managed = false (codegen_llvm.rs compile_ir: "the managed build's driver is
-# WP2's"), and no collector is linked. A NO-GC row is the hosted binary: its numbers are not
-# overhead, and its ratio is not printed.
+# is marked NO-GC. A NO-GC row is a binary without the collector: its numbers are not overhead,
+# and its ratio is not printed.
 #
 # Knobs (environment): RUNS=3, KELPC=/path/to/kelpc (default target/release/kelpc, built if
 # missing), BENCHES="binary-trees live-set" (subset), HEAP_MAX_MIB="16 64 256", BUILD=<dir>
@@ -66,7 +64,8 @@ mkdir -p "$BUILD"
 printf 'bench,variant,run,wall_s,user_s,sys_s,rss_kb,exit,gc_linked,collections,pause_total_ms,pause_max_ms,output\n' > "$RAW"
 
 # make_project NAME VARIANT MODE HEAP_MAX -> prints the project directory.
-# MODE is "managed", or empty for the unmanaged build. HEAP_MAX is in MiB.
+# MODE is "managed" (the row gets heap_max), or empty for the unmanaged build. Both write mode = "hosted".
+# HEAP_MAX is in MiB.
 make_project() {
     name=$1; variant=$2; mode=$3; heap=$4
     dir="$BUILD/$name-$variant.proj"
@@ -79,10 +78,9 @@ make_project() {
         echo "entry = \"src/main.kp\""
         echo
         echo "[target]"
+        echo "mode = \"hosted\""
         if [ -n "$mode" ]; then
             echo "heap_max = $heap"
-        else
-            echo "mode = \"hosted\""
         fi
     } > "$dir/coral.toml"
     echo "$dir"
@@ -211,7 +209,7 @@ END {
     print ""
     print "- Machine: " cpu ", " mem " RAM, " host
     print "- kelpc: " kelpc
-    print "- Build: `kelpc build -O2` on the default LLVM backend. Managed rows set `heap_max` (MiB). Unmanaged rows set `mode = \"hosted\"`. Since the separate managed target was removed, both kinds of row build the same hosted program."
+    print "- Build: `kelpc build -O2` on the default LLVM backend. Both kinds of row set `mode = \"hosted\"`. Managed rows also set `heap_max` (MiB)."
     print "- Run wrapper: `( ulimit -v 2097152; ulimit -t 60; timeout 120 ... )`."
     print ""
     print "| bench | variant | status | wall s (median) | spread % | user s | sys s | peak RSS MiB | collections | pause total ms | pause max ms | managed / unmanaged wall |"
