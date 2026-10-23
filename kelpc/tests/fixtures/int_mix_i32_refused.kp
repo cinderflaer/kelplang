@@ -1,0 +1,8 @@
+// `int` and `i32` are different types (issue #275): an `i32` is not passed where
+// an `int` is asked for, and the message names both types.
+fun takes_int(x: int) => int = x
+
+fun main() {
+    val a: i32 = 2
+    print(takes_int(a))
+}

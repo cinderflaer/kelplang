@@ -133,6 +133,31 @@ fn assert_rejected(source: &str) {
     );
 }
 
+/// Asserts that `kelpc build` rejects `source`, that the diagnostic mentions
+/// every name in `names`, and that it mentions none of the names in `absent`.
+fn assert_rejected_naming(source: &str, names: &[&str], absent: &[&str]) {
+    let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
+    let bin = out_path(&name);
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture(source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !build.status.success(),
+        "expected '{source}' to be rejected by the compiler, but it built successfully"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    for n in names {
+        assert!(stderr.contains(n), "expected the error for '{source}' to name {n}, got:\n{stderr}");
+    }
+    for n in absent {
+        assert!(!stderr.contains(n), "expected the error for '{source}' not to name {n}, got:\n{stderr}");
+    }
+}
+
 /// Asserts that `kelpc build` rejects `source`, and that the diagnostic
 /// mentions `needle`, so a fixture cannot pass for the wrong reason.
 fn assert_rejected_with(source: &str, needle: &str) {

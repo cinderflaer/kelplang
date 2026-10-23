@@ -340,10 +340,10 @@ pub(crate) fn an_out_of_range_literal_is_refused_at_its_own_line() {
     );
 }
 
-/// An unannotated integer literal is `int`, which is 64-bit (decision 72, issue
-/// #275), so a binding made from one is an `i64` and not an `i32`. A value past
-/// 2^31 is an ordinary value, an annotated `i32` or `u8` is unchanged, and a
-/// literal past `i64::MAX` with no annotation is refused, naming `int`.
+/// An unannotated integer literal is `int` (decision 72, issue #275), a type of
+/// its own at the target's native width. A value past 2^31 is an ordinary value,
+/// an annotated `i32` or `u8` is unchanged, and a literal past the `int` range
+/// with no annotation is refused, naming `int`.
 #[test]
 pub(crate) fn an_unannotated_integer_literal_is_int() {
     assert_compiles_and_runs(
@@ -354,6 +354,22 @@ pub(crate) fn an_unannotated_integer_literal_is_int() {
     assert_rejected_with(
         "tests/fixtures/int_default_out_of_range.kp",
         "'9223372036854775808' does not fit 'int', the type a literal takes when nothing determines one",
+    );
+}
+
+/// `int` is a distinct integer type of the target's native width (issue #275),
+/// not a name for `i64` or `i32`. Mixing it with either without a conversion is
+/// refused, and the message names every type involved. A diagnostic for an
+/// `int` value prints `int`, never `i64`. `as` converts both ways, and existing
+/// `i64` and `int` programs print the same output.
+#[test]
+pub(crate) fn int_is_a_distinct_type_that_does_not_mix_without_a_conversion() {
+    assert_rejected_naming("tests/fixtures/int_mix_i64_refused.kp", &["'int'", "'i64'"], &[]);
+    assert_rejected_naming("tests/fixtures/int_mix_i32_refused.kp", &["'int'", "'i32'"], &[]);
+    assert_rejected_naming("tests/fixtures/int_diagnostic_names_int.kp", &["'int'"], &["i64"]);
+    assert_compiles_and_runs(
+        "tests/fixtures/int_conversions_as.kp",
+        "3000000000\n6000000000\n7\n8\n7\n300\n",
     );
 }
 

@@ -1,0 +1,7 @@
+// A diagnostic for an `int` value prints `int`, never `i64` (issue #275): the
+// binding below is `int`, so the message about it must name `int`.
+fun main() {
+    val a: int = 2
+    val s: String = a
+    print(s)
+}
