@@ -90,17 +90,22 @@ impl<'a> ConstEvaluator<'a> {
         prefix: &str,
         aliases: &HashMap<String, String>,
     ) -> Result<tir::Expr> {
+        let no_type = || TypeError {
+            help: None,
+            message: format!(
+                "const '{name}' has no type, so its value must be a number, a bool, a char or a str: write the type, as in 'const {name}: T = ...'"
+            ),
+            span: expr.span(),
+        };
+        // An array has no type a value alone can name, so it is refused by its shape.
+        if matches!(expr, ast::Expr::ArrayLit { .. } | ast::Expr::ArrayRepeat { .. }) {
+            return Err(no_type());
+        }
         let mut scope = ConstScope::new(prefix.to_string(), aliases.clone());
         let (value, found) = self.eval(expr, None, &mut scope)?;
         let scalar = found.is_integer() || found.is_float() || matches!(found, Ty::Bool | Ty::Char | Ty::Str);
         if !scalar {
-            return Err(TypeError {
-                help: None,
-                message: format!(
-                    "const '{name}' has no type, so its value must be a number, a bool, a char or a str: write the type, as in 'const {name}: T = ...'"
-                ),
-                span: expr.span(),
-            });
+            return Err(no_type());
         }
         literal_for(&value, &found).map_err(|_| TypeError {
             help: None,

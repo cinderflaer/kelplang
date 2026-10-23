@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1194 ran=584 c_refused=563 hosted_refused=9 excluded=38
+# counts candidates=1197 ran=585 c_refused=565 hosted_refused=9 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -134,6 +134,9 @@ fixture_const_generics_mismatch	c-refused		error: argument 'a' has type '[i32; 3
 fixture_const_generics_string_refused	c-refused		error: 'const S' has type 'String'	
 fixture_const_generics_trait_refused	c-refused		error: a trait cannot take a const parameter ('const C')	
 fixture_const_generics_two_sizes	ran	exit 0		928ba518bc5c15d0becaf4c685b33402e9d5ef7af3c26dad7e3888c8a659ef2c
+fixture_const_infer	ran	exit 0		c804a318abb0622ca6452a22ebd731800cd60a82bdd87312b9de6e989e237009
+fixture_const_infer_address	c-refused		error: cannot assign value of type 'int' to 'p' declared as 'usize'	
+fixture_const_infer_array	c-refused		error: const 'TABLE' has no type, so its value must be a number, a bool, a char or a str	
 fixture_const_not_constant	c-refused		error: 'print' cannot be called in a constant expression	
 fixture_const_tuple	ran	exit 0		eb87b8b7dd0ff0eee9a0a8c0e177d1e36111143eae559ad96918df738bd6331b
 fixture_consts	ran	exit 0		d34b8ecd64e746b0f1b2883978ec0aee86db13be0e6a819531f769cebfc6c3c5

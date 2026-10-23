@@ -3,5 +3,5 @@
 const TABLE = [1, 2, 3]
 
 fun main() {
-    print(TABLE[0])
+    print(1)
 }

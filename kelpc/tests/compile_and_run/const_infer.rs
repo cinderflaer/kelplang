@@ -21,5 +21,5 @@ pub(crate) fn a_const_without_a_type_is_not_retyped_by_its_use() {
 
 #[test]
 pub(crate) fn a_const_without_a_type_must_hold_a_scalar() {
-    assert_rejected("tests/fixtures/const_infer_array.kp");
+    assert_rejected_with("tests/fixtures/const_infer_array.kp", "write the type");
 }
