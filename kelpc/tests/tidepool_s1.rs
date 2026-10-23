@@ -1,8 +1,9 @@
 //! Tidepool step 1: the growable root table, the spawn, lock and result roots,
 //! the spawn-side thread count, the counter line and the messages of section
 //! 18.2, 18.3 and 18.24 (sections 9, 16.1 and 18.32). The fixtures build a
-//! managed program and need the collector archive, so they are `#[ignore]`d and
-//! run with `KELP_GC_LIB` set to `libkelp_gc.a` and `--ignored`.
+//! hosted program with the shared pool and run it, so they are `#[ignore]`d and
+//! run with `--ignored`. `KELP_GC_LIB`, when set, names the `libkelp_gc.a` to
+//! link; unset, the build uses the collector kelpc carries.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -23,7 +24,7 @@ fn text(out: &Output) -> String {
     )
 }
 
-/// Copies a fixture into a scratch directory and builds it as a managed program.
+/// Copies a fixture into a scratch directory and builds it as a hosted program.
 fn build(name: &str) -> PathBuf {
     let root = fixture(name);
     static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -45,7 +46,7 @@ fn build(name: &str) -> PathBuf {
     bin
 }
 
-/// Runs a built program under the limits of the other managed tests, with a
+/// Runs a built program under the limits of the other run tests, with a
 /// 2000 ms stop timeout and the variables of `env`, and returns its output.
 fn run_env(bin: &Path, env: &str) -> Output {
     run_env_limit(bin, env, 1048576)

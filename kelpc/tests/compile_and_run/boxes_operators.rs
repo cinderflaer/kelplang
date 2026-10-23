@@ -13,8 +13,8 @@ pub(crate) fn a_box_holds_a_value_or_nothing() {
     );
 }
 
-// Manual memory blocks, slice 1 (decision 139). Step 2 parses `block name: T { ... }`
-// and refuses it until the block runtime lands.
+// Manual memory blocks, slice 1 (decision 139). The checker parses `block name: T { ... }`
+// and builds it; its result must be used with `?` or `when`, and the tests below check that.
 
 #[test]
 pub(crate) fn block_stays_an_ordinary_name_outside_a_block_introducer() {

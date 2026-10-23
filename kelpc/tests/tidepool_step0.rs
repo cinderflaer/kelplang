@@ -2,9 +2,10 @@
 //! depends on (`plan/` design, sections 9, 18.9, 18.11, 18.12, 18.13, 18.14 and
 //! 20.5). The refusals of a thread's argument, result, environment and lock
 //! values were lifted in step 1; their run tests are in `tidepool_s1.rs`. The
-//! refusal fixtures run on every `cargo test`. The run fixtures build a managed
-//! program and need the collector archive, so they are `#[ignore]`d and run with
-//! `KELP_GC_LIB` set to `libkelp_gc.a` and `--ignored`.
+//! refusal fixtures run on every `cargo test`. The run fixtures build a hosted
+//! program with the shared pool and run it, so they are `#[ignore]`d and run with
+//! `--ignored`. `KELP_GC_LIB`, when set, names the `libkelp_gc.a` to link; unset,
+//! the build uses the collector kelpc carries.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -25,7 +26,7 @@ fn text(out: &Output) -> String {
     )
 }
 
-/// Copies a fixture into a scratch directory and builds it as a managed program.
+/// Copies a fixture into a scratch directory and builds it as a hosted program.
 fn build(name: &str) -> PathBuf {
     let root = fixture(name);
     let dir = std::env::temp_dir().join(format!("kelpc-tidepool-s0-{name}-{}", std::process::id()));
@@ -45,7 +46,7 @@ fn build(name: &str) -> PathBuf {
     bin
 }
 
-/// Runs a built program under the same limits as the other managed tests, with
+/// Runs a built program under the same limits as the other run tests, with
 /// a 2000 ms stop timeout, and returns its output.
 fn run(bin: &Path, prefix: &str) -> Output {
     // `timeout` is outside the shell and the program is `exec`ed, so a process
