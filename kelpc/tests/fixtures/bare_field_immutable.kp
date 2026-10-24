@@ -1,0 +1,9 @@
+// #284 gate: a bare field is a `val` field, so writing it is refused with the
+// same message as an explicit `val` field (val_field_immutable.kp).
+datac Point(x: i32, y: i32)
+
+fun main() {
+    var p = Point(x = 1, y = 2)
+    p.x = 5
+    print(p.x)
+}

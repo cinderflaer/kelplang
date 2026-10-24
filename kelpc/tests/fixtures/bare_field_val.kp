@@ -1,0 +1,34 @@
+// #284 gate: a datac or enum-payload field with no `val` or `var` is a `val`
+// field. It reads like the `val` spelling, it cannot be written, and `var`
+// fields next to it stay writable.
+datac Point(x: i32, y: i32)
+
+datac Mixed(label: String, var count: i32, val id: i32)
+
+enum Shape {
+    Circle(r: i32)
+    Rect(w: i32, var h: i32)
+    Empty
+}
+
+fun area(s: &Shape) => i32 = when s {
+    Circle(r) -> 3 * r * r
+    Rect(w, h) -> w * h
+    Empty -> 0
+}
+
+fun main() {
+    val p = Point(x = 3, y = 4)
+    print(p.x + p.y)
+
+    var m = Mixed(label = String.from_str(s = "kelp"), count = 1, id = 7)
+    m.count = m.count + 1
+    print(m.count)
+    print(m.id)
+    print(m.label.len())
+
+    val r = Shape.Rect(w = 2, h = 6)
+    print(area(r))
+    print(area(Shape.Circle(r = 2)))
+    print(area(Shape.Empty))
+}

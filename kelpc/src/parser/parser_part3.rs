@@ -115,15 +115,22 @@ impl Parser {
     /// The payload of a variant, or a `datac`'s field list, with the opening
     /// `(` already consumed and the closing `)` left for the caller. Shared
     /// so an `enum` variant and a `datac` field obey exactly the same
-    /// `val`/`var name: Type` rules.
+    /// `[val|var] name: Type` rules, where a field with no keyword is `val`.
     pub(crate) fn parse_field_list(&mut self) -> PResult<Vec<FieldDecl>> {
         let mut fields = Vec::new();
         while !self.check(&TokenKind::RParen) {
+            // `val` is optional: a field with no keyword, `name: Type`, is a
+            // `val` field (#284). A stray token that starts neither a keyword
+            // nor a name keeps the `'val' or 'var'` expectation.
             let mutable = if self.check(&TokenKind::Var) {
                 self.advance();
                 true
             } else {
-                self.expect(TokenKind::Val, "'val' or 'var'")?;
+                if self.check(&TokenKind::Val) {
+                    self.advance();
+                } else if !matches!(self.peek_kind(), TokenKind::Ident(_)) {
+                    self.expect(TokenKind::Val, "'val' or 'var'")?;
+                }
                 false
             };
             let (fname, fspan) = self.expect_ident()?;

@@ -834,3 +834,42 @@ fn break_and_continue_stay_ordinary_names_outside_statement_position() {
     let p = parse("fun main() {\n    val continue = 3\n    print(continue + 1)\n}");
     assert_eq!(p.functions.len(), 1);
 }
+
+/// #284: a field with no `val` or `var` is a `val` field. `var` stays
+/// explicit, and the `val` spelling parses to the same tree as the bare one.
+#[test]
+fn a_bare_field_is_a_val_field() {
+    let p = parse("datac Point(x: i32, var y: i32, val z: i32)\nfun main() {}");
+    let d = &p.datacs[0];
+    assert_eq!(d.fields.len(), 3);
+    assert_eq!(d.fields[0].name, "x");
+    assert!(!d.fields[0].mutable);
+    assert!(d.fields[1].mutable);
+    assert!(!d.fields[2].mutable);
+    let bare = parse("datac P(x: i32)\nfun main() {}");
+    let explicit = parse("datac P(val x: i32)\nfun main() {}");
+    assert_eq!(bare.datacs[0].fields[0].mutable, explicit.datacs[0].fields[0].mutable);
+}
+
+/// #284: an enum payload uses the same field list as a `datac`, so the bare
+/// form works there too.
+#[test]
+fn a_bare_field_works_in_an_enum_payload() {
+    let p = parse("enum Shape {\n    Circle(r: f64)\n    Rect(w: f64, var h: f64)\n    Empty\n}\nfun main() {}");
+    let e = &p.enums[0];
+    assert_eq!(e.variants[0].fields.len(), 1);
+    assert!(!e.variants[0].fields[0].mutable);
+    assert_eq!(e.variants[1].fields.len(), 2);
+    assert!(!e.variants[1].fields[0].mutable);
+    assert!(e.variants[1].fields[1].mutable);
+}
+
+/// #284: a bare field still needs a name and a type, and a stray token where
+/// a field should start keeps the old `'val' or 'var'` message.
+#[test]
+fn a_bare_field_still_needs_a_name_and_a_type() {
+    let e = parse_err("datac P(x)\nfun main() {}");
+    assert!(e.message.contains("':'"), "got: {}", e.message);
+    let e = parse_err("datac P(: i32)\nfun main() {}");
+    assert!(e.message.contains("'val' or 'var'"), "got: {}", e.message);
+}
