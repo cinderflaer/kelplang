@@ -35,7 +35,7 @@ section(".text.boot") fun kmain() {
 // by every call site; the line is the caller's, kept in `kelp_panic_line`.
 fun array_bounds() {
     val slots: [u8; 2] = [1, 2]
-    var i: usize = 2
+    var i: int = 2
     uart.putc(slots.get(i)) // panic-line: array
 }
 
@@ -90,7 +90,7 @@ fun kp_panic(msg: str, file: str, line: u32) {
         // flag, so this does not recurse: it reaches `kelp_double_panic`, which
         // the project defines in `double_panic.s`.
         val slots: [u8; 1] = [0]
-        var i: usize = 3
+        var i: int = 3
         uart.putc(slots.get(i))
         return
     }

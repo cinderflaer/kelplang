@@ -1,7 +1,7 @@
 // pins default-one-space-between-atoms
 // A block header makes the trailing block's parameters explicit: names only,
 // types from the `scoped fun(...)` the block is passed to.
-fun each(xs: List<i32>,f: scoped fun(i32)){var i:usize=0
+fun each(xs: List<i32>,f: scoped fun(i32)){var i:int=0
 while i<xs.len(){f(xs.get(i))
 i+=1}}
 fun main(){var xs:List<i32> = List.empty()

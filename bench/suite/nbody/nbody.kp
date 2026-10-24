@@ -44,7 +44,7 @@ fun offset_momentum(b: mut [Body; 5]) {
     var px: f64 = 0.0
     var py: f64 = 0.0
     var pz: f64 = 0.0
-    var i: usize = 0
+    var i: int = 0
     while i < 5 {
         val bi = b.get(i)
         px = px + bi.vx * bi.mass
@@ -58,9 +58,9 @@ fun offset_momentum(b: mut [Body; 5]) {
 }
 
 fun advance(b: mut [Body; 5], dt: f64) {
-    var i: usize = 0
+    var i: int = 0
     while i < 5 {
-        var j: usize = i + 1
+        var j: int = i + 1
         while j < 5 {
             val bi = b.get(i)
             val bj = b.get(j)
@@ -88,11 +88,11 @@ fun advance(b: mut [Body; 5], dt: f64) {
 
 fun energy(b: &[Body; 5]) => f64 {
     var e: f64 = 0.0
-    var i: usize = 0
+    var i: int = 0
     while i < 5 {
         val bi = b.get(i)
         e = e + 0.5 * bi.mass * (bi.vx * bi.vx + bi.vy * bi.vy + bi.vz * bi.vz)
-        var j: usize = i + 1
+        var j: int = i + 1
         while j < 5 {
             val bj = b.get(j)
             val dx = bi.x - bj.x

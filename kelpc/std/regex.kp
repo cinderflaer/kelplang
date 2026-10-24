@@ -28,7 +28,7 @@ impl "std/result"
    every matching method takes the `Regex` exclusively (`var re = ...`). */
 
 /// The longest pattern, in bytes, that `compile` accepts.
-const MAX_PATTERN: usize = 4096
+const MAX_PATTERN: int = 4096
 /// How deeply groups may nest. A deeper pattern is refused.
 const MAX_DEPTH: i32 = 100
 /// The largest count that a counted repeat `{n,m}` may name.
@@ -37,10 +37,10 @@ const MAX_REPEAT: i32 = 1000
 /// The compiled program may not exceed this many instructions (counted repeats
 /// are expanded), and the scratch (instructions x capture slots) may not exceed
 /// MAX_SCRATCH slots, which bounds a compiled regex to about 16 MiB.
-const MAX_PROG: usize = 50000
+const MAX_PROG: int = 50000
 /// The most scratch slots (instructions times capture slots) that a compiled
 /// regex may hold.
-const MAX_SCRATCH: usize = 2000000
+const MAX_SCRATCH: int = 2000000
 
 /// Opcode: match the byte in `ax`.
 const OP_CHAR: i32 = 0
@@ -111,7 +111,7 @@ datac RegexErr(
     /// What is wrong with the pattern, in words.
     val message: String,
     /// The byte offset in the pattern where the problem was noticed.
-    val offset: usize,
+    val offset: int,
 )
 
 /// One match: the byte range `[start, end)` of the input and a copy of its
@@ -119,9 +119,9 @@ datac RegexErr(
 /// One match: the byte range `[start, end)` of the input and a copy of its text.
 datac Match(
     /// The byte offset where the match begins.
-    val start: usize,
+    val start: int,
     /// The byte offset just past the match.
-    val end: usize,
+    val end: int,
     /// The matched bytes, as a string.
     val text: String,
 )
@@ -145,13 +145,13 @@ datac Parser(
     /// The bytes of the pattern being parsed.
     val pat: List<u8>,
     /// The next byte to read.
-    var pos: usize,
+    var pos: int,
     /// Whether a problem has been noted. Parsing then stops.
     var failed: bool,
     /// The message for the problem, once `failed` is set.
     var emsg: String,
     /// The byte offset of the problem.
-    var eoff: usize,
+    var eoff: int,
     /// The current group nesting depth.
     var depth: i32,
     /// The next capture group number. Group 0 is the whole match, so this
@@ -195,13 +195,13 @@ datac Regex(
     /// The bitmaps of the character classes, 32 bytes each.
     val classes: List<u8>,
     /// The number of capture groups, including group 0.
-    val ngroups: usize,
+    val ngroups: int,
     /// Scratch: the program counters of the two thread lists.
     var tl_pc: List<i32>,
     /// Scratch: the capture slots of each thread in the thread lists.
     var tl_cap: List<i32>,
     /// Scratch: how many threads each thread list holds.
-    var cnt: List<usize>,
+    var cnt: List<int>,
     /// Scratch: the generation in which each instruction was last added to a
     /// list.
     var mark: List<i64>,
@@ -255,7 +255,7 @@ fun is_quant_byte(c: u8) => bool = c == '*' || c == '+' || c == '?' || c == '{'
 
 /// Notes the first problem, with its message and byte offset. Later calls
 /// change nothing.
-fun mut Parser.fail(msg: &str, off: usize) {
+fun mut Parser.fail(msg: &str, off: int) {
     if !failed {
         failed = true
         emsg = String.from_str(msg)
@@ -277,7 +277,7 @@ fun mut Parser.node(kind: i32, a: i32, b: i32, c: i32, d: i32) => i32 {
 /// Adds an empty character class and returns its number.
 fun mut Parser.new_class() => i32 {
     val idx = classes.len() / 32
-    var i: usize = 0
+    var i: int = 0
     while i < 32 {
         classes.push(0)
         i += 1
@@ -286,14 +286,14 @@ fun mut Parser.new_class() => i32 {
 }
 
 /// Sets bit `b` in the class whose bitmap starts at byte `base`.
-fun mut Parser.set_bit(base: usize, b: usize) {
+fun mut Parser.set_bit(base: int, b: int) {
     val at = base + (b >> 3)
     val m: u8 = 1 << (b & 7).to_u8()
     classes.set(at, classes.get(at) | m)
 }
 
 /// Whether bit `b` is set in the class whose bitmap starts at byte `base`.
-fun Parser.has_bit(base: usize, b: usize) => bool {
+fun Parser.has_bit(base: int, b: int) => bool {
     val m: u8 = 1 << (b & 7).to_u8()
     return classes.get(base + (b >> 3)) & m != 0
 }
@@ -302,8 +302,8 @@ fun Parser.has_bit(base: usize, b: usize) => bool {
 /// when `negate` is set) to a class.
 /// Adds the bytes of `\d`, `\w` or `\s` (`kind` is the letter), or of the
 /// complement for `\D \W \S`, to the class at `base`.
-fun mut Parser.add_pred(base: usize, kind: u8, negate: bool) {
-    var b: usize = 0
+fun mut Parser.add_pred(base: int, kind: u8, negate: bool) {
+    var b: int = 0
     while b < 256 {
         val c = b.to_u8()
         var p = false
@@ -325,8 +325,8 @@ fun mut Parser.add_pred(base: usize, kind: u8, negate: bool) {
 /// matching ignores case.
 /// An ASCII case fold of a finished class: every letter whose other case is in
 /// the class gets added.
-fun mut Parser.fold_class(base: usize) {
-    var c: usize = 97
+fun mut Parser.fold_class(base: int) {
+    var c: int = 97
     while c <= 122 {
         if self.has_bit(base, c) || self.has_bit(base, c - 32) {
             self.set_bit(base, c)
@@ -338,8 +338,8 @@ fun mut Parser.fold_class(base: usize) {
 
 /// Complements the class at `base`, so a byte it held is dropped and any other
 /// is added.
-fun mut Parser.invert_class(base: usize) {
-    var i: usize = 0
+fun mut Parser.invert_class(base: int) {
+    var i: int = 0
     while i < 32 {
         classes.set(base + i, ~classes.get(base + i))
         i += 1
@@ -352,7 +352,7 @@ fun mut Parser.invert_class(base: usize) {
 /// `at`; -1 when it is not one (the caller decides what that means). Leaves
 /// `pos` just past what it consumed. `in_class` allows only what a class may
 /// hold.
-fun mut Parser.escape_byte(at: usize) => i32 {
+fun mut Parser.escape_byte(at: int) => i32 {
     val n = pat.len()
     if at + 1 >= n {
         self.fail("trailing backslash", at)
@@ -393,7 +393,7 @@ fun mut Parser.escape_byte(at: usize) => i32 {
 
 /// Notes the failure for the unknown escape at `at`, and names it in the
 /// message.
-fun mut Parser.bad_escape(at: usize) {
+fun mut Parser.bad_escape(at: int) {
     val c = pat.get(at + 1)
     var msg = String.from_str("invalid escape '\\")
     if c >= 32 && c < 127 {
@@ -409,7 +409,7 @@ fun mut Parser.bad_escape(at: usize) {
 /// item was a predefined set that was added directly.
 /// One item of a character class: a byte (0..255), or -1 when it was a `\d`-style
 /// set that has been added to the class directly (or on failure).
-fun mut Parser.class_atom(base: usize) => i32 {
+fun mut Parser.class_atom(base: int) => i32 {
     val at = pos
     val c = pat.get(at)
     if c != '\\' {
@@ -449,7 +449,7 @@ fun mut Parser.parse_class() => i32 {
         pos += 1
     }
     val ci = self.new_class()
-    val base = ci.to_usize() * 32
+    val base = ci.to_int() * 32
     var first = true
     var done = false
     while !done && !failed {
@@ -471,13 +471,13 @@ fun mut Parser.parse_class() => i32 {
                         } else {
                             var x = lo
                             while x <= hi {
-                                self.set_bit(base, x.to_usize())
+                                self.set_bit(base, x.to_int())
                                 x += 1
                             }
                         }
                     }
                 } else {
-                    self.set_bit(base, lo.to_usize())
+                    self.set_bit(base, lo.to_int())
                 }
             }
         }
@@ -507,9 +507,9 @@ fun mut Parser.parse_escape() => i32 {
     if c == 'd' || c == 'w' || c == 's' || c == 'D' || c == 'W' || c == 'S' {
         val ci = self.new_class()
         if c >= 'a' {
-            self.add_pred(ci.to_usize() * 32, c, false)
+            self.add_pred(ci.to_int() * 32, c, false)
         } else {
-            self.add_pred(ci.to_usize() * 32, c + 32, true)
+            self.add_pred(ci.to_int() * 32, c + 32, true)
         }
         pos = at + 2
         return self.node(N_CLASS, ci, 0, 0, 0)
@@ -778,7 +778,7 @@ fun mut Parser.parse_atom() => i32 {
         val head = self.node(N_CAT, first, 0, 0, 0)
         while pos < n && pat.get(pos) >= 128 && pat.get(pos) < 192 {
             val nx = self.byte_node(pat.get(pos))
-            nnext.set(last.to_usize(), nx)
+            nnext.set(last.to_int(), nx)
             last = nx
             pos += 1
         }
@@ -804,9 +804,9 @@ fun mut Parser.parse_cat() => i32 {
             }
             if !failed && atom >= 0 {
                 if last < 0 {
-                    na.set(head.to_usize(), atom)
+                    na.set(head.to_int(), atom)
                 } else {
-                    nnext.set(last.to_usize(), atom)
+                    nnext.set(last.to_int(), atom)
                 }
                 last = atom
             }
@@ -827,7 +827,7 @@ fun mut Parser.parse_alt() => i32 {
         while pos < n && pat.get(pos) == '|' && !failed {
             pos += 1
             val nx = self.parse_cat()
-            nnext.set(tail.to_usize(), nx)
+            nnext.set(tail.to_int(), nx)
             tail = nx
         }
         if failed {
@@ -843,7 +843,7 @@ fun mut Parser.parse_alt() => i32 {
 
 /// Appends an instruction and returns its index. Fails when the program is too
 /// large.
-fun mut Parser.emit(o: i32, x: i32, y: i32) => usize {
+fun mut Parser.emit(o: i32, x: i32, y: i32) => int {
     if op.len() >= MAX_PROG {
         self.fail("pattern is too large (the compiled program is limited to 50000 instructions)", 0)
         return 0
@@ -862,7 +862,7 @@ fun mut Parser.put(o: i32, x: i32, y: i32) {
 
 /// Points the split at `s` to its body and its exit. The body is the first
 /// choice when `greedy` is set.
-fun mut Parser.set_split(s: usize, body: usize, out: usize, greedy: bool) {
+fun mut Parser.set_split(s: int, body: int, out: int, greedy: bool) {
     if greedy {
         ax.set(s, body.to_i32())
         ay.set(s, out.to_i32())
@@ -874,7 +874,7 @@ fun mut Parser.set_split(s: usize, body: usize, out: usize, greedy: bool) {
 
 /// Emits the code for the repeat node `n`: its required copies, then the
 /// optional or unbounded tail.
-fun mut Parser.emit_rep(n: usize) {
+fun mut Parser.emit_rep(n: int) {
     val c = na.get(n)
     val mn = nb.get(n)
     val mx = nc.get(n)
@@ -901,7 +901,7 @@ fun mut Parser.emit_rep(n: usize) {
             self.emit_node(c)
             i += 1
         }
-        var ss: List<usize> = List.empty()
+        var ss: List<int> = List.empty()
         i = mn
         while i < mx && !failed {
             val s = self.emit(OP_SPLIT, 0, 0)
@@ -910,7 +910,7 @@ fun mut Parser.emit_rep(n: usize) {
             i += 1
         }
         val end = op.len()
-        var k: usize = 0
+        var k: int = 0
         while k < ss.len() {
             self.set_split(ss.get(k), ss.get(k) + 1, end, greedy)
             k += 1
@@ -923,19 +923,19 @@ fun mut Parser.emit_node(n: i32) {
     if failed {
         return
     }
-    val i = n.to_usize()
+    val i = n.to_int()
     val k = nk.get(i)
     if k == N_CAT {
         var c = na.get(i)
         while c >= 0 && !failed {
             self.emit_node(c)
-            c = nnext.get(c.to_usize())
+            c = nnext.get(c.to_int())
         }
     } elif k == N_ALT {
-        var js: List<usize> = List.empty()
+        var js: List<int> = List.empty()
         var alt = na.get(i)
         while alt >= 0 && !failed {
-            val nx = nnext.get(alt.to_usize())
+            val nx = nnext.get(alt.to_int())
             if nx >= 0 {
                 val s = self.emit(OP_SPLIT, 0, 0)
                 ax.set(s, (s + 1).to_i32())
@@ -948,7 +948,7 @@ fun mut Parser.emit_node(n: i32) {
             alt = nx
         }
         val end = op.len().to_i32()
-        var q: usize = 0
+        var q: int = 0
         while q < js.len() {
             ax.set(js.get(q), end)
             q += 1
@@ -978,7 +978,7 @@ fun mut Parser.emit_node(n: i32) {
 }
 
 /// Returns the error result for a pattern refused with `msg` at byte `off`.
-fun refuse(msg: &str, off: usize) => result.Result<Regex, RegexErr> {
+fun refuse(msg: &str, off: int) => result.Result<Regex, RegexErr> {
     return result.Result.Err(error = RegexErr(message = String.from_str(msg), offset = off))
 }
 
@@ -1013,7 +1013,7 @@ fun compile(pattern: &str) => result.Result<Regex, RegexErr> {
         ax = List.empty(),
         ay = List.empty()
     )
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         p.pat.push(pv.get(i))
         i += 1
@@ -1032,7 +1032,7 @@ fun compile(pattern: &str) => result.Result<Regex, RegexErr> {
         return result.Result.Err(error = RegexErr(message = p.emsg.clone(), offset = p.eoff))
     }
     val np = p.op.len()
-    val ng = p.ncap.to_usize()
+    val ng = p.ncap.to_int()
     val nslots = ng * 2
     if np * nslots > MAX_SCRATCH {
         return refuse("pattern is too large (instructions x capture slots over the 2000000 limit)", 0)
@@ -1071,7 +1071,7 @@ fun compile(pattern: &str) => result.Result<Regex, RegexErr> {
         res.push(-1)
         i += 1
     }
-    var cnt: List<usize> = List.empty()
+    var cnt: List<int> = List.empty()
     cnt.push(0)
     cnt.push(0)
     val re = Regex(
@@ -1098,7 +1098,7 @@ fun compile(pattern: &str) => result.Result<Regex, RegexErr> {
 // The Pike VM
 
 /// Whether the zero-width assertion `kind` holds at byte `pos` of `text`.
-fun Regex.assert_ok(kind: i32, text: View, pos: usize) => bool {
+fun Regex.assert_ok(kind: i32, text: View, pos: int) => bool {
     val n = text.len()
     if kind == A_BOL {
         return pos == 0
@@ -1133,18 +1133,18 @@ fun Regex.assert_ok(kind: i32, text: View, pos: usize) => bool {
 /// `wcap` and are the same when the call returns. Iterative: the stack holds
 /// explore entries (pc >= 0) and capture restores (a < 0: slot -a-1 gets the
 /// value in `stk_b`), and each instruction is expanded once per list.
-fun mut Regex.add_thread(side: usize, pc0: i32, pos: usize, text: View, nsl: usize) {
+fun mut Regex.add_thread(side: int, pc0: i32, pos: int, text: View, nsl: int) {
     val np = op.len()
     stk_a.set(0, pc0)
     stk_b.set(0, 0)
-    var sp: usize = 1
+    var sp: int = 1
     while sp > 0 {
         sp -= 1
         val a = stk_a.get(sp)
         if a < 0 {
-            wcap.set((0 - a - 1).to_usize(), stk_b.get(sp))
+            wcap.set((0 - a - 1).to_int(), stk_b.get(sp))
         } else {
-            val pc = a.to_usize()
+            val pc = a.to_int()
             if mark.get(pc) != gen {
                 mark.set(pc, gen)
                 nsteps += 1
@@ -1158,7 +1158,7 @@ fun mut Regex.add_thread(side: usize, pc0: i32, pos: usize, text: View, nsl: usi
                     stk_a.set(sp, ax.get(pc))
                     sp += 1
                 } elif o == OP_SAVE {
-                    val slot = ax.get(pc).to_usize()
+                    val slot = ax.get(pc).to_int()
                     if slot < nsl {
                         stk_a.set(sp, -1 - slot.to_i32())
                         stk_b.set(sp, wcap.get(slot))
@@ -1176,7 +1176,7 @@ fun mut Regex.add_thread(side: usize, pc0: i32, pos: usize, text: View, nsl: usi
                     val j = cnt.get(side)
                     val slot = side * np + j
                     tl_pc.set(slot, pc.to_i32())
-                    var k: usize = 0
+                    var k: int = 0
                     while k < nsl {
                         tl_cap.set(slot * nsl + k, wcap.get(k))
                         k += 1
@@ -1193,19 +1193,19 @@ fun mut Regex.add_thread(side: usize, pc0: i32, pos: usize, text: View, nsl: usi
 /// Runs the program over `text` from byte `start`, unanchored at the start. True
 /// when there is a match, whose first `nsl` capture slots are then in `res`.
 /// `early` stops at the first match found (enough for a yes/no answer).
-fun mut Regex.run(text: View, start: usize, nsl: usize, early: bool) => bool {
+fun mut Regex.run(text: View, start: int, nsl: int, early: bool) => bool {
     val n = text.len()
     val np = op.len()
     gen += 1
     cnt.set(0, 0)
     cnt.set(1, 0)
-    var side: usize = 0
+    var side: int = 0
     var matched = false
     var pos = start
     var running = true
     while running {
         if !matched {
-            var k: usize = 0
+            var k: int = 0
             while k < nsl {
                 wcap.set(k, -1)
                 k += 1
@@ -1223,14 +1223,14 @@ fun mut Regex.run(text: View, start: usize, nsl: usize, early: bool) => bool {
             if pos < n {
                 c = text.get(pos).to_i32()
             }
-            var j: usize = 0
+            var j: int = 0
             while j < cn {
                 nsteps += 1
                 val slot = side * np + j
-                val pc = tl_pc.get(slot).to_usize()
+                val pc = tl_pc.get(slot).to_int()
                 val o = op.get(pc)
                 if o == OP_MATCH {
-                    var k: usize = 0
+                    var k: int = 0
                     while k < nsl {
                         res.set(k, tl_cap.get(slot * nsl + k))
                         k += 1
@@ -1251,11 +1251,11 @@ fun mut Regex.run(text: View, start: usize, nsl: usize, early: bool) => bool {
                             ok = true
                         } else {
                             val bit: u8 = 1 << (c & 7).to_u8()
-                            ok = classes.get(ax.get(pc).to_usize() * 32 + (c >> 3).to_usize()) & bit != 0
+                            ok = classes.get(ax.get(pc).to_int() * 32 + (c >> 3).to_int()) & bit != 0
                         }
                     }
                     if ok {
-                        var k: usize = 0
+                        var k: int = 0
                         while k < nsl {
                             wcap.set(k, tl_cap.get(slot * nsl + k))
                             k += 1
@@ -1294,7 +1294,7 @@ fun mut Regex.reset_steps() {
 
 /// The number of capture groups, not counting group 0.
 /// The number of capture groups, not counting group 0 (the whole match).
-fun Regex.group_count() => usize = ngroups - 1
+fun Regex.group_count() => int = ngroups - 1
 
 /// Whether the pattern matches anywhere in `text`.
 /// Whether the pattern matches anywhere in `text`.
@@ -1305,7 +1305,7 @@ fun mut Regex.is_match(text: &str) => bool {
 /// The leftmost match at or after byte `start`, if any.
 /// The leftmost match at or after byte `start`, if any. `^` and `\b` still look
 /// at the whole text, so a search that resumes mid-text sees its true context.
-fun mut Regex.find_at(text: &str, start: usize) => option.Option<Match> {
+fun mut Regex.find_at(text: &str, start: int) => option.Option<Match> {
     val tv = text.view()
     if start > tv.len() {
         return option.Option.None
@@ -1313,8 +1313,8 @@ fun mut Regex.find_at(text: &str, start: usize) => option.Option<Match> {
     if !self.run(tv, start, 2, false) {
         return option.Option.None
     }
-    val s = res.get(0).to_usize()
-    val e = res.get(1).to_usize()
+    val s = res.get(0).to_int()
+    val e = res.get(1).to_int()
     return option.Option.Some(value = Match(start = s, end = e, text = tv.slice(s, e).to_string()))
 }
 
@@ -1332,7 +1332,7 @@ fun mut Regex.captures(text: &str) => option.Option<Captures> {
         return option.Option.None
     }
     var slots: List<i32> = List.empty()
-    var k: usize = 0
+    var k: int = 0
     while k < nsl {
         slots.push(res.get(k))
         k += 1
@@ -1347,11 +1347,11 @@ fun mut Regex.find_all(text: &str) => List<Match> {
     val tv = text.view()
     val n = tv.len()
     var out: List<Match> = List.empty()
-    var pos: usize = 0
+    var pos: int = 0
     while pos <= n {
         if self.run(tv, pos, 2, false) {
-            val s = res.get(0).to_usize()
-            val e = res.get(1).to_usize()
+            val s = res.get(0).to_int()
+            val e = res.get(1).to_int()
             out.push(Match(start = s, end = e, text = tv.slice(s, e).to_string()))
             if e == s {
                 pos = e + 1
@@ -1370,9 +1370,9 @@ fun mut Regex.find_all(text: &str) => List<Match> {
 /// Appends the replacement template `rep` for the match in `res`: `$0`..`$9` is
 /// that group's text (nothing when it did not take part or does not exist),
 /// `$$` is a dollar sign, and any other `$` is literal.
-fun Regex.expand(out: mut String, tv: View, rep: View, nsl: usize) {
+fun Regex.expand(out: mut String, tv: View, rep: View, nsl: int) {
     val m = rep.len()
-    var i: usize = 0
+    var i: int = 0
     while i < m {
         val c = rep.get(i)
         if c == '$' && i + 1 < m {
@@ -1381,13 +1381,13 @@ fun Regex.expand(out: mut String, tv: View, rep: View, nsl: usize) {
                 out.push('$')
                 i += 2
             } elif d >= '0' && d <= '9' {
-                val g = (d - '0').to_usize()
+                val g = (d - '0').to_int()
                 if g * 2 + 1 < nsl {
                     val s = res.get(g * 2)
                     val e = res.get(g * 2 + 1)
                     if s >= 0 && e >= s {
-                        var q = s.to_usize()
-                        while q < e.to_usize() {
+                        var q = s.to_int()
+                        while q < e.to_int() {
                             out.push(tv.get(q))
                             q += 1
                         }
@@ -1410,8 +1410,8 @@ fun mut Regex.replace_impl(text: &str, replacement: &str, all: bool) => String {
     val tv = text.view()
     val rv = replacement.view()
     val n = tv.len()
-    var nsl: usize = 2
-    var i: usize = 0
+    var nsl: int = 2
+    var i: int = 0
     while i + 1 < rv.len() {
         if rv.get(i) == '$' && rv.get(i + 1) >= '0' && rv.get(i + 1) <= '9' {
             nsl = ngroups * 2
@@ -1419,12 +1419,12 @@ fun mut Regex.replace_impl(text: &str, replacement: &str, all: bool) => String {
         i += 1
     }
     var out = String.with_capacity(n)
-    var last: usize = 0
-    var pos: usize = 0
+    var last: int = 0
+    var pos: int = 0
     while pos <= n {
         if self.run(tv, pos, nsl, false) {
-            val s = res.get(0).to_usize()
-            val e = res.get(1).to_usize()
+            val s = res.get(0).to_int()
+            val e = res.get(1).to_int()
             var q = last
             while q < s {
                 out.push(tv.get(q))
@@ -1469,12 +1469,12 @@ fun mut Regex.split(text: &str) => List<String> {
     val tv = text.view()
     val n = tv.len()
     var out: List<String> = List.empty()
-    var last: usize = 0
-    var pos: usize = 0
+    var last: int = 0
+    var pos: int = 0
     while pos <= n {
         if self.run(tv, pos, 2, false) {
-            val s = res.get(0).to_usize()
-            val e = res.get(1).to_usize()
+            val s = res.get(0).to_int()
+            val e = res.get(1).to_int()
             out.push(tv.slice(last, s).to_string())
             last = e
             if e == s {
@@ -1491,13 +1491,13 @@ fun mut Regex.split(text: &str) => List<String> {
 }
 
 /// The number of groups, including group 0.
-fun Captures.len() => usize = slots.len() / 2
+fun Captures.len() => int = slots.len() / 2
 
 /// The text of group `i`, or `None` when the group did not take part or does
 /// not exist.
 /// The text of group `i`, or `None` when the group did not take part in the
 /// match or does not exist.
-fun Captures.get(i: usize) => option.Option<String> {
+fun Captures.get(i: int) => option.Option<String> {
     if i * 2 + 1 >= slots.len() {
         return option.Option.None
     }
@@ -1506,13 +1506,13 @@ fun Captures.get(i: usize) => option.Option<String> {
     if s < 0 || e < s {
         return option.Option.None
     }
-    return option.Option.Some(value = text.view().slice(s.to_usize(), e.to_usize()).to_string())
+    return option.Option.Some(value = text.view().slice(s.to_int(), e.to_int()).to_string())
 }
 
 /// The span and the text of group `i`, as a `Match`, or `None` when it did not
 /// take part.
 /// The span and text of group `i`, as a `Match`.
-fun Captures.span(i: usize) => option.Option<Match> {
+fun Captures.span(i: int) => option.Option<Match> {
     if i * 2 + 1 >= slots.len() {
         return option.Option.None
     }
@@ -1521,8 +1521,8 @@ fun Captures.span(i: usize) => option.Option<Match> {
     if s < 0 || e < s {
         return option.Option.None
     }
-    val su = s.to_usize()
-    val eu = e.to_usize()
+    val su = s.to_int()
+    val eu = e.to_int()
     return option.Option.Some(value = Match(start = su, end = eu, text = text.view().slice(su, eu).to_string()))
 }
 

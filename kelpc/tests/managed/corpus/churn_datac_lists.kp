@@ -22,7 +22,7 @@ fun main() {
             recs.push(Record(id = i, tags = tags, chain = Box.of(top)))
             i = i + 1
         }
-        var k: usize = 0
+        var k: int = 0
         while k < recs.len() {
             val r = recs.get(k)
             val kid = r.chain.get()

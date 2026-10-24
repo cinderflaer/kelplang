@@ -3,7 +3,7 @@
 // mistyped.
 pd val greeting = "hi"
 
-fun uses_greeting() => usize {
+fun uses_greeting() => int {
     print(greeting)
     return 2
 }

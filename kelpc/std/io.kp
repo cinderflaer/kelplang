@@ -31,11 +31,11 @@ impl "std/option"
 pd var stdin_reader = BufReader(file = File(fd = 0), buf = mem.alloc(8192), start = 0, end = 0)
 
 extern fun is_open_raw(fd: i32) => bool
-extern fun read_raw(fd: i32, max: usize) => Bytes
-extern fun read_into_raw(fd: i32, buf: mut Bytes, at: usize) => usize
-extern fun write_bytes_raw(fd: i32, data: Bytes) => usize
-extern fun write_text_raw(fd: i32, text: String) => usize
-extern fun write_str_raw(fd: i32, s: &str) => usize
+extern fun read_raw(fd: i32, max: int) => Bytes
+extern fun read_into_raw(fd: i32, buf: mut Bytes, at: int) => int
+extern fun write_bytes_raw(fd: i32, data: Bytes) => int
+extern fun write_text_raw(fd: i32, text: String) => int
+extern fun write_str_raw(fd: i32, s: &str) => int
 extern fun close_raw(fd: i32)
 extern fun set_nonblocking_raw(fd: i32, on: bool)
 extern fun wait_readable_raw(fd: i32, timeout_ms: u64) => bool
@@ -85,7 +85,7 @@ fun File.is_open() => bool = is_open_raw(fd)
 /// One `read(2)`: whatever is available, up to `max` bytes. An empty `Bytes`
 /// means end of file, there is no `Option` in v1 to say it another way.
 /// Panics: if the read fails.
-fun File.read(max: usize) => Bytes = read_raw(fd, max)
+fun File.read(max: int) => Bytes = read_raw(fd, max)
 
 /// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 at
 /// end of file). The buffer is written in place and its length is not changed,
@@ -93,7 +93,7 @@ fun File.read(max: usize) => Bytes = read_raw(fd, max)
 /// `Content-Length` case S4 needs. For an unknown length use `read_all`.
 ///
 /// Panics: if the read fails.
-fun File.read_into(buf: mut Bytes, at: usize) => usize = read_into_raw(fd, buf, at)
+fun File.read_into(buf: mut Bytes, at: int) => int = read_into_raw(fd, buf, at)
 
 /// Everything until end of file, growing a buffer as it goes. The unbuffered
 /// `read` loop is one syscall per chunk rather than one per byte, which is
@@ -119,16 +119,16 @@ fun File.read_all() => Bytes {
 /// sugar (every parameter is a borrow), the caller keeps its buffer.
 ///
 /// Panics: if the write fails.
-fun File.write(data: Bytes) => usize = write_bytes_raw(fd, data)
+fun File.write(data: Bytes) => int = write_bytes_raw(fd, data)
 
 /// Panics: if the write fails.
-fun File.write_text(text: String) => usize = write_text_raw(fd, text)
+fun File.write_text(text: String) => int = write_text_raw(fd, text)
 
 /// The `&str` form, for a borrowed view. A `str` is NUL-terminated, so this
 /// one stops at an embedded NUL; `write_text` on a `String` does not.
 ///
 /// Panics: if the write fails.
-fun File.write_str(text: &str) => usize = write_str_raw(fd, text)
+fun File.write_str(text: &str) => int = write_str_raw(fd, text)
 
 /// There is no userspace buffer behind a `File`, every write above is already
 /// a syscall, so this is a no-op that exists to keep the stream contract
@@ -191,9 +191,9 @@ datac BufReader(
     /// The chunk of bytes read ahead, which must not be empty.
     var buf: Bytes,
     /// The index of the next buffered byte to hand out.
-    var start: usize,
+    var start: int,
     /// The index one past the last valid buffered byte.
-    var end: usize
+    var end: int
 )
 
 /// Wraps a `File`. The chunk is 8 KiB, one page pair, and large enough that

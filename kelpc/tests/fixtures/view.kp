@@ -14,13 +14,13 @@ impl "std/str"
 
 // A `View` parameter is an elision root, so a function may return a view of
 // one, the same rule `&str` returns already follow.
-fun head(text: View, n: usize) => View = text.slice(0, n)
+fun head(text: View, n: int) => View = text.slice(0, n)
 
 fun tail(text: View) => View = text.slice(1, text.len())
 
-fun count_byte(text: View, want: u8) => usize {
-    var i: usize = 0
-    var n: usize = 0
+fun count_byte(text: View, want: u8) => int {
+    var i: int = 0
+    var n: int = 0
     while i < text.len() {
         if text.get(i) == want {
             n += 1

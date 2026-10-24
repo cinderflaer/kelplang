@@ -31,7 +31,7 @@ section(".text.boot") fun kmain() {
     unsafe {
         asm("sti")
     }
-    while pic.ticks() != pic.TICKS_MAX {}
+    while pic.ticks() != pic.TICKS_MAX.to_int() {}
     pic.mask_timer()
     uart.puts("x86: done")
     uart.putc(10)

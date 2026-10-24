@@ -38,10 +38,10 @@ const EOI: u8 = 0x20
 pub const TICKS_MAX: usize = 5
 
 // The tick count is the shared mutable the timer handler writes and the boot
-// reads, so it is an `Atomic<usize>` rather than a `static mut`: a plain load
+// reads, so it is an `Atomic<int>` rather than a `static mut`: a plain load
 // in the boot's spin loop is a value LLVM may hoist out of the loop, because
 // nothing in the loop tells it an interrupt can change it.
-static TICKS: Atomic<usize> = Atomic.new(0)
+static TICKS: Atomic<int> = Atomic.new(0)
 
 // ICW1 starts the initialization and asks for ICW4; ICW2 is each PIC's first
 // vector (0x20 master, 0x28 slave); ICW3 is the cascade wiring (the slave sits
@@ -70,7 +70,7 @@ pub fun mask_timer() {
     port.outb(PIC1_DATA, ALL_MASKED)
 }
 
-pub fun ticks() => usize {
+pub fun ticks() => int {
     TICKS.load(order = atomic.Ordering.SeqCst)
 }
 
@@ -80,12 +80,12 @@ pub fun ticks() => usize {
 // published by the `fetch_add` above, which the interrupted boot cannot observe
 // until this handler has returned.
 pub fun on_tick() {
-    val n: usize = TICKS.fetch_add(1, order = atomic.Ordering.SeqCst) + 1
+    val n: int = TICKS.fetch_add(1, order = atomic.Ordering.SeqCst) + 1
     uart.puts("tick ")
     uart.put_dec(n)
     uart.putc(10)
     port.outb(PIC1_CMD, EOI)
-    if n >= TICKS_MAX {
+    if n >= TICKS_MAX.to_int() {
         mask_timer()
     }
 }

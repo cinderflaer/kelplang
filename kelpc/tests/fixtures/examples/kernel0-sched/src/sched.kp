@@ -18,8 +18,8 @@ impl "uart"
 
 pub const NTASKS: usize = 3
 
-const STATE_READY: usize = 0
-const STATE_RUNNING: usize = 1
+const STATE_READY: int = 0
+const STATE_RUNNING: int = 1
 
 const STACK_BYTES: usize = 4096
 
@@ -50,14 +50,14 @@ static mut BOOT: [u64; 34] = [0; 34]
 // The index `pick` rotates from. It starts one before task 0, so the boot's own
 // trap chooses task 0 first rather than task 1.
 const START_CURRENT: usize = NTASKS - 1
-static mut CURRENT: usize = START_CURRENT
-static mut TICKS: usize = 0
+static mut CURRENT: int = START_CURRENT
+static mut TICKS: int = 0
 
 pub datac Task(
     var frame: [u64; 33],
     var dispatch: u64,
-    var state: usize,
-    var id: usize,
+    var state: int,
+    var id: int,
     var stack: [u8; STACK_BYTES],
 )
 
@@ -90,15 +90,15 @@ fun stack_top(i: usize) => usize {
     return end & (~15)
 }
 
-fun task_state(i: usize) => usize {
+fun task_state(i: int) => int {
     unsafe {
-        field_ptr(i, offset_of<Task>("state")).read_volatile().to_usize()
+        field_ptr(i.to_usize(), offset_of<Task>("state")).read_volatile().to_int()
     }
 }
 
-fun set_task_state(i: usize, state: usize) {
+fun set_task_state(i: int, state: int) {
     unsafe {
-        field_ptr(i, offset_of<Task>("state")).write_volatile(state.to_u64())
+        field_ptr(i.to_usize(), offset_of<Task>("state")).write_volatile(state.to_u64())
     }
 }
 
@@ -113,11 +113,11 @@ fun boot_frame() => Ptr<trap.TrapFrame> {
 // object they touch is the UART's lock. `id` arrives in `a0` because the frame
 // `init_task` builds has it in `x10`, which is what `mret` loads before the
 // first instruction.
-pub fun task(id: usize) {
-    var n: usize = 0
+pub fun task(id: int) {
+    var n: int = 0
     while true {
         n = n + 1
-        if n % PRINT_EVERY == 0 {
+        if n % PRINT_EVERY.to_int() == 0 {
             uart.line(65 + id.to_u8(), n)
         }
     }
@@ -126,15 +126,15 @@ pub fun task(id: usize) {
 // Build every task's first frame: its stack, its entry, the `mstatus` `mret`
 // turns into an enabled interrupt and machine mode, its id in `a0` and the
 // scheduler address the trap entry reads.
-fun init_task(i: usize) {
-    val f: Ptr<trap.TrapFrame> = frame_of(i)
-    trap.set(f, trap.OFF_SP, stack_top(i).to_u64())
+fun init_task(i: int) {
+    val f: Ptr<trap.TrapFrame> = frame_of(i.to_usize())
+    trap.set(f, trap.OFF_SP, stack_top(i.to_usize()).to_u64())
     trap.set(f, trap.OFF_MEPC, Ptr.from_fn(task).addr().to_u64())
     trap.set(f, trap.OFF_MSTATUS, trap.MSTATUS_TASK.to_u64())
     trap.set(f, trap.OFF_X10, i.to_u64())
     trap.set(f, trap.DISPATCH_OFF, Ptr.from_fn(schedule).addr().to_u64())
     unsafe {
-        field_ptr(i, offset_of<Task>("id")).write_volatile(i.to_u64())
+        field_ptr(i.to_usize(), offset_of<Task>("id")).write_volatile(i.to_u64())
     }
     set_task_state(i, STATE_READY)
 }
@@ -143,38 +143,38 @@ fun init_task(i: usize) {
 // in this kernel: a task never exits, so the walk is a plain rotation and the
 // state field is what a blocking or finished task would use).
 fun pick() => Ptr<trap.TrapFrame> {
-    val last: usize = unsafe { CURRENT }
-    var next: usize = (last + 1) % NTASKS
-    var scanned: usize = 0
-    while scanned < NTASKS && task_state(next) != STATE_READY {
-        next = (next + 1) % NTASKS
+    val last: int = unsafe { CURRENT }
+    var next: int = (last + 1) % NTASKS.to_int()
+    var scanned: int = 0
+    while scanned < NTASKS.to_int() && task_state(next) != STATE_READY.to_int() {
+        next = (next + 1) % NTASKS.to_int()
         scanned = scanned + 1
     }
-    if last < NTASKS {
+    if last < NTASKS.to_int() {
         set_task_state(last, STATE_READY)
     }
     set_task_state(next, STATE_RUNNING)
     unsafe {
         CURRENT = next
     }
-    return frame_of(next)
+    return frame_of(next.to_usize())
 }
 
 // The body the naked trap entry calls with the frame in `a0`. It reads `mcause`
 // itself, arms the next timer tick, advances a yielded task's `mepc` past the
 // `ecall`, and answers the frame to resume.
 pub fun schedule(frame: Ptr<trap.TrapFrame>) => Ptr<trap.TrapFrame> {
-    val cause: usize = unsafe { asm("csrr {0}, mcause", out("r") _) }
+    val cause: int = unsafe { asm("csrr {0}, mcause", out("r") _) }
     if cause == trap.CAUSE_TIMER {
         timer.arm(timer.now() + timer.TICK)
         unsafe {
             TICKS = TICKS + 1
         }
-        if unsafe { TICKS } >= TICKS_DONE {
+        if unsafe { TICKS } >= TICKS_DONE.to_int() {
             finish()
         }
     } else {
-        if cause == trap.CAUSE_ECALL_M {
+        if cause == trap.CAUSE_ECALL_M.to_int() {
             trap.set(frame, trap.OFF_MEPC, trap.get(frame, trap.OFF_MEPC) + 4)
         } else {
             fault(cause)
@@ -187,7 +187,7 @@ pub fun schedule(frame: Ptr<trap.TrapFrame>) => Ptr<trap.TrapFrame> {
 // off and the console lock therefore free, and the kernel then waits in a loop
 // the test's `timeout` ends.
 fun finish() {
-    val ticks: usize = unsafe { TICKS }
+    val ticks: int = unsafe { TICKS }
     uart.lock_acquire()
     defer uart.lock_release()
     uart.puts("sched: done ticks=")
@@ -199,7 +199,7 @@ fun finish() {
 // A cause that is neither the timer nor an `ecall`: nothing in this kernel can
 // resume it, so it prints the cause and stops the machine rather than spinning
 // on the faulting instruction.
-fun fault(cause: usize) {
+fun fault(cause: int) {
     uart.lock_acquire()
     uart.puts("sched: fault ")
     uart.put_dec(cause)
@@ -230,8 +230,8 @@ pub fun layout_ok() => bool {
 // between enabling it and the `ecall` cannot hold the first tick; if it did, the
 // trap would take the timer path and pick task 0 exactly as the `ecall` does.
 pub fun start() {
-    var i: usize = 0
-    while i < NTASKS {
+    var i: int = 0
+    while i < NTASKS.to_int() {
         init_task(i)
         i = i + 1
     }
@@ -241,8 +241,8 @@ pub fun start() {
     unsafe {
         asm("csrw mie, {0}", in("r") MTIE_BIT)
         asm("csrw mscratch, {0}", in("r") boot_frame().addr())
-        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
-        asm("csrw mstatus, {0}", in("r") mstatus | MIE_BIT)
+        val mstatus: int = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") mstatus | MIE_BIT.to_int())
         asm("ecall")
     }
 }

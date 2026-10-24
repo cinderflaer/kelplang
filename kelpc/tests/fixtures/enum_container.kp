@@ -21,9 +21,9 @@ enum Token {
     Blank
 }
 
-fun label(t: &Token) => usize = when t {
+fun label(t: &Token) => int = when t {
     Word(text) -> text.len()
-    Digits(n) -> n.to_usize()
+    Digits(n) -> n.to_int()
     Blank -> 0
 }
 
@@ -31,7 +31,7 @@ fun main() {
     var xs: List<Shape> = List.empty()
     xs.push(Shape.Circle(r = 2.0))
     xs.push(Shape.Empty)
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         print(area(xs.get(i)))
         i += 1
@@ -41,7 +41,7 @@ fun main() {
     ts.push(Token.Word(text = String.from_str(s = "four")))
     ts.push(Token.Digits(n = 12))
     ts.push(Token.Blank)
-    var j: usize = 0
+    var j: int = 0
     while j < ts.len() {
         print(label(ts.get(j)))
         j += 1

@@ -1,4 +1,4 @@
-percpu static mut SLOT: usize = 0
+percpu static mut SLOT: int = 0
 
 fun main() {
 }

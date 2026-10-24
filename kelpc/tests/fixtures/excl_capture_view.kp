@@ -18,7 +18,7 @@ fun column(block: scoped fun(mut Kids)) => Kids {
 fun view(s: Model) => Kids {
     var done: i32 = 0
     return column { k ->
-        var i: usize = 0
+        var i: int = 0
         while i < s.items.len() {
             val item = s.items.get(i)
             if item.done {

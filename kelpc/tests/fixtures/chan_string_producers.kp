@@ -34,7 +34,7 @@ fun main() {
     val h2 = thread.spawn(producer, Feed(tx = tx.clone(), id = 1))
     val h3 = thread.spawn(producer, Feed(tx = tx, id = 2))
     var count: i64 = 0
-    var bytes: usize = 0
+    var bytes: int = 0
     for s in rx {
         count += 1
         bytes += s.len()

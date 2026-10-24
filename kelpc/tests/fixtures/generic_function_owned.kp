@@ -13,7 +13,7 @@ fun is_some<T>(o: &Option<T>) => bool = when o {
 
 fun wrap<T>(x: T) => Option<T> = Option.Some(value = x)
 
-fun describe(o: &Option<String>) => usize = when o {
+fun describe(o: &Option<String>) => int = when o {
     Some(v) -> v.len()
     None -> 0
 }

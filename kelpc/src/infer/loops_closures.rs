@@ -244,7 +244,7 @@ pub(crate) fn desugar_list_for(
     stmts.push(ast::Stmt::Let {
         name: idx_name,
         mutable: true,
-        ty: Some(ast::TypeExpr::named("usize", idx_span)),
+        ty: Some(ast::TypeExpr::named("int", idx_span)),
         init: ast::Expr::IntLit(0, idx_span),
         span: idx_span,
     });

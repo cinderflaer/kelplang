@@ -20,25 +20,25 @@ const EDIT_TEXT_MAX: usize = 256
 const FOCUS_CAPACITY: usize = 8
 
 static mut IDS: [i32; 64] = [0; 64]
-static mut HEAD: usize = 0
-static mut COUNT: usize = 0
+static mut HEAD: int = 0
+static mut COUNT: int = 0
 
 // The edit channel: a program with no user asks the loop to set an entry's text,
 // which fires the entry's real `changed` signal. The text is copied in, for the
 // same reason as the ids: the loop owns the widgets, the scheduler does not.
 static mut EDIT_TEXT: [u8; 2048] = [0; 2048]
-static mut EDIT_LEN: [usize; 8] = [0; 8]
+static mut EDIT_LEN: [int; 8] = [0; 8]
 static mut EDIT_ENTRY: [i32; 8] = [0; 8]
-static mut EDIT_HEAD: usize = 0
-static mut EDIT_COUNT: usize = 0
-static mut EDIT_LAST: usize = 0
+static mut EDIT_HEAD: int = 0
+static mut EDIT_COUNT: int = 0
+static mut EDIT_LAST: int = 0
 static mut EDIT_LAST_OK: bool = false
 
 // The focus channel: a program with no user asks the loop to grab the focus for
 // an entry, so a smoke run can prove a patch keeps it.
 static mut FOCUS_INDEX: [i32; 8] = [0; 8]
-static mut FOCUS_HEAD: usize = 0
-static mut FOCUS_COUNT: usize = 0
+static mut FOCUS_HEAD: int = 0
+static mut FOCUS_COUNT: int = 0
 
 pub fun polyp_post(id: i32) {
     unsafe {
@@ -70,16 +70,16 @@ pub fun polyp_poll() => i32 {
 pub fun polyp_post_edit(index: i32, text: str) {
     unsafe {
         if EDIT_COUNT < EDIT_CAPACITY {
-            val slot: usize = (EDIT_HEAD + EDIT_COUNT) % EDIT_CAPACITY
-            val total: usize = str.len(text)
-            var n: usize = total
+            val slot: int = (EDIT_HEAD + EDIT_COUNT) % EDIT_CAPACITY
+            val total: int = str.len(text)
+            var n: int = total
             if n > EDIT_TEXT_MAX - 1 {
                 n = EDIT_TEXT_MAX - 1
                 while n > 0 && str.byte(text, n) >= 128 && str.byte(text, n) < 192 {
                     n = n - 1
                 }
             }
-            var i: usize = 0
+            var i: int = 0
             while i < n {
                 EDIT_TEXT.set(slot * EDIT_TEXT_MAX + i, str.byte(text, i))
                 i = i + 1
@@ -115,7 +115,7 @@ pub fun polyp_poll_edit_text() => String {
     var bytes: Bytes = Bytes.empty()
     unsafe {
         if EDIT_LAST_OK {
-            var i: usize = 0
+            var i: int = 0
             while i < EDIT_LEN.get(EDIT_LAST) {
                 bytes.push(EDIT_TEXT.get(EDIT_LAST * EDIT_TEXT_MAX + i))
                 i = i + 1

@@ -4,17 +4,17 @@
 // array length (`[i32; N]`) and a repeat expression (`[0; N]`), and each
 // distinct value monomorphizes into its own copy exactly as a type argument
 // does.
-const SIZE: usize = 2
+const SIZE: int = 2
 
-datac Buf<const N: usize>(var data: [i32; N], var len: usize)
+datac Buf<const N: usize>(var data: [i32; N], var len: int)
 
 // A `bool` const parameter, read as a value in the body.
 datac Flag<const ON: bool>(var value: i32)
 
 fun Buf<const N: usize>.total() => i32 {
     var sum: i32 = 0
-    var i: usize = 0
-    while i < N {
+    var i: int = 0
+    while i < N.to_int() {
         sum = sum + data.get(i = i)
         i = i + 1
     }
@@ -23,8 +23,8 @@ fun Buf<const N: usize>.total() => i32 {
 
 fun sum<const N: usize>(a: &[i32; N]) => i32 {
     var total: i32 = 0
-    var i: usize = 0
-    while i < N {
+    var i: int = 0
+    while i < N.to_int() {
         total = total + a.get(i = i)
         i = i + 1
     }

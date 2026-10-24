@@ -15,7 +15,7 @@ section(".text.boot") fun kmain() {
     }
     val done: [u8; 5] = DONE
     val bytes: Ptr<[u8; 5]> = Ptr.from_ref(&done)
-    uart.puts(bytes.cast<u8>(), done.len())
+    uart.puts(bytes.cast<u8>(), done.len().to_usize())
     uart.halt()
 }
 
@@ -26,6 +26,6 @@ section(".text.boot") fun kmain() {
 fun kp_panic(_msg: str) {
     val msg: [u8; 6] = PANIC_MSG
     val bytes: Ptr<[u8; 6]> = Ptr.from_ref(&msg)
-    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.puts(bytes.cast<u8>(), msg.len().to_usize())
     uart.halt()
 }

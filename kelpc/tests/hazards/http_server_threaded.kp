@@ -13,7 +13,7 @@ impl "std/str"
 impl "std/thread"
 impl "std/http" caps(net = ["127.0.0.1:*"])
 
-fun arg_u64(i: usize) => u64 {
+fun arg_u64(i: int) => u64 {
     val args = process.args()
     return result.expect(
         r = str.parse_u64(args.get(i).as_str()),
@@ -27,7 +27,7 @@ fun say(text: &str) {
     val b = f.write_str("\n")
 }
 
-fun fd_count() => usize {
+fun fd_count() => int {
     val listing = fs.list("/proc/self/fd")
     return listing.len()
 }
@@ -47,7 +47,7 @@ fun main() {
     val port = fmt.uint(s.port().to_u64())
     say(port)
     val limits = http.default_limits()
-    val n = http.serve_threaded_on(&s, handle, &limits, arg_u64(1).to_usize(), arg_u64(2))
+    val n = http.serve_threaded_on(&s, handle, &limits, arg_u64(1).to_int(), arg_u64(2))
     s.close()
     val after = fd_count()
     var line = String.from_str("served ")

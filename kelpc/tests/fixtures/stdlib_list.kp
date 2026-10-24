@@ -8,7 +8,7 @@ fun main() {
     val parts = str.split(s = "a,b,,c", sep = ",")
     print(parts.len())
     print(str.join(parts = parts, sep = "|"))
-    var i: usize = 0
+    var i: int = 0
     while i < parts.len() {
         print!("[")
         print!(parts.get(i).as_str())

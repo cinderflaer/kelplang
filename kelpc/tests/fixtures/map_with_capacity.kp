@@ -37,7 +37,7 @@ fun main() {
     print(ks.get(0))
     print(ks.get(199))
 
-    val n: i64 = 5
+    val n: int = 5
     var big: Map<i64, i64> = Map.with_capacity(n)
     big.insert(9, 99)
     print(big.get(9))

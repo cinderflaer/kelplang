@@ -24,7 +24,7 @@ enum Wrap {
     Nothing
 }
 
-fun tell(m: &Maybe<String>) => usize = when m {
+fun tell(m: &Maybe<String>) => int = when m {
     Yes(v) -> v.len()
     No -> 0
 }
@@ -34,7 +34,7 @@ fun unwrap_or(m: &Maybe<i64>, fallback: i64) => i64 = when m {
     No -> fallback
 }
 
-fun wrapped_len(w: &Wrap) => usize = when w {
+fun wrapped_len(w: &Wrap) => int = when w {
     Held(m) -> tell(m = m)
     Nothing -> 0
 }

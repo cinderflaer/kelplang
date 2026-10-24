@@ -26,7 +26,7 @@ const KERNEL_CS: u16 = 0x08
 const GATE_INTERRUPT: u8 = 0x8E
 
 const IDT_ENTRIES: usize = 256
-const ENTRY_BYTES: usize = 16
+const ENTRY_BYTES: int = 16
 
 // The four exception vectors and the timer's, and the offsets the gates
 // hardcode in their frames.
@@ -122,7 +122,7 @@ fun set(frame: Ptr<TrapFrame>, offset: usize, value: u64) {
     }
 }
 
-fun entry_for(target: usize) => IdtEntry {
+fun entry_for(target: int) => IdtEntry {
     return IdtEntry(
         offset_low = (target & 0xFFFF).to_u16(),
         selector = KERNEL_CS,
@@ -134,7 +134,7 @@ fun entry_for(target: usize) => IdtEntry {
     )
 }
 
-fun set_gate(vector: usize, target: usize) {
+fun set_gate(vector: int, target: int) {
     val table: Ptr<[IdtEntry; IDT_ENTRIES]> = unsafe { Ptr.from_mut(IDT) }
     val bytes: Ptr<u8> = table.cast<u8>()
     val slot: Ptr<IdtEntry> = bytes.byte_offset((vector * ENTRY_BYTES).to_isize()).cast<IdtEntry>()
@@ -147,16 +147,16 @@ fun set_gate(vector: usize, target: usize) {
 // `Ptr.from_fn` is what keeps a mangled symbol out of this file: the addresses
 // the gates jump to are the ones the linker resolved for those declarations.
 pub fun install() {
-    set_gate(VECTOR_DE, Ptr.from_fn(gate_de).addr())
-    set_gate(VECTOR_UD, Ptr.from_fn(gate_ud).addr())
-    set_gate(VECTOR_GP, Ptr.from_fn(gate_gp).addr())
-    set_gate(VECTOR_PF, Ptr.from_fn(gate_pf).addr())
-    set_gate(pic.VECTOR_TIMER, Ptr.from_fn(gate_timer).addr())
+    set_gate(VECTOR_DE.to_int(), Ptr.from_fn(gate_de).addr().to_int())
+    set_gate(VECTOR_UD.to_int(), Ptr.from_fn(gate_ud).addr().to_int())
+    set_gate(VECTOR_GP.to_int(), Ptr.from_fn(gate_gp).addr().to_int())
+    set_gate(VECTOR_PF.to_int(), Ptr.from_fn(gate_pf).addr().to_int())
+    set_gate(pic.VECTOR_TIMER.to_int(), Ptr.from_fn(gate_timer).addr().to_int())
     val table: Ptr<[IdtEntry; IDT_ENTRIES]> = unsafe { Ptr.from_mut(IDT) }
     val descript: Ptr<IdtDescriptor> = unsafe { Ptr.from_mut(DESCRIPTOR) }
     val dispatch: Ptr<u64> = unsafe { Ptr.from_mut(DISPATCH) }
     unsafe {
-        val limit: usize = IDT_ENTRIES * ENTRY_BYTES - 1
+        val limit: int = IDT_ENTRIES.to_int() * ENTRY_BYTES - 1
         DESCRIPTOR = IdtDescriptor(limit = limit.to_u16(), base = table.addr().to_u64())
         DISPATCH = Ptr.from_fn(trap_dispatch).addr().to_u64()
         set_gs_base(dispatch.addr())
@@ -185,7 +185,7 @@ fun set_gs_base(addr: usize) {
 // and the fields the gates and the dispatcher address by number are where the
 // templates pushed them.
 pub fun layout_ok() => bool {
-    if size_of<IdtEntry>() != ENTRY_BYTES { return false }
+    if size_of<IdtEntry>().to_int() != ENTRY_BYTES { return false }
     if offset_of<IdtEntry>("offset_low") != 0 { return false }
     if offset_of<IdtEntry>("selector") != 2 { return false }
     if offset_of<IdtEntry>("ist") != 4 { return false }
@@ -475,9 +475,9 @@ pub fun trap_dispatch(frame: Ptr<TrapFrame>) {
 
 fun report(frame: Ptr<TrapFrame>, vector: usize) {
     uart.puts("exception ")
-    uart.put_dec(vector)
+    uart.put_dec(vector.to_int())
     uart.puts(" err ")
-    uart.put_dec(get(frame, OFF_ERROR).to_usize())
+    uart.put_dec(get(frame, OFF_ERROR).to_int())
     uart.puts(" rip ")
     uart.put_hex(get(frame, OFF_RIP))
     if vector == VECTOR_PF {

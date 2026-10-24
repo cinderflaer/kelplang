@@ -17,7 +17,7 @@ impl "std/str"
 
 const CW: usize = 40
 const CH: usize = 28
-const AREA: usize = CW * CH
+const AREA: int = CW * CH
 
 const SENTINEL: u32 = 0x00000000
 const ROWBIT: [u8; 8] = [1, 2, 4, 8, 16, 32, 64, 128]
@@ -57,10 +57,10 @@ fun img_new() => Img = Img(p = [0; AREA])
 
 fun grid_new() => Grid = Grid(b = [0; AREA])
 
-fun idx(x: i32, y: i32) => usize = (y * CW.to_i32() + x).to_usize()
+fun idx(x: i32, y: i32) => int = (y * CW.to_i32() + x).to_int()
 
 fun fill_bg(img: mut Img, color: u32) {
-    var i: usize = 0
+    var i: int = 0
     while i < AREA {
         img.p.set(i, color)
         i += 1
@@ -70,7 +70,7 @@ fun fill_bg(img: mut Img, color: u32) {
 // Both images get the same random bytes, so a primitive that blurs a pixel is caught by the
 // pixel comparison as well as by the count.
 fun random_bg(a: mut Img, b: mut Img, rng: mut Rng) {
-    var i: usize = 0
+    var i: int = 0
     while i < AREA {
         val v: u32 = rng.next()
         a.p.set(i, v)
@@ -80,7 +80,7 @@ fun random_bg(a: mut Img, b: mut Img, rng: mut Rng) {
 }
 
 fun same(a: &Img, b: &Img) => bool {
-    var i: usize = 0
+    var i: int = 0
     while i < AREA {
         if a.p.get(i) != b.p.get(i) { return false }
         i += 1
@@ -126,10 +126,10 @@ fun ref_fill(
     w: i32,
     h: i32,
     color: u32,
-) => usize {
+) => int {
     val r: fb.Rect = ref_clip(cl, x, y, w, h)
     if r.is_empty() { return 0 }
-    var count: usize = 0
+    var count: int = 0
     var j: i32 = 0
     while j < r.h {
         var i: i32 = 0
@@ -185,10 +185,10 @@ fun ref_round(
     h: i32,
     radius: i32,
     color: u32,
-) => usize {
+) => int {
     if w <= 0 || h <= 0 { return 0 }
     val r: i32 = ref_clamp_radius(radius, w, h)
-    var count: usize = 0
+    var count: int = 0
     var j: i32 = 0
     while j < h {
         var i: i32 = 0
@@ -214,7 +214,7 @@ fun ref_stroke_round(
     radius: i32,
     thickness: i32,
     color: u32,
-) => usize {
+) => int {
     if w <= 0 || h <= 0 || thickness <= 0 { return 0 }
     val r: i32 = ref_clamp_radius(radius, w, h)
     val t: i32 = thickness
@@ -224,7 +224,7 @@ fun ref_stroke_round(
     if ir < 0 {
         ir = 0
     }
-    var count: usize = 0
+    var count: int = 0
     var j: i32 = 0
     while j < h {
         var i: i32 = 0
@@ -263,7 +263,7 @@ fun ref_blend(dst: u32, src: u32) => u32 {
     return out
 }
 
-fun ref_blend_pixel(img: mut Img, cl: fb.Rect, x: i32, y: i32, color: u32) => usize {
+fun ref_blend_pixel(img: mut Img, cl: fb.Rect, x: i32, y: i32, color: u32) => int {
     if !fb.contains_point(cl, x, y) { return 0 }
     val dst: u32 = img.p.get(idx(x, y))
     img.p.set(idx(x, y), ref_blend(dst, color))
@@ -279,15 +279,15 @@ fun ref_blit(
     h: i32,
     mask: [u8; AREA],
     color: u32,
-) => usize {
+) => int {
     if w <= 0 || h <= 0 { return 0 }
     val color_a: u32 = (color >> 24) & 0xFF
-    var count: usize = 0
+    var count: int = 0
     var j: i32 = 0
     while j < h {
         var i: i32 = 0
         while i < w {
-            val m: u8 = mask.get((j * w + i).to_usize())
+            val m: u8 = mask.get((j * w + i).to_int())
             if m != 0 && fb.contains_point(cl, x + i, y + j) {
                 val a: u32 = (color_a * m.to_u32() + 127) / 255
                 val src: u32 = (a << 24) | (color & 0x00FFFFFF)
@@ -312,7 +312,7 @@ fun ref_line(
     x1: i32,
     y1: i32,
     color: u32,
-) => usize {
+) => int {
     var dx: i64 = x1.to_i64() - x0.to_i64()
     var sx: i32 = 1
     if dx < 0 {
@@ -325,7 +325,7 @@ fun ref_line(
         dy = 0 - dy
         sy = -1
     }
-    var count: usize = 0
+    var count: int = 0
     if dx == 0 && dy == 0 {
         if fb.contains_point(cl, x0, y0) {
             img.p.set(idx(x0, y0), color)
@@ -369,11 +369,11 @@ fun ref_text(
     s: str,
     scale: i32,
     color: u32,
-) => usize {
-    val n: usize = str.len(s)
+) => int {
+    val n: int = str.len(s)
     var pen: i32 = x
-    var count: usize = 0
-    var b: usize = 0
+    var count: int = 0
+    var b: int = 0
     while b < n {
         val byte: u8 = str.byte(s, b)
         var ci: i32 = 0
@@ -381,7 +381,7 @@ fun ref_text(
             val col: u8 = font.glyph_column(byte, ci)
             var rj: i32 = 0
             while rj < font.GLYPH_H {
-                if (col & ROWBIT.get(rj.to_usize())) != 0 {
+                if (col & ROWBIT.get(rj.to_int())) != 0 {
                     var sy: i32 = 0
                     while sy < scale {
                         var sx: i32 = 0
@@ -461,8 +461,8 @@ fun check_fill(t: mut Tally, rng: mut Rng, iters: i32) {
         val w: i32 = rng.range(-3, CW.to_i32() + 8)
         val h: i32 = rng.range(-3, CH.to_i32() + 8)
         val color: u32 = random_color(rng)
-        val got: usize = draw.fill_rect(f, s, x, y, w, h, color)
-        val want: usize = ref_fill(ref, eff, x, y, w, h, color)
+        val got: int = draw.fill_rect(f, s, x, y, w, h, color)
+        val want: int = ref_fill(ref, eff, x, y, w, h, color)
         if got != want || !same(buf, ref) {
             t.bad()
         } else {
@@ -486,8 +486,8 @@ fun check_stroke(t: mut Tally, rng: mut Rng, iters: i32) {
         val h: i32 = rng.range(-2, CH.to_i32() + 6)
         val thickness: i32 = rng.range(-1, 8)
         val color: u32 = random_color(rng)
-        val got: usize = draw.stroke_rect(f, s, x, y, w, h, thickness, color)
-        val want: usize = ref_stroke_rect(ref, eff, x, y, w, h, thickness, color)
+        val got: int = draw.stroke_rect(f, s, x, y, w, h, thickness, color)
+        val want: int = ref_stroke_rect(ref, eff, x, y, w, h, thickness, color)
         if got != want || !same(buf, ref) {
             t.bad()
         } else {
@@ -507,7 +507,7 @@ fun ref_stroke_rect(
     h: i32,
     thickness: i32,
     color: u32,
-) => usize {
+) => int {
     if w <= 0 || h <= 0 || thickness <= 0 { return 0 }
     var top_h: i32 = thickness
     if top_h > h {
@@ -526,7 +526,7 @@ fun ref_stroke_rect(
     if rw > w - lw {
         rw = w - lw
     }
-    var count: usize = 0
+    var count: int = 0
     count += ref_fill(img, cl, x, y, w, top_h, color)
     count += ref_fill(img, cl, x, y + h - bot_h, w, bot_h, color)
     count += ref_fill(img, cl, x, y + top_h, lw, mid_h, color)
@@ -549,8 +549,8 @@ fun check_round(t: mut Tally, rng: mut Rng, iters: i32) {
         val h: i32 = rng.range(-2, CH.to_i32() + 6)
         val radius: i32 = rng.range(-2, 14)
         val color: u32 = random_color(rng)
-        val got: usize = draw.fill_round_rect(f, s, x, y, w, h, radius, color)
-        val want: usize = ref_round(ref, eff, x, y, w, h, radius, color)
+        val got: int = draw.fill_round_rect(f, s, x, y, w, h, radius, color)
+        val want: int = ref_round(ref, eff, x, y, w, h, radius, color)
         if got != want || !same(buf, ref) || outside_of(buf, x, y, w, h) != 0 {
             t.bad()
         } else {
@@ -575,8 +575,8 @@ fun check_stroke_round(t: mut Tally, rng: mut Rng, iters: i32) {
         val radius: i32 = rng.range(-2, 12)
         val thickness: i32 = rng.range(-1, 6)
         val color: u32 = random_color(rng)
-        val got: usize = draw.stroke_round_rect(f, s, x, y, w, h, radius, thickness, color)
-        val want: usize = ref_stroke_round(ref, eff, x, y, w, h, radius, thickness, color)
+        val got: int = draw.stroke_round_rect(f, s, x, y, w, h, radius, thickness, color)
+        val want: int = ref_stroke_round(ref, eff, x, y, w, h, radius, thickness, color)
         if got != want || !same(buf, ref) {
             t.bad()
         } else {
@@ -618,8 +618,8 @@ fun check_line(t: mut Tally, rng: mut Rng, iters: i32) {
         val x1: i32 = rng.range(-8, CW.to_i32() + 8)
         val y1: i32 = rng.range(-8, CH.to_i32() + 8)
         val color: u32 = random_color(rng)
-        val got: usize = draw.line(f, s, x0, y0, x1, y1, color)
-        val want: usize = ref_line(ref, eff, x0, y0, x1, y1, color)
+        val got: int = draw.line(f, s, x0, y0, x1, y1, color)
+        val want: int = ref_line(ref, eff, x0, y0, x1, y1, color)
         if got != want || !same(buf, ref) {
             t.bad()
         } else {
@@ -640,8 +640,8 @@ fun check_blend(t: mut Tally, rng: mut Rng, iters: i32) {
         val x: i32 = rng.range(-4, CW.to_i32() + 4)
         val y: i32 = rng.range(-4, CH.to_i32() + 4)
         val color: u32 = rng.next()
-        val got: usize = draw.blend_pixel(f, s, x, y, color)
-        val want: usize = ref_blend_pixel(ref, eff, x, y, color)
+        val got: int = draw.blend_pixel(f, s, x, y, color)
+        val want: int = ref_blend_pixel(ref, eff, x, y, color)
         val full: u32 = ref_blend(buf.p.get(idx(0, 0)), color)
         val direct: u32 = draw.blend_over(buf.p.get(idx(0, 0)), color)
         if got != want || !same(buf, ref) || full != direct {
@@ -660,7 +660,7 @@ fun check_blit(t: mut Tally, rng: mut Rng, iters: i32) {
         var ref = img_new()
         var mask: [u8; AREA] = [0; AREA]
         random_bg(buf, ref, rng)
-        var i: usize = 0
+        var i: int = 0
         while i < AREA {
             mask.set(i, (rng.next() % 256).to_u8())
             i += 1
@@ -673,8 +673,8 @@ fun check_blit(t: mut Tally, rng: mut Rng, iters: i32) {
         val h: i32 = rng.range(1, CH.to_i32() + 1)
         val color: u32 = rng.next()
         val mp: Ptr<[u8; AREA]> = Ptr.from_ref(&mask)
-        val got: usize = draw.blit_mask8(f, s, x, y, w, h, mp.cast<u8>(), color)
-        val want: usize = ref_blit(ref, eff, x, y, w, h, mask, color)
+        val got: int = draw.blit_mask8(f, s, x, y, w, h, mp.cast<u8>(), color)
+        val want: int = ref_blit(ref, eff, x, y, w, h, mask, color)
         if got != want || !same(buf, ref) {
             t.bad()
         } else {
@@ -696,14 +696,14 @@ fun check_text(t: mut Tally, rng: mut Rng, iters: i32) {
         val x: i32 = rng.range(-4, CW.to_i32() + 4)
         val y: i32 = rng.range(-4, CH.to_i32() + 4)
         val color: u32 = random_color(rng)
-        val got: usize = font.draw_text(f, s, x, y, "Kel", scale, color)
-        val want: usize = ref_text(ref, eff, x, y, "Kel", scale, color)
+        val got: int = font.draw_text(f, s, x, y, "Kel", scale, color)
+        val want: int = ref_text(ref, eff, x, y, "Kel", scale, color)
         var ok: bool = got == want && same(buf, ref)
         // A byte outside printable ASCII renders the replacement box, and a multi-byte UTF-8
         // scalar is one box per byte (the documented limit).
         if k % 3 == 0 {
-            val got2: usize = font.draw_text(f, s, x, y, "aé", scale, color)
-            val want2: usize = ref_text(ref, eff, x, y, "aé", scale, color)
+            val got2: int = font.draw_text(f, s, x, y, "aé", scale, color)
+            val want2: int = ref_text(ref, eff, x, y, "aé", scale, color)
             ok = ok && got2 == want2 && same(buf, ref)
         }
         if !ok {
@@ -727,8 +727,8 @@ fun check_clipstack(t: mut Tally, rng: mut Rng, iters: i32) {
         val depth_ok: bool = s.depth() >= 1 && s.depth() <= draw.MAX_CLIP
         val top_ok: bool = s.top().x == eff.x && s.top().y == eff.y
         val color: u32 = random_color(rng)
-        val got: usize = draw.fill_rect(f, s, -10, -10, CW.to_i32() + 20, CH.to_i32() + 20, color)
-        val want: usize = ref_fill(ref, eff, -10, -10, CW.to_i32() + 20, CH.to_i32() + 20, color)
+        val got: int = draw.fill_rect(f, s, -10, -10, CW.to_i32() + 20, CH.to_i32() + 20, color)
+        val want: int = ref_fill(ref, eff, -10, -10, CW.to_i32() + 20, CH.to_i32() + 20, color)
         if !depth_ok || !top_ok || got != want || !same(buf, ref) {
             t.bad()
         } else {
@@ -753,7 +753,7 @@ fun check_damage(rng: mut Rng, adds: i32) => (i32, i32, i32) {
             h = rng.range(0, 14),
         )
         d.add(r)
-        val count: usize = d.count()
+        val count: int = d.count()
         if count.to_i32() > max_len {
             max_len = count.to_i32()
         }
@@ -776,7 +776,7 @@ fun check_damage(rng: mut Rng, adds: i32) => (i32, i32, i32) {
                 while x < CW.to_i32() {
                     if grid.get(idx(x, y)) == 1 {
                         var cov: bool = false
-                        var m: usize = 0
+                        var m: int = 0
                         while m < d.count() {
                             val dr: fb.Rect = d.at(m)
                             if fb.contains_point(dr, x, y) {
@@ -822,7 +822,7 @@ fun check_damage_cap() => (i32, bool) {
         while x < CW.to_i32() {
             if grid.b.get(idx(x, y)) == 1 {
                 var cov: bool = false
-                var m: usize = 0
+                var m: int = 0
                 while m < d.count() {
                     if fb.contains_point(d.at(m), x, y) {
                         cov = true
@@ -859,15 +859,15 @@ fun check_edges(t: mut Tally) {
     var edges: [fb.Rect; 5] = [fb.Rect(x = 10, y = 0, w = 20, h = CH.to_i32()), fb.Rect(x = 0, y = 0, w = 30, h = CH.to_i32()), fb.Rect(x = 0, y = 8, w = CW.to_i32(), h = 12), fb.Rect(x = 0, y = 0, w = CW.to_i32(), h = 20), fb.Rect(x = 0, y = 0, w = 0, h = 0)]
     var e: i32 = 0
     while e < 5 {
-        val cl: fb.Rect = edges.get(e.to_usize()).dup()
+        val cl: fb.Rect = edges.get(e.to_int()).dup()
         var buf = img_new()
         var ref = img_new()
         fill_bg(buf, 0x00112233)
         fill_bg(ref, 0x00112233)
         val s = draw.clip(cl)
         val f: fb.Fb = target(buf)
-        val got: usize = draw.fill_rect(f, s, -8, -8, CW.to_i32() + 16, CH.to_i32() + 16, 0xFFAABBCC)
-        val want: usize = ref_fill(ref, effective(cl), -8, -8, CW.to_i32() + 16, CH.to_i32() + 16, 0xFFAABBCC)
+        val got: int = draw.fill_rect(f, s, -8, -8, CW.to_i32() + 16, CH.to_i32() + 16, 0xFFAABBCC)
+        val want: int = ref_fill(ref, effective(cl), -8, -8, CW.to_i32() + 16, CH.to_i32() + 16, 0xFFAABBCC)
         if got == want && same(buf, ref) {
             t.ok()
         } else {
@@ -884,8 +884,8 @@ fun check_edges(t: mut Tally) {
     val f: fb.Fb = target(buf)
     val cl: fb.Rect = in_canvas()
 
-    var got: usize = draw.fill_rect(f, s, 5, 5, 0, 5, 0xFFAABBCC)
-    var want: usize = ref_fill(ref, cl, 5, 5, 0, 5, 0xFFAABBCC)
+    var got: int = draw.fill_rect(f, s, 5, 5, 0, 5, 0xFFAABBCC)
+    var want: int = ref_fill(ref, cl, 5, 5, 0, 5, 0xFFAABBCC)
     if got == want && got == 0 && same(buf, ref) {
         t.ok()
     } else {
@@ -1109,7 +1109,7 @@ fun panic_scale() {
     var buf = img_new()
     val f: fb.Fb = target(buf)
     val cl: draw.ClipStack = draw.clip(in_canvas())
-    val n: usize = font.draw_text(f, cl, 0, 0, "x", 9, 0xFFFFFFFF)
+    val n: int = font.draw_text(f, cl, 0, 0, "x", 9, 0xFFFFFFFF)
     print(n)
 }
 

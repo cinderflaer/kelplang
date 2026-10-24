@@ -30,7 +30,7 @@ fun main() {
     a.sort()
     var ok = true
     var h: u64 = 0
-    var k: usize = 0
+    var k: int = 0
     while k < a.len() {
         if k > 0 && a.get(k - 1) > a.get(k) {
             ok = false

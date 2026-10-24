@@ -428,7 +428,7 @@ pub(crate) fn a_primitive_checks_its_resource_argument_once() {
     );
     assert_eq!(run.status.code(), Some(1), "the control must be denied");
     let expected = format!(
-        "{}:20:30: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+        "{}:20:28: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
          granted:\n    {}/kelp_caps_raw_double_eval/**\n",
         caps_project("caps_raw_double_eval").join("util.kp").display(),
         scratch_root().display()

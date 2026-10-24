@@ -53,14 +53,14 @@ datac Config(var addr: u64, var fourcc: u32, var flags: u32, var width: u32, var
 
 // A pointer to one field of a static, at a byte offset: `Ptr.from_mut(T).cast<U>()` cannot be
 // written as one chained expression, so the pointer is bound first (`plan/user-ffi-gap-analysis.md`).
-fun dma_u32(at: usize) => Ptr<u32> {
+fun dma_u32(at: int) => Ptr<u32> {
     val whole: Ptr<Dma> = unsafe { Ptr.from_mut(DMA) }
     val bytes: Ptr<u8> = whole.cast<u8>()
     val here: Ptr<u8> = bytes.byte_offset(at.to_isize())
     return here.cast<u32>()
 }
 
-fun dma_u64(at: usize) => Ptr<u64> {
+fun dma_u64(at: int) => Ptr<u64> {
     val whole: Ptr<Dma> = unsafe { Ptr.from_mut(DMA) }
     val bytes: Ptr<u8> = whole.cast<u8>()
     val here: Ptr<u8> = bytes.byte_offset(at.to_isize())
@@ -104,25 +104,25 @@ fun load_directory() => u32 {
     )
 }
 
-fun dir_byte(at: usize) => u8 = unsafe { DIR.get(at) }
+fun dir_byte(at: int) => u8 = unsafe { DIR.get(at) }
 
 
 // The directory's own fields are big-endian, and the buffer holds a packed record rather than an
 // aligned array of integers, so they are assembled a byte at a time.
-fun dir_u16(at: usize) => u16 {
+fun dir_u16(at: int) => u16 {
     return (dir_byte(at).to_u16() * 256) + dir_byte(at + 1).to_u16()
 }
 
-fun dir_u32(at: usize) => u32 {
+fun dir_u32(at: int) => u32 {
     return ((dir_byte(at).to_u32() * 256 + dir_byte(at + 1).to_u32()) * 256 + dir_byte(at + 2).to_u32()) * 256 + dir_byte(at + 3).to_u32()
 }
 
 // Whether the entry at `entry` names `want`: the name starts eight bytes in and is NUL-padded, so a
 // match needs every byte of `want` and a NUL after them.
-fun dir_names(at: usize, want: str) => bool {
+fun dir_names(at: int, want: str) => bool {
     val n = str.len(want)
     if n > 55 { return false }
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         if dir_byte(at + 8 + i) != str.byte(want, i) { return false }
         i += 1
@@ -138,7 +138,7 @@ fun find_file(want: str) => u16 {
     }
     var i: u32 = 0
     while i < count {
-        val at: usize = (4 + i * 64).to_usize()
+        val at: int = (4 + i * 64).to_int()
         if dir_names(at, want) { return dir_u16(at + 4) }
         i += 1
     }
@@ -148,7 +148,7 @@ fun find_file(want: str) => u16 {
 // Register `pixels` as the display surface. `stride_px` is in pixels, the device's `stride` in
 // bytes. The return value is 0 on success, 1 when the directory read failed, 2 when `etc/ramfb` is
 // not there, and 3 when the device refused the write; `main.kp` prints the one digit.
-pub fun setup(pixels: usize, width: i32, height: i32, stride_px: i32) => u32 {
+pub fun setup(pixels: int, width: i32, height: i32, stride_px: i32) => u32 {
     val failed: u32 = load_directory()
     if (failed & FW_CFG_CTL_ERROR) != 0 { return 1 }
     val sel: u16 = find_file("etc/ramfb")

@@ -52,8 +52,8 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
     val fresh: Ptr<u8> = alloc(new, align)
     if fresh.is_null() { return Ptr.null() }
     if p.is_null() == false {
-        var i: usize = 0
-        while i < old {
+        var i: int = 0
+        while i < old.to_int() {
             unsafe {
                 val src: Ptr<u8> = p.byte_offset(i.to_isize())
                 val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())
@@ -67,7 +67,7 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
 }
 
 fun put_str(text: str) {
-    uart.puts(str.ptr(text), str.len(text))
+    uart.puts(str.ptr(text), str.len(text).to_usize())
 }
 
 // The integer "interpolation": `str.from_u64` is the decimal builder written in
@@ -97,7 +97,7 @@ fun build_and_print() {
     // touch it through `get`/`set`, so the grow path and the accessors are both
     // in the image.
     var bytes: Bytes = Bytes.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < 300 {
         bytes.push((i % 26 + 65).to_u8())
         i = i + 1
@@ -127,6 +127,6 @@ section(".text.boot") fun kmain() {
 fun kp_panic(_msg: str) {
     val msg: [u8; 6] = PANIC_MSG
     val bytes: Ptr<[u8; 6]> = Ptr.from_ref(&msg)
-    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.puts(bytes.cast<u8>(), msg.len().to_usize())
     uart.halt()
 }

@@ -1,4 +1,4 @@
-percpu static mut SLOT: usize = 7
+percpu static mut SLOT: int = 7
 
 section(".text.boot") fun kmain() {
     val v = SLOT

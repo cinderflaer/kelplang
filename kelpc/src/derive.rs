@@ -152,7 +152,7 @@ fn hash_step(kind: &Kind, access: &str, k: usize) -> String {
 /// Folds the bytes of a `String` or `Bytes` value, then its length, into `h`.
 fn hash_text(access: &str, k: usize) -> String {
     format!(
-        "val tv{k} = {access}.view()\nvar ti{k}: usize = 0\nwhile ti{k} < tv{k}.len() {{\nh = h * 31 + tv{k}.get(ti{k}).to_u64()\nti{k} = ti{k} + 1\n}}\nh = h * 31 + tv{k}.len().to_u64()\n"
+        "val tv{k} = {access}.view()\nvar ti{k}: int = 0\nwhile ti{k} < tv{k}.len() {{\nh = h * 31 + tv{k}.get(ti{k}).to_u64()\nti{k} = ti{k} + 1\n}}\nh = h * 31 + tv{k}.len().to_u64()\n"
     )
 }
 

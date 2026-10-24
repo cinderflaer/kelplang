@@ -40,13 +40,13 @@ extern fun mono_ms_raw() => i64
 extern fun close_raw(fd: i32)
 extern fun shutdown_write_raw(fd: i32)
 extern fun shutdown_write_try_raw(fd: i32) => bool
-extern fun send_raw(fd: i32, data: Bytes) => usize
-extern fun send_all_raw(fd: i32, data: Bytes) => usize
+extern fun send_raw(fd: i32, data: Bytes) => int
+extern fun send_all_raw(fd: i32, data: Bytes) => int
 extern fun send_all_try_raw(fd: i32, data: Bytes, reason: mut String) => i32
-extern fun recv_try_raw(fd: i32, max: usize, reason: mut String) => Bytes
-extern fun recv_into_try_raw(fd: i32, buf: mut Bytes, at: usize, reason: mut String) => usize
-extern fun recv_raw(fd: i32, max: usize) => Bytes
-extern fun recv_into_raw(fd: i32, buf: mut Bytes, at: usize) => usize
+extern fun recv_try_raw(fd: i32, max: int, reason: mut String) => Bytes
+extern fun recv_into_try_raw(fd: i32, buf: mut Bytes, at: int, reason: mut String) => int
+extern fun recv_raw(fd: i32, max: int) => Bytes
+extern fun recv_into_raw(fd: i32, buf: mut Bytes, at: int) => int
 extern fun set_timeout_raw(fd: i32, ms: u64)
 extern fun local_port_raw(fd: i32) => u16
 extern fun peer_addr_raw(fd: i32) => String
@@ -124,9 +124,9 @@ datac NetErr(
 )
 
 /// `send_all`, with a failed send (a reset, a closed peer) as an `Err` instead
-/// of a panic. The `usize` is the count written, always the whole buffer on
+/// of a panic. The `int` is the count written, always the whole buffer on
 /// success.
-fun try_send_all(s: Socket, data: Bytes) => result.Result<usize, NetErr> {
+fun try_send_all(s: Socket, data: Bytes) => result.Result<int, NetErr> {
     var reason = String.empty()
     val rc = send_all_try_raw(s.fd, data, &mut reason)
     if rc < 0 {
@@ -137,7 +137,7 @@ fun try_send_all(s: Socket, data: Bytes) => result.Result<usize, NetErr> {
 
 /// `recv`, with a failed read (a reset, a timeout) as an `Err`. An empty `Ok`
 /// is still the peer's clean end of stream.
-fun try_recv(s: Socket, max: usize) => result.Result<Bytes, NetErr> {
+fun try_recv(s: Socket, max: int) => result.Result<Bytes, NetErr> {
     var reason = String.empty()
     val b = recv_try_raw(s.fd, max, &mut reason)
     if !reason.is_empty() {
@@ -147,7 +147,7 @@ fun try_recv(s: Socket, max: usize) => result.Result<Bytes, NetErr> {
 }
 
 /// `recv_into`, with a failed read as an `Err`. `Ok(0)` is end of stream.
-fun try_recv_into(s: Socket, buf: mut Bytes, at: usize) => result.Result<usize, NetErr> {
+fun try_recv_into(s: Socket, buf: mut Bytes, at: int) => result.Result<int, NetErr> {
     var reason = String.empty()
     val n = recv_into_try_raw(s.fd, buf, at, &mut reason)
     if !reason.is_empty() {
@@ -244,14 +244,14 @@ fun try_shutdown_write(s: Socket) => bool = shutdown_write_try_raw(s.fd)
 /// that kills the process.
 ///
 /// Panics: if the send fails or the peer has closed.
-fun send(s: Socket, data: Bytes) => usize = send_raw(s.fd, data)
+fun send(s: Socket, data: Bytes) => int = send_raw(s.fd, data)
 
 /// The whole buffer, looping over short writes in the same primitive that
 /// `io.File.write` uses, a pipe or socket may take fewer bytes than it was
 /// offered, so one `send` is not a write.
 ///
 /// Panics: as `send`.
-fun send_all(s: Socket, data: Bytes) => usize = send_all_raw(s.fd, data)
+fun send_all(s: Socket, data: Bytes) => int = send_all_raw(s.fd, data)
 
 /// The `&str` form, for a literal or a view. Allocates one `Bytes` copy of the
 /// text, because `send` takes bytes and v1 has no byte view (open item 44).
@@ -268,7 +268,7 @@ fun send_text(s: Socket, text: &str) {
 /// express "read exactly `Content-Length`" without growth.
 ///
 /// Panics: if the receive fails.
-fun recv(s: Socket, max: usize) => Bytes = recv_raw(s.fd, max)
+fun recv(s: Socket, max: int) => Bytes = recv_raw(s.fd, max)
 
 /// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 when
 /// the peer has closed). The buffer is written in place and its length is not
@@ -276,7 +276,7 @@ fun recv(s: Socket, max: usize) => Bytes = recv_raw(s.fd, max)
 /// `Content-Length` case the HTTP client needs.
 ///
 /// Panics: if the receive fails.
-fun recv_into(s: Socket, buf: mut Bytes, at: usize) => usize = recv_into_raw(s.fd, buf, at)
+fun recv_into(s: Socket, buf: mut Bytes, at: int) => int = recv_into_raw(s.fd, buf, at)
 
 /// Waits up to `timeout_ms` for the socket to become readable, then returns
 /// whether it did. This is `poll(2)`, the same primitive `io.File` exposes, and

@@ -38,7 +38,7 @@ fun arg_port() => i32 {
 // How many descriptors this process holds right now, read out of the kernel's own
 // listing. The listing call itself opens one directory descriptor and closes it
 // again before returning, so the two counts are taken the same way.
-fun fd_count() => usize {
+fun fd_count() => int {
     val listing = fs.list("/proc/self/fd")
     return listing.len()
 }

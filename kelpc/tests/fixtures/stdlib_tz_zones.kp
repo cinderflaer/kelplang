@@ -174,7 +174,7 @@ fun main() {
     names.push("Asia/Kolkata")
     names.push("Australia/Lord_Howe")
     var missing = false
-    var i: usize = 0
+    var i: int = 0
     while i < names.len() {
         val dir = dir_of(names.get(i).as_str())
         if dir.len() == 0 {

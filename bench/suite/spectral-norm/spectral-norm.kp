@@ -26,10 +26,10 @@ fun mul_av(v: &List<f64>, out: mut List<f64>, n: i64) {
         var s: f64 = 0.0
         var j: i64 = 0
         while j < n {
-            s = s + eval_a(i, j) * v.get(j.to_usize())
+            s = s + eval_a(i, j) * v.get(j.to_int())
             j = j + 1
         }
-        out.set(i.to_usize(), s)
+        out.set(i.to_int(), s)
         i = i + 1
     }
 }
@@ -40,10 +40,10 @@ fun mul_atv(v: &List<f64>, out: mut List<f64>, n: i64) {
         var s: f64 = 0.0
         var j: i64 = 0
         while j < n {
-            s = s + eval_a(j, i) * v.get(j.to_usize())
+            s = s + eval_a(j, i) * v.get(j.to_int())
             j = j + 1
         }
-        out.set(i.to_usize(), s)
+        out.set(i.to_int(), s)
         i = i + 1
     }
 }
@@ -75,7 +75,7 @@ fun main() {
     var vv: f64 = 0.0
     i = 0
     while i < n {
-        val k = i.to_usize()
+        val k = i.to_int()
         vbv = vbv + u.get(k) * v.get(k)
         vv = vv + v.get(k) * v.get(k)
         i = i + 1

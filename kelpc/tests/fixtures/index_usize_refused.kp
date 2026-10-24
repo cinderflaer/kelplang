@@ -1,7 +1,9 @@
 // A `usize` is not an index (issue #278): `List.get` takes an `int`, and the
 // refusal names both types so the fix is the conversion, `to_int()`.
 fun main() {
-    var xs: List<i32> = List.of(10, 20, 30)
+    var xs: List<i32> = List.of(10)
+    xs.push(20)
+    xs.push(30)
     val i: usize = 1
     print(xs.get(i))
 }

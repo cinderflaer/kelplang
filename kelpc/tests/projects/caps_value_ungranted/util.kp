@@ -1,6 +1,6 @@
 impl "std/fs"
 
-fun leak_checked() => usize {
+fun leak_checked() => int {
     val f: fun(&str) => Bytes = fs.read
     return f("/etc/hostname").len()
 }

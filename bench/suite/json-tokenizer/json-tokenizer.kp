@@ -30,7 +30,7 @@ fun is_num_char(c: u8) => bool {
 fun is_alpha(c: u8) => bool = c >= 97 && c <= 122
 
 fun main() {
-    val target = size_arg(20000000).to_usize()
+    val target = size_arg(20000000).to_int()
     var s = String.empty()
     var i: i64 = 0
     while s.len() < target {
@@ -55,7 +55,7 @@ fun main() {
     var errors: i64 = 0
     var str_bytes: i64 = 0
     var h: u64 = 0
-    var p: usize = 0
+    var p: int = 0
     while p < text_len {
         val ch = t.get(p)
         if ch == 32 || ch == 10 || ch == 13 || ch == 9 {

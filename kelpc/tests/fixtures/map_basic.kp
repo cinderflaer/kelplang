@@ -22,7 +22,7 @@ fun main() {
     print(m.len())
 
     val names = m.keys()
-    var i: usize = 0
+    var i: int = 0
     while i < names.len() {
         print!(names.get(i).as_str())
         print!(" ")

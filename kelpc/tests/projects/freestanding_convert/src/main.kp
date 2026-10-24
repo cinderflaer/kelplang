@@ -25,14 +25,14 @@ fun outer() => result.Result<i32, AppErr> {
     return result.Result.Ok(value = v)
 }
 
-fun put_num(value: usize) {
+fun put_num(value: int) {
     if value == 0 {
         uart.putc(48)
         return
     }
     var digits: [u8; 20] = [0; 20]
-    var i: usize = 20
-    var v: usize = value
+    var i: int = 20
+    var v: int = value
     while v > 0 {
         i = i - 1
         digits.set(i = i, v = (48 + (v % 10)).to_u8())
@@ -44,7 +44,7 @@ fun put_num(value: usize) {
     }
 }
 
-fun line(label: str, value: usize) {
+fun line(label: str, value: int) {
     uart.puts(label)
     put_num(value)
     uart.puts("\n")
@@ -53,8 +53,8 @@ fun line(label: str, value: usize) {
 section(".text.boot") fun kmain() {
     val r = outer()
     when r {
-        Err(error) -> line(label = "converted ", value = error.code.to_usize())
-        Ok(value) -> line(label = "ok ", value = value.to_usize())
+        Err(error) -> line(label = "converted ", value = error.code.to_int())
+        Ok(value) -> line(label = "ok ", value = value.to_int())
     }
     uart.puts("done\n")
     uart.halt()

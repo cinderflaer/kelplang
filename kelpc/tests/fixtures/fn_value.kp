@@ -39,7 +39,7 @@ fun call_through(h: Handlers, x: i32) => i32 = h.on_i32(x)
 
 // A moved parameter's type is the bare type, so a function value for it says
 // `move`, the same word the declaration says.
-fun consume(s: move String) => usize = s.len()
+fun consume(s: move String) => int = s.len()
 
 datac Counter(var n: i32)
 
@@ -56,7 +56,7 @@ fun main() {
     print(apply_twice(double, 3))
 
     // Ownership is part of the type.
-    val g: fun(move String) => usize = consume
+    val g: fun(move String) => int = consume
     print(g(String.from_str("abcd")))
 
     // An exclusive borrow too.

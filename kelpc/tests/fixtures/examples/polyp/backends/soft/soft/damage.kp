@@ -30,16 +30,16 @@
 // only the pure-integer half of the raster.
 impl "deps/polyp/backends/soft/soft/fb"
 
-pub const MAX_DAMAGE: usize = 16
+pub const MAX_DAMAGE: int = 16
 
-pub datac Damage(var rects: [fb.Rect; MAX_DAMAGE], var len: usize)
+pub datac Damage(var rects: [fb.Rect; MAX_DAMAGE], var len: int)
 
 pub fun new() => Damage = Damage(rects = [fb.Rect(x = 0, y = 0, w = 0, h = 0); MAX_DAMAGE], len = 0)
 
-fun Damage.count() => usize = len
+fun Damage.count() => int = len
 
 // A copy, so a caller cannot hold a borrow of the list across a later `add`.
-fun Damage.at(i: usize) => fb.Rect = rects.get(i).dup()
+fun Damage.at(i: int) => fb.Rect = rects.get(i).dup()
 
 fun mut Damage.clear() {
     len = 0
@@ -47,10 +47,10 @@ fun mut Damage.clear() {
 
 // The one rectangle covering every entry, empty when the list is.
 fun Damage.bounds() => fb.Rect {
-    val n: usize = len
+    val n: int = len
     if n == 0 { return fb.empty_rect() }
     var out: fb.Rect = rects.get(0).dup()
-    var i: usize = 1
+    var i: int = 1
     while i < n {
         val next: fb.Rect = rects.get(i).dup()
         out = fb.union(out, next)
@@ -62,8 +62,8 @@ fun Damage.bounds() => fb.Rect {
 // Steps 1 to 4 above.
 fun mut Damage.add(rect: fb.Rect) {
     if rect.is_empty() { return }
-    val n: usize = len
-    val has_room: bool = n < MAX_DAMAGE
+    val n: int = len
+    val has_room: bool = n < MAX_DAMAGE.to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int().to_int()
     if has_room {
         if self.merge_into_touching(rect) {
             self.coalesce()
@@ -78,7 +78,7 @@ fun mut Damage.add(rect: fb.Rect) {
         return
     }
     self.merge_least_waste()
-    val m: usize = len
+    val m: int = len
     rects.set(m, rect.dup())
     len = m + 1
     self.coalesce()
@@ -86,8 +86,8 @@ fun mut Damage.add(rect: fb.Rect) {
 
 // Replace the first entry that touches `r` with the union, if any does.
 fun mut Damage.merge_into_touching(r: fb.Rect) => bool {
-    val n: usize = len
-    var i: usize = 0
+    val n: int = len
+    var i: int = 0
     while i < n {
         val probe: fb.Rect = rects.get(i).dup()
         val hit: bool = fb.touches(probe, r)
@@ -104,14 +104,14 @@ fun mut Damage.merge_into_touching(r: fb.Rect) => bool {
 // Merge the pair whose union wastes the least area and remove the second entry. The caller
 // guarantees `n >= 2`.
 fun mut Damage.merge_least_waste() {
-    val n: usize = len
-    var best_i: usize = 0
-    var best_j: usize = 1
+    val n: int = len
+    var best_i: int = 0
+    var best_j: int = 1
     var best_waste: i64 = 0
     var first: bool = true
-    var i: usize = 0
+    var i: int = 0
     while i < n {
-        var j: usize = i + 1
+        var j: int = i + 1
         while j < n {
             val a: fb.Rect = rects.get(i).dup()
             val b: fb.Rect = rects.get(j).dup()
@@ -129,13 +129,13 @@ fun mut Damage.merge_least_waste() {
         }
         i += 1
     }
-    val bi: usize = best_i
-    val bj: usize = best_j
+    val bi: int = best_i
+    val bj: int = best_j
     val cur: fb.Rect = rects.get(bi).dup()
     val other: fb.Rect = rects.get(bj).dup()
     val merged: fb.Rect = fb.union(cur, other)
     rects.set(bi, merged)
-    var k: usize = bj
+    var k: int = bj
     while k + 1 < n {
         val nxt: fb.Rect = rects.get(k + 1).dup()
         rects.set(k, nxt)
@@ -150,10 +150,10 @@ fun mut Damage.coalesce() {
     var changed: bool = true
     while changed {
         changed = false
-        val n: usize = len
-        var i: usize = 0
+        val n: int = len
+        var i: int = 0
         while i < n && !changed {
-            var j: usize = i + 1
+            var j: int = i + 1
             while j < n && !changed {
                 val a: fb.Rect = rects.get(i).dup()
                 val b: fb.Rect = rects.get(j).dup()
@@ -161,7 +161,7 @@ fun mut Damage.coalesce() {
                 if hit {
                     val merged: fb.Rect = fb.union(a, b)
                     rects.set(i, merged)
-                    var k: usize = j
+                    var k: int = j
                     while k + 1 < n {
                         val nxt: fb.Rect = rects.get(k + 1).dup()
                         rects.set(k, nxt)

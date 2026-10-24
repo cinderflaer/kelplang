@@ -2,7 +2,7 @@
 // operation that has to know it. `push`/`insert`/`set` decide it, from a nested
 // block or a loop as well as from the next line, and a position that expects a
 // container decides it too, whether that is a parameter or a return type.
-fun count(xs: List<i32>) => usize = xs.len()
+fun count(xs: List<i32>) => int = xs.len()
 
 fun empty_of() => List<i32> {
     var xs = List.empty()

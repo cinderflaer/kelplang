@@ -184,7 +184,7 @@ fun main() {
         print(m.remove(28))
         print(m.len())
         val ks = m.keys()
-        var i: usize = 0
+        var i: int = 0
         while i < ks.len() {
             print(ks.get(i))
             i += 1
@@ -233,7 +233,7 @@ fun main() {
 
     {
         val s = String.from_str("seed")
-        val f = fun() => usize = s.len()
+        val f = fun() => int = s.len()
         print(f())
         val k: i32 = (-35)
         val g = fun(x: i32) => i32 = x + k
@@ -245,7 +245,7 @@ fun main() {
         var i: i32 = 0
         while i < 3 {
             val t = String.from_str("data")
-            val c = fun() => usize = t.len()
+            val c = fun() => int = t.len()
             print(c())
             i = i + 1
         }

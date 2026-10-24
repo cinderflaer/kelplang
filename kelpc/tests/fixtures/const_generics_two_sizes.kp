@@ -3,27 +3,27 @@
 // the generated image holds two of everything (each `kelp_Ring__...__l__N__g__`
 // symbol is emitted twice, once per length) and the two buffers keep their own
 // state while the loop writes to both.
-datac Ring<const N: usize>(var slot: [i32; N], var head: usize, var count: usize)
+datac Ring<const N: usize>(var slot: [i32; N], var head: int, var count: int)
 
 fun mut Ring<const N: usize>.push(v: i32) {
     slot.set(i = head, v = v)
-    head = (head + 1) % N
-    if count < N {
+    head = (head + 1) % N.to_int()
+    if count < N.to_int() {
         count = count + 1
     }
 }
 
 fun Ring<const N: usize>.total() => i32 {
     var sum: i32 = 0
-    var i: usize = 0
-    while i < N {
+    var i: int = 0
+    while i < N.to_int() {
         sum = sum + slot.get(i = i)
         i = i + 1
     }
     return sum
 }
 
-fun Ring<const N: usize>.rings() => usize = N
+fun Ring<const N: usize>.rings() => int = N.to_int()
 
 fun main() {
     var small = Ring<4>(slot = [0; 4], head = 0, count = 0)

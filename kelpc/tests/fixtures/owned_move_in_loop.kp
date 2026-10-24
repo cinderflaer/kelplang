@@ -12,7 +12,7 @@
 fun main() {
     var words: List<String> = List.empty()
     words.push("a")
-    var round: usize = 2
+    var round: int = 2
     var go = true
     while round > 0 && go {
         val text = String.from_str("hi")

@@ -7,7 +7,7 @@
 impl "std/str"
 impl "std/option"
 
-fun show(o: option.Option<usize>) {
+fun show(o: option.Option<int>) {
     when o {
         Some(at) -> print(at)
         None -> print("none")

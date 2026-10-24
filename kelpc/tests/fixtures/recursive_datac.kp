@@ -10,7 +10,7 @@ datac Branch(val label: String, val leaf: Box<Leaf>)
 
 fun sum_tree(t: Tree) => i32 {
     var total = t.value
-    var i: usize = 0
+    var i: int = 0
     while i < t.kids.len() {
         total = total + sum_tree(t.kids.get(i))
         i = i + 1

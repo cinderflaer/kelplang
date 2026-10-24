@@ -36,7 +36,7 @@ fun main() {
     // An owned capture: moved into the environment and read through a borrow
     // there, so calling the closure does not move the captured value out.
     val suffix = String.from_str("!")
-    val shout = fun(s: str) => usize = str.len(s) + suffix.len()
+    val shout = fun(s: str) => int = str.len(s) + suffix.len()
     print(shout("hi"))
 
     // A capturing literal passed straight to a closure parameter, borrowed

@@ -10,9 +10,9 @@ fun words(a: str) => List<String> {
     xs
 }
 
-fun total(rows: List<List<String>>) => usize {
-    var n: usize = 0
-    var i: usize = 0
+fun total(rows: List<List<String>>) => int {
+    var n: int = 0
+    var i: int = 0
     while i < rows.len() {
         n += rows.get(i).len()
         i += 1

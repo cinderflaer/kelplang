@@ -30,7 +30,7 @@ pub const DISPATCH_OFF: usize = FRAME_BYTES
 // `yield` and the boot's own way of entering the scheduler. Bit 63 set and code
 // 7 is the machine timer interrupt.
 pub const CAUSE_ECALL_M: usize = 11
-pub const CAUSE_TIMER: usize = 0x8000000000000007
+pub const CAUSE_TIMER: int = -9223372036854775801
 
 // The `mstatus` a task is started with: `MPIE` (bit 7) is what `mret` copies
 // into `MIE`, so the first instruction of a task runs with interrupts enabled,

@@ -156,6 +156,13 @@ impl<'a> Gen<'a> {
             let f = body("kelp_String__reserve")?;
             let self_p = f.get_param(0);
             let extra = f.get_param(1);
+            let neg = self.builder.build_icmp(IntCmp::Slt, extra, self.v_i64(0), "neg");
+            let bad = self.block(f, "negative");
+            let ok = self.block(f, "counted");
+            self.builder.build_cond_br(neg, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("String.reserve: negative count")?;
+            self.builder.position_at_end(ok);
             self.emit_grow_call(f, string, self_p, extra)?;
             self.builder.build_ret_void();
         }
@@ -593,6 +600,13 @@ impl<'a> Gen<'a> {
             let f = body("kelp_String__with_capacity")?;
             let dst = f.get_param(0);
             let n = f.get_param(1);
+            let neg = self.builder.build_icmp(IntCmp::Slt, n, self.v_i64(0), "neg");
+            let bad = self.block(f, "negative");
+            let ok = self.block(f, "counted");
+            self.builder.build_cond_br(neg, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("String.with_capacity: negative count")?;
+            self.builder.position_at_end(ok);
             let n1 = self
                 .builder
                 .build_int_binop(IntBinOp::Add, n, self.v_i64(1), "n1");
@@ -694,6 +708,13 @@ impl<'a> Gen<'a> {
             let f = body("kelp_String__reserve")?;
             let self_p = f.get_param(0);
             let extra = f.get_param(1);
+            let neg = self.builder.build_icmp(IntCmp::Slt, extra, self.v_i64(0), "neg");
+            let bad = self.block(f, "negative");
+            let ok = self.block(f, "counted");
+            self.builder.build_cond_br(neg, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("String.reserve: negative count")?;
+            self.builder.position_at_end(ok);
             self.emit_grow_call(f, string, self_p, extra)?;
             self.builder.build_ret_void();
         }

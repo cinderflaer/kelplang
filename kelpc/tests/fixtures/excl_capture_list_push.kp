@@ -17,7 +17,7 @@ fun main() {
         seen.push(n * 10)
         names.push(String.from_str("n"))
     }
-    var i: usize = 0
+    var i: int = 0
     while i < seen.len() {
         print(seen.get(i))
         i += 1

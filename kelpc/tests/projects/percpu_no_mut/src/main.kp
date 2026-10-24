@@ -1,4 +1,4 @@
-percpu static SLOT: usize = 0
+percpu static SLOT: int = 0
 
 fun main() {
 }

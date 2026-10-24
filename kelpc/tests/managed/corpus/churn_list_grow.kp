@@ -13,7 +13,7 @@ fun main() {
             i = i + 1
         }
         var s: i64 = 0
-        var k: usize = 0
+        var k: int = 0
         while k < xs.len() {
             s = (s + xs.get(k)) % 1000000007
             k = k + 1

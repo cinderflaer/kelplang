@@ -2,7 +2,7 @@
 // folds in an array length and in a `const` initializer as well as in a body.
 // Canonical order puts every `const` before every `datac`, so a constant can
 // only query a builtin; a body can query a declared type.
-const SIZE: usize = size_of<i64>()
+const SIZE: int = size_of<i64>()
 
 datac Holder(val a: u8, val b: u32)
 

@@ -25,7 +25,7 @@ fun main() {
     xs.push(3)
     print(xs.len())
 
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         val v = xs.get(i = i)
         if v > 1 {

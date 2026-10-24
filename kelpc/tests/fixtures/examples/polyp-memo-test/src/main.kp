@@ -31,7 +31,7 @@ enum Msg {
 }
 
 fun find(m: &Model, id: i32) => i32 {
-    var i: usize = 0
+    var i: int = 0
     while i < m.items.len() {
         if m.items.get(i).id == id { return i.to_i32() }
         i += 1
@@ -44,7 +44,7 @@ fun update(m: mut Model, msg: Msg) {
         Toggle(id) -> {
             val at = find(m, id)
             if at >= 0 {
-                val u = at.to_usize()
+                val u = at.to_int()
                 val t = String.from_str(m.items.get(u).title.as_str())
                 val was = m.items.get(u).done
                 m.items.set(u, Item(id = id, title = t, done = !was))
@@ -54,7 +54,7 @@ fun update(m: mut Model, msg: Msg) {
         Remove(id) -> {
             val at = find(m, id)
             if at >= 0 {
-                val gone = m.items.remove(at.to_usize())
+                val gone = m.items.remove(at.to_int())
             }
             m.clicks += 1
         }
@@ -116,7 +116,7 @@ fun view_plain(m: Model) => core.Node<Msg> {
         k.expand()
         k.scrolled { sc ->
             sc.spacing(4)
-            var i: usize = 0
+            var i: int = 0
             while i < m.items.len() {
                 val item = m.items.get(i)
                 val key = str.from_i64(item.id.to_i64())
@@ -185,7 +185,7 @@ fun counters(label: str, s: mut Screen) {
     s.store.set(st)
 }
 
-fun entries(s: mut Screen) => usize {
+fun entries(s: mut Screen) => int {
     val st = s.store.take()
     val n = st.entries.len()
     s.store.set(st)
@@ -372,7 +372,7 @@ fun view_nested(m: Model) => core.Node<Msg> {
 fun view_nested_plain(m: Model) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(4)
-        var i: usize = 0
+        var i: int = 0
         while i < m.items.len() {
             val item = m.items.get(i)
             val key = str.from_i64(item.id.to_i64())

@@ -78,17 +78,17 @@ pub fun glyph_column(b: u8, ci: i32) => u8 = glyph_column_cp(b.to_i32(), ci)
 // Column `ci` of the glyph for code point `cp`: the ASCII table, then the generated blocks, and the
 // replacement box for every code point with no drawing. The low bit is the top row.
 pub fun glyph_column_cp(cp: i32, ci: i32) => u8 {
-    if cp >= 32 && cp <= 126 { return FONT.get(((cp - 32) * 5 + ci).to_usize()) }
-    if cp >= 0xA0 && cp <= 0xFF { return FONT_LATIN1.get(((cp - 0xA0) * 5 + ci).to_usize()) }
-    if cp >= 0x100 && cp <= 0x17F { return FONT_LATINA.get(((cp - 0x100) * 5 + ci).to_usize()) }
-    if cp >= 0x391 && cp <= 0x3C9 { return FONT_GREEK.get(((cp - 0x391) * 5 + ci).to_usize()) }
-    if cp >= 0x400 && cp <= 0x45F { return FONT_CYRILLIC.get(((cp - 0x400) * 5 + ci).to_usize()) }
-    if cp >= 0x2010 && cp <= 0x2027 { return FONT_PUNCT.get(((cp - 0x2010) * 5 + ci).to_usize()) }
-    if cp == 0x20AC { return FONT_EURO.get(ci.to_usize()) }
-    if cp >= 0x2190 && cp <= 0x2195 { return FONT_ARROWS.get(((cp - 0x2190) * 5 + ci).to_usize()) }
-    if cp >= 0x2500 && cp <= 0x2551 { return FONT_BOX.get(((cp - 0x2500) * 5 + ci).to_usize()) }
-    if cp >= 0x25A0 && cp <= 0x25CF { return FONT_SHAPES.get(((cp - 0x25A0) * 5 + ci).to_usize()) }
-    return REPLACEMENT.get(ci.to_usize())
+    if cp >= 32 && cp <= 126 { return FONT.get(((cp - 32) * 5 + ci).to_int()) }
+    if cp >= 0xA0 && cp <= 0xFF { return FONT_LATIN1.get(((cp - 0xA0) * 5 + ci).to_int()) }
+    if cp >= 0x100 && cp <= 0x17F { return FONT_LATINA.get(((cp - 0x100) * 5 + ci).to_int()) }
+    if cp >= 0x391 && cp <= 0x3C9 { return FONT_GREEK.get(((cp - 0x391) * 5 + ci).to_int()) }
+    if cp >= 0x400 && cp <= 0x45F { return FONT_CYRILLIC.get(((cp - 0x400) * 5 + ci).to_int()) }
+    if cp >= 0x2010 && cp <= 0x2027 { return FONT_PUNCT.get(((cp - 0x2010) * 5 + ci).to_int()) }
+    if cp == 0x20AC { return FONT_EURO.get(ci.to_int()) }
+    if cp >= 0x2190 && cp <= 0x2195 { return FONT_ARROWS.get(((cp - 0x2190) * 5 + ci).to_int()) }
+    if cp >= 0x2500 && cp <= 0x2551 { return FONT_BOX.get(((cp - 0x2500) * 5 + ci).to_int()) }
+    if cp >= 0x25A0 && cp <= 0x25CF { return FONT_SHAPES.get(((cp - 0x25A0) * 5 + ci).to_int()) }
+    return REPLACEMENT.get(ci.to_int())
 }
 
 // Whether `cp` has a real drawing (anything else is drawn as the replacement box).
@@ -96,7 +96,7 @@ pub fun has_glyph(cp: i32) => bool {
     var same = true
     var ci: i32 = 0
     while ci < GLYPH_W {
-        if glyph_column_cp(cp, ci) != REPLACEMENT.get(ci.to_usize()) {
+        if glyph_column_cp(cp, ci) != REPLACEMENT.get(ci.to_int()) {
             same = false
         }
         ci += 1
@@ -114,7 +114,7 @@ fun draw_glyph(
     cp: i32,
     scale: i32,
     color: u32,
-) => usize {
+) => int {
     val gw: i32 = GLYPH_W * scale
     var mask: [u8; 560] = [0; 560]
     var ci: i32 = 0
@@ -122,14 +122,14 @@ fun draw_glyph(
         val col: u8 = glyph_column_cp(cp, ci)
         var rj: i32 = 0
         while rj < GLYPH_H {
-            val on: u8 = col & ROW_BIT.get(rj.to_usize())
+            val on: u8 = col & ROW_BIT.get(rj.to_int())
             if on != 0 {
                 var sy: i32 = 0
                 while sy < scale {
                     var sx: i32 = 0
                     while sx < scale {
                         val idx: i32 = (rj * scale + sy) * gw + (ci * scale + sx)
-                        mask.set(idx.to_usize(), 255)
+                        mask.set(idx.to_int(), 255)
                         sx += 1
                     }
                     sy += 1
@@ -166,14 +166,14 @@ pub fun draw_text(
     s: str,
     scale: i32,
     color: u32,
-) => usize {
+) => int {
     if scale < 1 || scale > MAX_SCALE {
         panic("text scale must be in 1..=4")
     }
-    val n: usize = str.len(s)
+    val n: int = str.len(s)
     var pen: i32 = x
-    var count: usize = 0
-    var i: usize = 0
+    var count: int = 0
+    var i: int = 0
     while i < n {
         val r = utf8.decode(s, i)
         count += draw_glyph(f, c, pen, y, utf8.unit_cp(r), scale, color)

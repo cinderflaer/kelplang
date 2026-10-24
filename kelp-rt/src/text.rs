@@ -378,10 +378,13 @@ pub unsafe extern "C" fn kelp_Bytes__append(this: *mut Bytes, other: *const Byte
 /// # Safety
 /// `this` must be valid and own its buffer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelp_Bytes__reserve(this: *mut Bytes, extra: usize) {
+pub unsafe extern "C" fn kelp_Bytes__reserve(this: *mut Bytes, extra: i64) {
     unsafe {
+        if extra < 0 {
+            kelp_panic(c"Bytes.reserve: negative count".as_ptr());
+        }
         let b = &mut *this;
-        kelp_buf_reserve(&raw mut b.data, b.len, &raw mut b.cap, extra);
+        kelp_buf_reserve(&raw mut b.data, b.len, &raw mut b.cap, extra as usize);
     }
 }
 
@@ -622,10 +625,13 @@ pub unsafe extern "C" fn kelp_String__push_str(this: *mut KString, text: *const 
 /// # Safety
 /// `this` must own its buffer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelp_String__reserve(this: *mut KString, extra: usize) {
+pub unsafe extern "C" fn kelp_String__reserve(this: *mut KString, extra: i64) {
     unsafe {
+        if extra < 0 {
+            kelp_panic(c"String.reserve: negative count".as_ptr());
+        }
         let s = &mut *this;
-        kelp_buf_reserve(&raw mut s.data, s.len, &raw mut s.cap, extra);
+        kelp_buf_reserve(&raw mut s.data, s.len, &raw mut s.cap, extra as usize);
     }
 }
 
@@ -635,14 +641,17 @@ pub unsafe extern "C" fn kelp_String__reserve(this: *mut KString, extra: usize) 
 /// # Safety
 /// The result owns its buffer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelp_String__with_capacity(n: usize) -> KString {
+pub unsafe extern "C" fn kelp_String__with_capacity(n: i64) -> KString {
     unsafe {
+        if n < 0 {
+            kelp_panic(c"String.with_capacity: negative count".as_ptr());
+        }
         let mut s = KString {
             data: ptr::null_mut(),
             len: 0,
             cap: 0,
         };
-        kelp_buf_reserve(&raw mut s.data, 0, &raw mut s.cap, n);
+        kelp_buf_reserve(&raw mut s.data, 0, &raw mut s.cap, n as usize);
         if s.data.is_null() {
             let p = buf_alloc(1);
             if p.is_null() {

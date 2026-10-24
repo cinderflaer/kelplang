@@ -35,7 +35,7 @@ fun main() {
     // result is a fresh owned value. Reading it back out goes through
     // `option.expect`, which takes the option with `move` (A-11).
     val text = option.Option.Some(value = String.from_str("hello"))
-    val len = option.map(o = text, f = fun(s: &String) => usize = s.len())
+    val len = option.map(o = text, f = fun(s: &String) => int = s.len())
     print(option.expect(o = len, message = "none"))
 
     val shout = option.map(o = text, f = fun(s: &String) => String = str.to_upper(s.as_str()))

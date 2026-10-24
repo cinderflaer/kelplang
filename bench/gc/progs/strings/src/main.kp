@@ -29,11 +29,11 @@ fun round(n: i64, salt: i64) => u64 {
     }
     val pieces = str.split(s, ",")
     var h: u64 = 0
-    var k: usize = 0
+    var k: int = 0
     while k < pieces.len() {
         val p = pieces.get(k).as_str()
         val len = str.len(p)
-        var b: usize = 0
+        var b: int = 0
         while b < len {
             h = h * 31 + str.byte(p, b).to_u64()
             b = b + 1

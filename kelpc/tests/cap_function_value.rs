@@ -67,25 +67,25 @@ fn shapes(item: &str) -> [(&'static str, String); 4] {
         (
             "a_local",
             format!(
-                "fun leak() => usize {{\n    val f: fun(&str) => Bytes = {item}\n    return f(\"/etc/hostname\").len()\n}}"
+                "fun leak() => int {{\n    val f: fun(&str) => Bytes = {item}\n    return f(\"/etc/hostname\").len()\n}}"
             ),
         ),
         (
             "an_argument",
             format!(
-                "fun apply(f: fun(&str) => Bytes) => usize = f(\"/etc/hostname\").len()\n\nfun leak() => usize = apply({item})"
+                "fun apply(f: fun(&str) => Bytes) => int = f(\"/etc/hostname\").len()\n\nfun leak() => int = apply({item})"
             ),
         ),
         (
             "a_field",
             format!(
-                "datac Holder(val f: fun(&str) => Bytes)\n\nfun leak() => usize {{\n    val h = Holder(f = {item})\n    return h.f(\"/etc/hostname\").len()\n}}"
+                "datac Holder(val f: fun(&str) => Bytes)\n\nfun leak() => int {{\n    val h = Holder(f = {item})\n    return h.f(\"/etc/hostname\").len()\n}}"
             ),
         ),
         (
             "a_passdown",
             format!(
-                "pd val source: fun(&str) => Bytes = {item}\n\nfun leak() => usize = source(\"/etc/hostname\").len()"
+                "pd val source: fun(&str) => Bytes = {item}\n\nfun leak() => int = source(\"/etc/hostname\").len()"
             ),
         ),
     ]
@@ -174,7 +174,7 @@ fn a_function_literal_over_a_gated_call_is_still_checked() {
     project(
         &dir,
         GRANT,
-        "fun leak() => usize {\n    val f = fun(p: &str) => Bytes = fs.read(p)\n    return f(\"/etc/hostname\").len()\n}",
+        "fun leak() => int {\n    val f = fun(p: &str) => Bytes = fs.read(p)\n    return f(\"/etc/hostname\").len()\n}",
     );
 
     let build = build(&dir, "c.bin");

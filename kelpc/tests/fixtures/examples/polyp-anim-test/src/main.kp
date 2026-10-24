@@ -154,7 +154,7 @@ fun run_progress() {
     say_bool("wants", b.wants_frames())
     // The bar's own rectangle: the damage of every frame must be exactly this one.
     val steps: [u64; 6] = [0, 100, 150, 150, 100, 100]
-    var i: usize = 0
+    var i: int = 0
     while i < 6 {
         p.advance(steps.get(i))
         val before = p.frame_count()
@@ -256,7 +256,7 @@ fun run_spacer() {
     var tree = spacer_view(st)
     boot(b, p, &tree)
     val steps: [u64; 5] = [0, 50, 50, 100, 100]
-    var i: usize = 0
+    var i: int = 0
     while i < 5 {
         p.advance(steps.get(i))
         tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = spacer_view, update = nop))
@@ -369,7 +369,7 @@ fun run_every() {
     tree = drive_timed(b, p, tree, st, beat_view, update, beat_subs, timers, 0)
     say("armed_wake_us", core.next_wake_us(&timers))
     val steps: [u64; 5] = [50, 60, 350, 40, 1000]
-    var i: usize = 0
+    var i: int = 0
     while i < 5 {
         tree = drive_timed(b, p, tree, st, beat_view, update, beat_subs, timers, steps.get(i))
         say("t_ms", p.now_ms().to_i64())

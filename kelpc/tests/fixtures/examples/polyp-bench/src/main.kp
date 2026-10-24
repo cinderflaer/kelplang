@@ -53,13 +53,13 @@ fun report(name: str, frames: i32, pixels: i64, rects: i32, allocs: i32, samples
     var a = samples
     var i: i32 = 1
     while i < RUNS {
-        val key = a.get(i.to_usize())
+        val key = a.get(i.to_int())
         var j = i - 1
-        while j >= 0 && a.get(j.to_usize()) > key {
-            a.set((j + 1).to_usize(), a.get(j.to_usize()))
+        while j >= 0 && a.get(j.to_int()) > key {
+            a.set((j + 1).to_int(), a.get(j.to_int()))
             j -= 1
         }
-        a.set((j + 1).to_usize(), key)
+        a.set((j + 1).to_int(), key)
         i += 1
     }
     print(name)
@@ -67,8 +67,8 @@ fun report(name: str, frames: i32, pixels: i64, rects: i32, allocs: i32, samples
     print(pixels)
     print(rects)
     print(allocs)
-    print(a.get((RUNS / 2).to_usize()))
-    print(a.get((RUNS - 1).to_usize()))
+    print(a.get((RUNS / 2).to_int()))
+    print(a.get((RUNS - 1).to_int()))
 }
 
 fun scenario_name(id: i32) => str {
@@ -162,7 +162,7 @@ fun run_scenario(id: i32) {
         // The samples are microseconds per frame; a run under a microsecond reads 0, which is what a
         // hand-written counter can honestly show.
         val elapsed_us = (end - start) / 1000
-        samples.set(r.to_usize(), elapsed_us / frames.to_i64())
+        samples.set(r.to_int(), elapsed_us / frames.to_i64())
         r += 1
     }
     val name = scenario_name(id)

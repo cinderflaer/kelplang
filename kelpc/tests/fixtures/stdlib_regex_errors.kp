@@ -79,7 +79,7 @@ fun main() {
 
     // 4096 bytes is allowed, 4097 is not.
     var ok = String.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < 4096 {
         ok.push('a')
         i += 1

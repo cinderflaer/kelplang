@@ -6,11 +6,11 @@ impl "std/option"
 
 datac Ring<const N: usize>(var data: [i32; N])
 
-datac Cursor(var at: usize, val len: usize)
+datac Cursor(var at: int, val len: int)
 
 impl iter.Iterator for Cursor {
-    type Item = usize
-    fun mut Self.next() => option.Option<usize> {
+    type Item = int
+    fun mut Self.next() => option.Option<int> {
         if at >= len {
             return option.Option.None
         }
@@ -20,7 +20,7 @@ impl iter.Iterator for Cursor {
     }
 }
 
-fun Ring<const N: usize>.cursor() => Cursor = Cursor(at = 0, len = N)
+fun Ring<const N: usize>.cursor() => Cursor = Cursor(at = 0, len = N.to_int())
 
 fun total<const N: usize>(r: &Ring<N>) => i32 {
     var sum: i32 = 0

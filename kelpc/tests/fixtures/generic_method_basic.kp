@@ -12,7 +12,7 @@ fun mut Pair<A, B>.replace_second(v: B) { second = v }
 // Only ever instantiated for `String`, a body is checked per instantiation,
 // so a body that makes sense for one element type is fine as long as that is
 // the one it is used at.
-fun Pair<A, B>.first_len() => usize = first.len()
+fun Pair<A, B>.first_len() => int = first.len()
 
 // A method calling a generic free function: `T` is bound at the call.
 fun describe<T>(x: T) => i32 = 1

@@ -29,8 +29,8 @@ impl "std/str"
 // child, three path pre-checks and the saved `argv` globals; everything a
 // caller sees is ordinary Kelp.
 
-extern fun arg_count_raw() => usize
-extern fun arg_at_raw(i: usize) => String
+extern fun arg_count_raw() => int
+extern fun arg_at_raw(i: int) => String
 extern fun spawn_raw(dir: &str, program: &str, args: List<String>, pid: mut i32, stdin_fd: mut i32, stdout_fd: mut i32, stderr_fd: mut i32)
 extern fun spawn_inherit_raw(dir: &str, program: &str, args: List<String>, pid: mut i32)
 extern fun reap_raw(pid: i32, block: bool, signal: mut i32) => i32
@@ -118,7 +118,7 @@ enum ProcErr {
 fun args() => List<String> {
     var out: List<String> = List.empty()
     val n = arg_count_raw()
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         out.push(arg_at_raw(i))
         i = i + 1
@@ -127,7 +127,7 @@ fun args() => List<String> {
 }
 
 /// The number of entries in `args()`, `argv[0]` included.
-fun arg_count() => usize = arg_count_raw()
+fun arg_count() => int = arg_count_raw()
 
 /// Starts `program` with `args` (not including the program itself), with the
 /// child's working directory set to `dir`, and three fresh pipes. An empty

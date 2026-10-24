@@ -58,11 +58,11 @@ const SECS_MINUTE: i64 = 60
 /// Caps on what a single file may ask the parser to allocate: a corrupt or
 /// hostile header can name four billion transitions, and the block-length check
 /// below is what refuses one that does not actually fit in the file.
-const MAX_TRANSITIONS: usize = 200000
+const MAX_TRANSITIONS: int = 200000
 /// The most time types that a file may hold.
-const MAX_TYPES: usize = 256
+const MAX_TYPES: int = 256
 /// The largest abbreviation block, in bytes, that a file may hold.
-const MAX_CHARS: usize = 65536
+const MAX_CHARS: int = 65536
 
 /// The three-letter English weekday names, Sunday first, with no gaps between
 /// them.
@@ -221,17 +221,17 @@ datac Zone(
 /// returns one value and six are wanted; the parser is the only caller.
 datac Counts(
     /// The number of UT or local indicators.
-    var isutcnt: usize,
+    var isutcnt: int,
     /// The number of standard or wall indicators.
-    var isstdcnt: usize,
+    var isstdcnt: int,
     /// The number of leap second records.
-    var leapcnt: usize,
+    var leapcnt: int,
     /// The number of transitions.
-    var timecnt: usize,
+    var timecnt: int,
     /// The number of local time types.
-    var typecnt: usize,
+    var typecnt: int,
     /// The number of bytes of abbreviation characters.
-    var charcnt: usize
+    var charcnt: int
 )
 
 /// The TZif byte cursor, which reads big-endian values.
@@ -242,7 +242,7 @@ datac Reader(
     /// The file bytes.
     val data: Bytes,
     /// The offset of the next byte to read.
-    var at: usize,
+    var at: int,
     /// Whether a read has failed.
     var bad: bool,
     /// The reason for the first failure.
@@ -255,7 +255,7 @@ datac TzParser(
     /// The bytes of the string.
     val chars: Bytes,
     /// The offset of the next byte to read.
-    var at: usize,
+    var at: int,
     /// Whether parsing has failed.
     var bad: bool,
 )
@@ -698,7 +698,7 @@ fun mut Reader.fail(why: &str) {
 /// not.
 /// Whether `n` more bytes are there. Every read below starts with this, which is
 /// what turns a truncated file into a message instead of a panic.
-fun mut Reader.need(n: usize, what: &str) => bool {
+fun mut Reader.need(n: int, what: &str) => bool {
     if self.bad {
         return false
     }
@@ -754,16 +754,16 @@ fun mut Reader.u8(what: &str) => u8 {
 /// The six header counts, read at the cursor: `isutcnt`, `isstdcnt`, `leapcnt`,
 /// `timecnt`, `typecnt`, `charcnt`, in the order the header writes them.
 fun mut Reader.counts(what: &str, out: mut Counts) {
-    out.isutcnt = self.u32(what = what).to_usize()
-    out.isstdcnt = self.u32(what = what).to_usize()
-    out.leapcnt = self.u32(what = what).to_usize()
-    out.timecnt = self.u32(what = what).to_usize()
-    out.typecnt = self.u32(what = what).to_usize()
-    out.charcnt = self.u32(what = what).to_usize()
+    out.isutcnt = self.u32(what = what).to_int()
+    out.isstdcnt = self.u32(what = what).to_int()
+    out.leapcnt = self.u32(what = what).to_int()
+    out.timecnt = self.u32(what = what).to_int()
+    out.typecnt = self.u32(what = what).to_int()
+    out.charcnt = self.u32(what = what).to_int()
 }
 
 /// Whether the four bytes at `at` are the TZif magic.
-fun magic_at(data: &Bytes, at: usize) => bool {
+fun magic_at(data: &Bytes, at: int) => bool {
     return data.get(at) == 84 && data.get(at + 1) == 90 && data.get(at + 2) == 105 && data.get(at + 3) == 102
 }
 
@@ -771,7 +771,7 @@ fun magic_at(data: &Bytes, at: usize) => bool {
 /// is none.
 /// The byte offset of the NUL that ends an abbreviation, or `to` when there is
 /// none.
-fun nul_at(data: &Bytes, from: usize, to: usize) => usize {
+fun nul_at(data: &Bytes, from: int, to: int) => int {
     var i = from
     while i < to {
         if data.get(i) == 0 {
@@ -783,7 +783,7 @@ fun nul_at(data: &Bytes, from: usize, to: usize) => usize {
 }
 
 /// The bytes from `from` up to `to`, as a string.
-fun bytes_to_string(data: &Bytes, from: usize, to: usize) => String {
+fun bytes_to_string(data: &Bytes, from: int, to: int) => String {
     var out = String.with_capacity(to - from)
     var i = from
     while i < to {
@@ -796,7 +796,7 @@ fun bytes_to_string(data: &Bytes, from: usize, to: usize) => String {
 /// Appends `v` to `xs` unless it is already there.
 fun add_unique(xs: mut List<i32>, v: i32) {
     var found = false
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         if xs.get(i) == v {
             found = true
@@ -847,7 +847,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
         return corrupt(r.why)
     }
     var use64 = false
-    var block: usize = 44
+    var block: int = 44
     if version != 0 {
         // Skip the 32-bit block, whose length the first header just gave us,
         // and read the second header there. `44 + block1` cannot overflow: the
@@ -886,14 +886,14 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
     if charcnt > MAX_CHARS {
         return corrupt("the file claims a larger abbreviation block than any zone has")
     }
-    val width: usize = if use64 { 8 } else { 4 }
+    val width: int = if use64 { 8 } else { 4 }
     val seconds = timecnt * width + timecnt + typecnt * 6 + charcnt + first.leapcnt * (width + 4) + first.isstdcnt + first.isutcnt
     if block + seconds > r.data.len() {
         return corrupt("the transition block runs past the end of the file")
     }
     r.at = block
     var times: List<i64> = List.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < timecnt {
         if use64 {
             times.push(r.i64(what = "the file ends in the middle of a transition time"))
@@ -922,7 +922,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
         if isdst > 1 {
             return corrupt("a time type has a DST flag that is neither 0 nor 1")
         }
-        if desig.to_usize() >= charcnt {
+        if desig.to_int() >= charcnt {
             return corrupt("a time type names an abbreviation past the character block")
         }
         offs.push(off)
@@ -935,7 +935,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
     }
     i = 0
     while i < timecnt {
-        if at_type.get(i).to_usize() >= typecnt {
+        if at_type.get(i).to_int() >= typecnt {
             return corrupt("a transition names a time type that does not exist")
         }
         i = i + 1
@@ -944,7 +944,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
     var names: List<String> = List.empty()
     i = 0
     while i < typecnt {
-        val from = char_at + desigs.get(i).to_usize()
+        val from = char_at + desigs.get(i).to_int()
         val to = char_at + charcnt
         val end = nul_at(r.data, from, to)
         if end == to {
@@ -1019,7 +1019,7 @@ fun name_ok(name: &str) => bool {
     if str.byte(name, 0) == 47 {
         return false
     }
-    var i: usize = 0
+    var i: int = 0
     while i < str.len(name) {
         if str.byte(name, i) == 0 {
             return false
@@ -1039,7 +1039,7 @@ fun dir_ok(dir: &str) => bool {
     if str.byte(dir, 0) != 47 {
         return false
     }
-    var i: usize = 0
+    var i: int = 0
     while i < str.len(dir) {
         if str.byte(dir, i) == 0 {
             return false
@@ -1096,7 +1096,7 @@ fun load(name: &str) => result.Result<Zone, TzErr> {
 /// Tries the directories from index `i` onward for the zone `name`.
 /// `load`'s loop, as recursion: one candidate directory per frame, so a read
 /// that fails can try the next one without an out-parameter or a sentinel.
-fun load_from(dirs: &List<String>, name: &str, i: usize) => result.Result<Zone, TzErr> {
+fun load_from(dirs: &List<String>, name: &str, i: int) => result.Result<Zone, TzErr> {
     if i >= dirs.len() {
         return not_found()
     }
@@ -1112,7 +1112,7 @@ fun load_from(dirs: &List<String>, name: &str, i: usize) => result.Result<Zone, 
 /// Whether the next candidate directory is worth trying. A refusal ends the
 /// search: the second directory is not a different grant question, and a file
 /// that is corrupt is corrupt wherever it was found.
-fun next_or_stop(e: TzErr, dirs: &List<String>, name: &str, i: usize) => result.Result<Zone, TzErr> {
+fun next_or_stop(e: TzErr, dirs: &List<String>, name: &str, i: int) => result.Result<Zone, TzErr> {
     return when e {
         NotFound -> load_from(dirs = dirs, name = name, i = i + 1)
         Denied -> denied()
@@ -1219,7 +1219,7 @@ fun fixed_name(offset_seconds: i32) => String {
 /// The offset of the time type `i`.
 /// The type table entry `i` as an `Offset`.
 fun Zone.offset_of(i: i32) => Offset {
-    val k = i.to_usize()
+    val k = i.to_int()
     return Offset(seconds = offs.get(k), abbrev = names.get(k).clone(), is_dst = dsts.get(k))
 }
 
@@ -1247,8 +1247,8 @@ fun Zone.offset_at(unix_seconds: i64) => Offset {
     }
     // The last transition at or before the instant, by binary search: the
     // largest `i` with `times[i] <= unix_seconds`.
-    var lo: usize = 0
-    var hi: usize = n
+    var lo: int = 0
+    var hi: int = n
     while lo < hi {
         val mid = (lo + hi) / 2
         if times.get(mid) <= unix_seconds {
@@ -1309,7 +1309,7 @@ fun Zone.to_unix(y: i32, m: i32, d: i32, h: i32, mi: i32, s: i32) => Resolved {
     var first: i64 = 0
     var second: i64 = 0
     var hits: i32 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < uniques.len() {
         val off = uniques.get(i)
         val cand = total - off.to_i64()
@@ -1348,7 +1348,7 @@ fun Zone.format(unix_seconds: i64, fmt: &str) => String {
     val lt = self.local_parts(unix_seconds)
     val fv = fmt.view()
     var out = String.with_capacity(fv.len() + 8)
-    var i: usize = 0
+    var i: int = 0
     while i < fv.len() {
         val c = fv.get(i)
         if c == 37 && i + 1 < fv.len() {
@@ -1410,13 +1410,13 @@ fun format_spec(out: mut String, spec: u8, lt: LocalTime) {
 
 /// Appends `value` in decimal, padded on the left with zeros to `width` digits.
 /// `value` in `width` decimal digits at least, zero-filled on the left.
-fun push_pad(out: mut String, value: i64, width: usize) {
+fun push_pad(out: mut String, value: i64, width: int) {
     val digits = str.from_i64(value)
-    var pad: usize = 0
+    var pad: int = 0
     if width > digits.len() {
         pad = width - digits.len()
     }
-    var i: usize = 0
+    var i: int = 0
     while i < pad {
         out.push('0')
         i = i + 1
@@ -1430,7 +1430,7 @@ fun push_three(out: mut String, table: &str, index: i32) {
     val base = index * 3
     var k: i32 = 0
     while k < 3 {
-        out.push(str.byte(table, (base + k).to_usize()))
+        out.push(str.byte(table, (base + k).to_int()))
         k = k + 1
     }
 }

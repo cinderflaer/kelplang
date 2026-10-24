@@ -17,7 +17,7 @@ const TRAP_MSG: [u8; 12] = [116, 114, 97, 112, 58, 32, 101, 99, 97, 108, 108, 10
 pub fun report() {
     val msg: [u8; 12] = TRAP_MSG
     val bytes: Ptr<[u8; 12]> = Ptr.from_ref(&msg)
-    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.puts(bytes.cast<u8>(), msg.len().to_usize())
 }
 
 // `mtvec`'s low two bits are the vectored mode, so `trap_handler` carries

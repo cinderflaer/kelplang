@@ -56,7 +56,7 @@ fun label(r: &tz.Resolved) => String {
 // ---- building the files -----------------------------------------------------
 
 fun push_lit(out: mut Bytes, text: &str) {
-    var i: usize = 0
+    var i: int = 0
     while i < str.len(text) {
         out.push(str.byte(text, i))
         i += 1
@@ -155,7 +155,7 @@ fun name_refusals(st: mut Stats) {
     denied.push("/etc/passwd")
     denied.push("America/../etc/passwd")
     denied.push("America/New_York/../../etc/passwd")
-    var i: usize = 0
+    var i: int = 0
     while i < denied.len() {
         val name = denied.get(i)
         val got = tz.load(name.as_str())
@@ -209,7 +209,7 @@ fun corrupt_cases(st: mut Stats) {
     var unterminated = build('2', 0, "EST5EDT,M3.2.0,M11.1.0", true)
     // drop the footer's closing newline
     var cut = Bytes.empty()
-    var i: usize = 0
+    var i: int = 0
     while i + 1 < unterminated.len() {
         cut.push(unterminated.get(i))
         i = i + 1
@@ -220,7 +220,7 @@ fun corrupt_cases(st: mut Stats) {
     // an abbreviation block with no NUL in it: the char block of a version 1
     // file with one transition starts at 61 and is eight bytes long
     var not_terminated = build(0, 1, "", false)
-    var a: usize = 61
+    var a: int = 61
     while a < 69 {
         not_terminated.set(a, 88)
         a = a + 1
@@ -239,7 +239,7 @@ fun corrupt_cases(st: mut Stats) {
     cases.push(no_types)
     cases.push(truncated_block)
     cases.push(cut)
-    var k: usize = 0
+    var k: int = 0
     while k < cases.len() {
         val data = cases.get(k)
         val got = tz.parse(data.clone())

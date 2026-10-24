@@ -187,10 +187,10 @@ pub fun scrolled_child(widget: Widget) => Widget {
 
 // The `index`-th child of a container in GTK's own order, or the null widget when there is no such
 // child (or no container). A walk of the sibling chain, so it costs a step per child before it.
-pub fun nth_child(parent: Widget, index: usize) => Widget {
+pub fun nth_child(parent: Widget, index: int) => Widget {
     if parent.is_null() { return Widget.null() }
     var w: Widget = gtk_widget_get_first_child(parent)
-    var i: usize = 0
+    var i: int = 0
     while i < index {
         if w.is_null() { return w }
         w = gtk_widget_get_next_sibling(w)

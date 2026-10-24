@@ -2,7 +2,7 @@
 // than copies, and its drop frees each element. Arrays also pass and return by
 // value, and a `datac` field may be one, which is the shape a kernel's IDT or
 // GDT has.
-const SLOTS: usize = 3
+const SLOTS: int = 3
 
 datac Gate(val lo: u64, val hi: u64)
 datac Idt(var entries: [Gate; 4])
@@ -10,7 +10,7 @@ datac Names(val items: [String; 2])
 
 fun sum(xs: [i32; 3]) => i32 {
     var total: i32 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         total += xs.get(i)
         i += 1
@@ -20,7 +20,7 @@ fun sum(xs: [i32; 3]) => i32 {
 
 fun make() => [i32; 3] = [1, 2, 3]
 
-fun first_of(names: [String; 2]) => usize = names.get(i = 0).len()
+fun first_of(names: [String; 2]) => int = names.get(i = 0).len()
 
 fun bump(buf: mut [u8; 2]) {
     buf.set(i = 0, v = 9)

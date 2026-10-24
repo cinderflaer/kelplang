@@ -4,16 +4,16 @@
 // program, including a loop and a recursive call. The function does not have
 // to be declared before the `const` that calls it, which is why these are all
 // at the top where canonical order puts them.
-const ENTRIES_PER_PAGE: usize = 3
-const PAGES: usize = 8
+const ENTRIES_PER_PAGE: int = 3
+const PAGES: int = 8
 
-const TABLE_ENTRIES: usize = entries_for(pages = PAGES)
-const FIVE_FACTORIAL: usize = factorial(n = 5)
-const PADDED: usize = rounded_up(n = 100, step = 64)
+const TABLE_ENTRIES: int = entries_for(pages = PAGES)
+const FIVE_FACTORIAL: int = factorial(n = 5)
+const PADDED: int = rounded_up(n = 100, step = 64)
 
-fun entries_for(pages: usize) => usize {
-    var total: usize = 0
-    var i: usize = 0
+fun entries_for(pages: int) => int {
+    var total: int = 0
+    var i: int = 0
     while i < pages {
         total += ENTRIES_PER_PAGE
         i += 1
@@ -21,14 +21,14 @@ fun entries_for(pages: usize) => usize {
     total
 }
 
-fun factorial(n: usize) => usize {
+fun factorial(n: int) => int {
     if n <= 1 {
         return 1
     }
     n * factorial(n - 1)
 }
 
-fun rounded_up(n: usize, step: usize) => usize {
+fun rounded_up(n: int, step: int) => int {
     if n % step == 0 {
         return n
     }

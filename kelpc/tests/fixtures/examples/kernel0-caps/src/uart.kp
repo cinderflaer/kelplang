@@ -29,7 +29,7 @@ pub fun putc(c: u8) {
 
 pub fun puts(s: str) {
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         putc(str.byte(s, i))
         i = i + 1
@@ -38,14 +38,14 @@ pub fun puts(s: str) {
 
 // `v` in decimal, no padding: the digits are collected least-significant first
 // and then emitted in reverse.
-pub fun put_dec(v: usize) {
+pub fun put_dec(v: int) {
     if v == 0 {
         putc(48)
         return
     }
     var buf: [u8; 20] = [0; 20]
-    var n: usize = v
-    var i: usize = 0
+    var n: int = v
+    var i: int = 0
     while n > 0 {
         buf.set(i, 48 + (n % 10).to_u8())
         n = n / 10
@@ -59,10 +59,10 @@ pub fun put_dec(v: usize) {
 
 // `v` in hex, `0x`-prefixed with leading zeros dropped: sixteen nibbles from
 // the top down, and the last one is always printed so `put_hex(0)` is `0x0`.
-pub fun put_hex(v: usize) {
+pub fun put_hex(v: int) {
     putc(48)
     putc(120)
-    var i: usize = 16
+    var i: int = 16
     var started: bool = false
     while i > 0 {
         i = i - 1

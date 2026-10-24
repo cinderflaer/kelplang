@@ -79,7 +79,7 @@ pub fun initial() => Model = Model(
 fun changed(text: String) => Msg = Msg.Changed(text = String.from_str(text.as_str()))
 
 fun find_index(s: Model, id: i32) => i32 {
-    var i: usize = 0
+    var i: int = 0
     while i < s.items.len() {
         if s.items.get(i).id == id { return i.to_i32() }
         i += 1
@@ -125,7 +125,7 @@ pub fun view(s: Model) => core.Node<Msg> {
         k.scrolled { sc ->
             sc.spacing(4)
             sc.margin(4)
-            var i: usize = 0
+            var i: int = 0
             while i < s.items.len() {
                 val item = s.items.get(i)
                 val key = str.from_i64(item.id.to_i64())
@@ -172,7 +172,7 @@ pub fun update(state: mut Model, msg: Msg) {
         Toggle(id) -> {
             val at = find_index(state, id)
             if at >= 0 {
-                val u = at.to_usize()
+                val u = at.to_int()
                 val was = state.items.get(u).done
                 val title = String.from_str(state.items.get(u).title.as_str())
                 state.items.set(u, Todo(id = id, title = title, done = !was))
@@ -182,15 +182,15 @@ pub fun update(state: mut Model, msg: Msg) {
         MoveUp(id) -> {
             val at = find_index(state, id)
             if at > 0 {
-                val item = state.items.remove(at.to_usize())
-                state.items.insert((at - 1).to_usize(), item)
+                val item = state.items.remove(at.to_int())
+                state.items.insert((at - 1).to_int(), item)
             }
             mark(state)
         }
         Remove(id) -> {
             val at = find_index(state, id)
             if at >= 0 {
-                val gone = state.items.remove(at.to_usize())
+                val gone = state.items.remove(at.to_int())
             }
             mark(state)
         }

@@ -358,7 +358,7 @@ fun remove_all(target: &str) {
     }
     if is_dir(target) {
         val entries = list(target)
-        var i: usize = 0
+        var i: int = 0
         while i < entries.len() {
             val child = path.join(target, entries.get(i).as_str())
             remove_all(child)
@@ -382,7 +382,7 @@ must_use fun try_remove_all(target: &str) => option.Option<io.IoErr> {
             return option.Option.Some(value = e)
         }
         if let Ok(entries) = listed {
-            var i: usize = 0
+            var i: int = 0
             while i < entries.len() {
                 val child = path.join(target, entries.get(i).as_str())
                 val failed = try_remove_all(child)
@@ -412,7 +412,7 @@ fun walk(dir: &str) => List<String> {
     while pending.len() > 0 {
         val current = pending.pop()
         val entries = list(current)
-        var i: usize = 0
+        var i: int = 0
         while i < entries.len() {
             // Three joins, deliberately: a borrow of a local lasts to the end
             // of the block in v1, so the value `is_symlink`/`is_dir` probe

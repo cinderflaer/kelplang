@@ -1,7 +1,7 @@
 impl "std/str"
 
 section(".text.boot") fun kmain() {
-    var n: usize = str.len("kelp") + str.byte("kelp", 1).to_usize()
+    var n: int = str.len("kelp") + str.byte("kelp", 1).to_int()
     if str.eq("kelp", "kelp") && str.starts_with("kelp", "ke") {
         n = n + 1
     }

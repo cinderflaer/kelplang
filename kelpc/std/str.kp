@@ -25,18 +25,18 @@ const CASE_LOWER_DATA: str = "00000041000000610000004200000062000000430000006300
    The bounds checks live in the compiler-supplied bodies (see `externs.rs`)
    rather than here, so there is exactly one of each and no call site can
    forget it. */
-extern fun byte_len_raw(s: &str) => usize
-extern fun byte_at_raw(s: &str, i: usize) => u8
-extern fun slice_from_raw(s: &str, from: usize) => &str
+extern fun byte_len_raw(s: &str) => int
+extern fun byte_at_raw(s: &str, i: int) => u8
+extern fun slice_from_raw(s: &str, from: int) => &str
 extern fun byte_ptr_raw(s: &str) => Ptr<u8>
 
 /// Byte length, not character count, see `char_count`, which counts
 /// continuation bytes as parts of the same character.
-fun len(s: &str) => usize = byte_len_raw(s)
+fun len(s: &str) => int = byte_len_raw(s)
 
 /// The byte at `i`.
 /// Panics: if `i` is out of bounds.
-fun byte(s: &str, i: usize) => u8 = byte_at_raw(s, i)
+fun byte(s: &str, i: int) => u8 = byte_at_raw(s, i)
 
 /// The address of the first byte of `s`, which is the NUL-terminated literal
 /// itself. Reading through the pointer needs `unsafe`, like any other `Ptr`;
@@ -51,15 +51,15 @@ fun is_empty(s: &str) => bool = len(s) == 0
 /// The tail of `s` starting at byte `from`, a view, not a copy, which is
 /// what `&str` return elision makes possible: the result borrows `s`.
 /// Panics: if `from` is past the end.
-fun substring(s: &str, from: usize) => &str = slice_from_raw(s, from)
+fun substring(s: &str, from: int) => &str = slice_from_raw(s, from)
 
 /// How many characters a `&str` has: bytes that do not continue a UTF-8
 /// sequence.
-fun char_count(s: &str) => usize {
+fun char_count(s: &str) => int {
     val sv = s.view()
     val n = sv.len()
-    var count: usize = 0
-    var i: usize = 0
+    var count: int = 0
+    var i: int = 0
     while i < n {
         // A byte in 128..191 is a UTF-8 continuation; everything else starts
         // a character. (No bitwise operators in v1, so this is a range test.)
@@ -76,7 +76,7 @@ fun char_count(s: &str) => usize {
 /// gone: a failure that carries no reason is an `Option`, which is what makes
 /// `if let Some(at) = ...` and `?` usable at the call site instead of an `ok`
 /// flag (MK5-S6-M1).
-fun index_of(s: &str, needle: &str) => option.Option<usize> {
+fun index_of(s: &str, needle: &str) => option.Option<int> {
     // Both views are taken once, here. `starts_with_at` takes a `str` and so
     // re-measures the whole haystack (a `strlen`) at every position, which made
     // a search O(n) per byte.
@@ -90,7 +90,7 @@ fun index_of(s: &str, needle: &str) => option.Option<usize> {
     if ln > ls {
         return option.Option.None
     }
-    var i: usize = 0
+    var i: int = 0
     while i + ln <= ls {
         if view_starts_with_at(sv, nv, i) {
             return option.Option.Some(value = i)
@@ -102,11 +102,11 @@ fun index_of(s: &str, needle: &str) => option.Option<usize> {
 
 /// Whether `needle` occurs in `s` starting exactly at byte `at`. Private to
 /// the module in practice (nothing outside needs the offset form).
-fun starts_with_at(s: &str, needle: &str, at: usize) => bool {
+fun starts_with_at(s: &str, needle: &str, at: int) => bool {
     val sv = s.view()
     val nv = needle.view()
     val ln = nv.len()
-    var i: usize = 0
+    var i: int = 0
     while i < ln {
         if sv.get(at + i) != nv.get(i) {
             return false
@@ -161,7 +161,7 @@ fun less(a: &str, b: &str) => bool {
     val bv = b.view()
     val na = av.len()
     val nb = bv.len()
-    var i: usize = 0
+    var i: int = 0
     val limit = if nb < na { nb } else { na }
     while i < limit {
         val ca = av.get(i)
@@ -194,7 +194,7 @@ fun is_digit(c: u8) => bool = c >= '0' && c <= '9'
 fun trim_start(s: &str) => &str {
     val sv = s.view()
     val n = sv.len()
-    var i: usize = 0
+    var i: int = 0
     while i < n && is_space(sv.get(i)) {
         i = i + 1
     }
@@ -209,7 +209,7 @@ fun trim_start(s: &str) => &str {
 fun trim_end(s: &str) => String {
     val sv = s.view()
     val n = sv.len()
-    var end: usize = n
+    var end: int = n
     while end > 0 && is_space(sv.get(end - 1)) {
         end = end - 1
     }
@@ -220,10 +220,10 @@ fun trim_end(s: &str) => String {
 /// a `&str` is a NUL-terminated C string, and there is nowhere in the original
 /// buffer to put a terminator.
 /// Panics: if `n` is past the end of `s`.
-fun prefix(s: &str, n: usize) => String {
+fun prefix(s: &str, n: int) => String {
     val sv = s.view()
     var out = mem.alloc(n)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         out.set(i, sv.get(i))
         i = i + 1
@@ -238,10 +238,10 @@ fun trim(s: &str) => String = trim_end(trim_start(s))
 /// `sv`, from 1 to 4. Zero when the bytes there are not one: a stray
 /// continuation byte, an overlong or surrogate encoding, or a sequence cut off
 /// by the end of the string.
-fun utf8_width(sv: View, i: usize) => usize {
+fun utf8_width(sv: View, i: int) => int {
     val n = sv.len()
     val b0 = sv.get(i)
-    var w: usize = 0
+    var w: int = 0
     if b0 < 128 {
         return 1
     } elif b0 >= 194 && b0 <= 223 {
@@ -272,7 +272,7 @@ fun utf8_width(sv: View, i: usize) => usize {
     if b0 == 244 {
         hi = 143
     }
-    var k: usize = 1
+    var k: int = 1
     while k < w {
         val b = sv.get(i + k)
         if b < lo || b > hi {
@@ -287,7 +287,7 @@ fun utf8_width(sv: View, i: usize) => usize {
 
 /// The codepoint of the `w`-byte well-formed sequence at byte `i` of `sv`,
 /// where `w` is what `utf8_width` returned for it.
-fun utf8_decode(sv: View, i: usize, w: usize) => u32 {
+fun utf8_decode(sv: View, i: int, w: int) => u32 {
     val b0 = sv.get(i).to_u32()
     if w == 1 {
         return b0
@@ -300,7 +300,7 @@ fun utf8_decode(sv: View, i: usize, w: usize) => u32 {
     } else {
         cp = b0 - 240
     }
-    var k: usize = 1
+    var k: int = 1
     while k < w {
         cp = cp * 64 + (sv.get(i + k).to_u32() - 128)
         k = k + 1
@@ -309,7 +309,7 @@ fun utf8_decode(sv: View, i: usize, w: usize) => u32 {
 }
 
 /// The number of bytes the UTF-8 encoding of `cp` takes.
-fun utf8_len(cp: u32) => usize {
+fun utf8_len(cp: u32) => int {
     if cp < 128 {
         return 1
     } elif cp < 2048 {
@@ -322,7 +322,7 @@ fun utf8_len(cp: u32) => usize {
 
 /// Writes the UTF-8 encoding of `cp` into `dst` from byte `at`, and returns
 /// how many bytes it wrote.
-fun utf8_put(dst: mut Bytes, at: usize, cp: u32) => usize {
+fun utf8_put(dst: mut Bytes, at: int, cp: u32) => int {
     val w = utf8_len(cp)
     if w == 1 {
         dst.set(at, cp.to_u8())
@@ -351,8 +351,8 @@ fun utf8_put(dst: mut Bytes, at: usize, cp: u32) => usize {
 fun map_case(s: &str, upper: bool) => String {
     val sv = s.view()
     val n = sv.len()
-    var size: usize = 0
-    var i: usize = 0
+    var size: int = 0
+    var i: int = 0
     while i < n {
         val w = utf8_width(sv, i)
         if w == 0 {
@@ -366,7 +366,7 @@ fun map_case(s: &str, upper: bool) => String {
         }
     }
     var out = mem.alloc(size)
-    var o: usize = 0
+    var o: int = 0
     i = 0
     while i < n {
         val w = utf8_width(sv, i)
@@ -397,7 +397,7 @@ fun to_lower(s: &str) => String = map_case(s, false)
 
 /// Whether byte `at` of `sv` can begin a codepoint: true at the end of the
 /// string, and wherever the byte is not a UTF-8 continuation byte (128 to 191).
-fun is_codepoint_start(sv: View, at: usize) => bool {
+fun is_codepoint_start(sv: View, at: int) => bool {
     if at >= sv.len() {
         return true
     }
@@ -412,7 +412,7 @@ fun is_codepoint_start(sv: View, at: usize) => bool {
 /// Panics: when `to` is past the end of `s`, when `from` is past `to`, or when
 /// either end lies inside a codepoint. Byte-offset helpers such as `copy_range`
 /// and `prefix` do not check, and keep their byte semantics.
-fun slice(s: &str, from: usize, to: usize) => String {
+fun slice(s: &str, from: int, to: int) => String {
     val sv = s.view()
     if to > sv.len() {
         panic("str.slice: end is past the end of the string")
@@ -432,7 +432,7 @@ fun slice(s: &str, from: usize, to: usize) => String {
 }
 
 /// The panic text for a byte offset inside a codepoint.
-fun bad_boundary_message(at: usize) => String {
+fun bad_boundary_message(at: int) => String {
     val digits = from_u64(at.to_u64())
     val head = concat("str.slice: byte ", digits.as_str())
     return concat(head, " is inside a codepoint")
@@ -442,9 +442,9 @@ fun bad_boundary_message(at: usize) => String {
 // Lookup over the table data above. A code point with no entry maps to itself.
 
 /// The eight hex digits at byte `at` of `data`, read as a u32.
-fun case_hex32(data: &str, at: usize) => u32 {
+fun case_hex32(data: &str, at: int) => u32 {
     var acc: u32 = 0
-    var k: usize = 0
+    var k: int = 0
     while k < 8 {
         val c = byte(data, at + k).to_u32()
         var d: u32 = 0
@@ -457,8 +457,8 @@ fun case_hex32(data: &str, at: usize) => u32 {
 
 /// The mapping of `cp` in `data` (a table built as above), or `cp` itself.
 fun case_lookup(data: &str, cp: u32) => u32 {
-    var lo: usize = 0
-    var hi: usize = len(data) / 16
+    var lo: int = 0
+    var hi: int = len(data) / 16
     while lo < hi {
         val mid = lo + (hi - lo) / 2
         val key = case_hex32(data, mid * 16)
@@ -476,13 +476,13 @@ fun case_lower_cp(cp: u32) => u32 = case_lookup(CASE_LOWER_DATA, cp)
 // END GENERATED: Unicode simple case lookup
 
 /// `s` repeated `n` times.
-fun repeat(s: &str, n: usize) => String {
+fun repeat(s: &str, n: int) => String {
     val sv = s.view()
     val ls = sv.len()
     var out = mem.alloc(ls * n)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
-        var j: usize = 0
+        var j: int = 0
         while j < ls {
             out.set(i * ls + j, sv.get(j))
             j = j + 1
@@ -496,10 +496,10 @@ fun repeat(s: &str, n: usize) => String {
 /// is neither a prefix nor a suffix cannot be a view (a `&str` is a
 /// NUL-terminated C string), so it is copied, the same reason `prefix`
 /// allocates.
-fun copy_range(s: &str, from: usize, to: usize) => String {
+fun copy_range(s: &str, from: int, to: int) => String {
     val sv = s.view()
     var out = mem.alloc(to - from)
-    var i: usize = 0
+    var i: int = 0
     while i < to - from {
         out.set(i, sv.get(from + i))
         i = i + 1
@@ -527,8 +527,8 @@ fun split(s: &str, sep: &str) => List<String> {
     // The first byte of `sep` is compared before the call: almost every position fails there,
     // and the full comparison is a call with a bounds-checked loop per position.
     val first = nv.get(0)
-    var start: usize = 0
-    var i: usize = 0
+    var start: int = 0
+    var i: int = 0
     while i + lsep <= ls {
         if sv.get(i) == first && view_starts_with_at(sv, nv, i) {
             out.push(sv.slice(start, i).to_string())
@@ -543,9 +543,9 @@ fun split(s: &str, sep: &str) => List<String> {
 }
 
 /// `starts_with_at` on views whose lengths are already known.
-fun view_starts_with_at(sv: View, nv: View, at: usize) => bool {
+fun view_starts_with_at(sv: View, nv: View, at: int) => bool {
     val ln = nv.len()
-    var i: usize = 0
+    var i: int = 0
     while i < ln {
         if sv.get(at + i) != nv.get(i) {
             return false
@@ -558,10 +558,10 @@ fun view_starts_with_at(sv: View, nv: View, at: usize) => bool {
 /// Copies `src` into `dst` at byte offset `at` and returns the offset just
 /// past the end. The pieces of `join` cannot be written with one `String`
 /// operation, so this is the byte-level form it is built from.
-fun copy_into(dst: mut Bytes, at: usize, src: &str) => usize {
+fun copy_into(dst: mut Bytes, at: int, src: &str) => int {
     val sv = src.view()
     val n = sv.len()
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         dst.set(at + i, sv.get(i))
         i = i + 1
@@ -576,7 +576,7 @@ fun join(parts: List<String>, sep: &str) => String {
     val count = parts.len()
     val lsep = len(sep)
     var out = String.with_capacity(count * lsep)
-    var i: usize = 0
+    var i: int = 0
     while i < count {
         if i > 0 {
             out.push_str(sep)
@@ -614,7 +614,7 @@ fun from_u64(n: u64) => String {
         return String.from_str("0")
     }
     var rev: [u8; 20] = [0; 20]
-    var count: usize = 0
+    var count: int = 0
     var v = n
     while v > 0 {
         rev.set(count, (v % 10 + 48).to_u8())
@@ -646,7 +646,7 @@ fun from_i64(n: i64) => String {
         neg = true
     }
     var rev: [u8; 20] = [0; 20]
-    var count: usize = 0
+    var count: int = 0
     while v != 0 {
         var d = v % 10
         if d < 0 {
@@ -746,7 +746,7 @@ fun replace(s: &str, from: &str, to: &str) => String {
     val sv = s.view()
     val ls = sv.len()
     var out = String.with_capacity(ls)
-    var i: usize = 0
+    var i: int = 0
     while i < ls {
         if i + lf <= ls && view_starts_with_at(sv, fv, i) {
             out.push_str(to)
@@ -762,11 +762,11 @@ fun replace(s: &str, from: &str, to: &str) => String {
 /// The byte offset of character `i`, or `len(s)` when there is no such
 /// character. A byte that does not continue a UTF-8 sequence starts a
 /// character (the same rule `char_count` uses).
-fun byte_index(s: &str, i: usize) => usize {
+fun byte_index(s: &str, i: int) => int {
     val sv = s.view()
     val n = sv.len()
-    var chars: usize = 0
-    var at: usize = 0
+    var chars: int = 0
+    var at: int = 0
     while at < n {
         val c = sv.get(at)
         if c < 128 || c >= 192 {
@@ -783,7 +783,7 @@ fun byte_index(s: &str, i: usize) => usize {
 /// The codepoint starting at byte `at`, decoded with arithmetic only, v1 has
 /// no bitwise operators, so the UTF-8 lead-byte masks are subtractions.
 /// A truncated sequence returns 0, the same value past-the-end returns.
-fun decode_at(s: &str, at: usize) => u32 {
+fun decode_at(s: &str, at: int) => u32 {
     val sv = s.view()
     val n = sv.len()
     val b0 = sv.get(at).to_u32()
@@ -791,7 +791,7 @@ fun decode_at(s: &str, at: usize) => u32 {
         return b0
     }
     var cp: u32 = 0
-    var extra: usize = 0
+    var extra: int = 0
     if b0 < 224 {
         cp = b0 - 192
         extra = 1
@@ -802,7 +802,7 @@ fun decode_at(s: &str, at: usize) => u32 {
         cp = b0 - 240
         extra = 3
     }
-    var k: usize = 0
+    var k: int = 0
     while k < extra {
         if at + 1 + k >= n {
             return 0
@@ -814,7 +814,7 @@ fun decode_at(s: &str, at: usize) => u32 {
 }
 
 /// The codepoint at character index `i`, or 0 when `i` is past the end.
-fun char_at(s: &str, i: usize) => u32 {
+fun char_at(s: &str, i: int) => u32 {
     val at = byte_index(s, i)
     if at >= len(s) {
         return 0

@@ -7,17 +7,17 @@ section(".rodata.boot") const BOOT_MAGIC: [u8; 4] = [75, 69, 76, 80]
 datac Ring<const N: usize>(var slot: [u32; N], var head: usize, var count: usize)
 
 fun mut Ring<const N: usize>.push(v: u32) {
-    slot.set(i = head, v = v)
+    slot.set(i = head.to_int(), v = v)
     head = (head + 1) % N
-    if count < N {
+    if count.to_int() < N.to_int() {
         count = count + 1
     }
 }
 
 fun Ring<const N: usize>.sum() => u32 {
     var total: u32 = 0
-    var i: usize = 0
-    while i < N {
+    var i: int = 0
+    while i < N.to_int() {
         total = total + slot.get(i = i)
         i = i + 1
     }

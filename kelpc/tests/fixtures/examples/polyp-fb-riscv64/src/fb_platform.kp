@@ -23,7 +23,7 @@ pub const FB_PIXELS: usize = 64000
 
 // The script the platform plays. Eight is more than any test needs and keeps the platform a
 // value, not a heap allocation.
-const MAX_SCRIPT: usize = 8
+const MAX_SCRIPT: int = 8
 
 static mut FRAME: [u32; FB_PIXELS] = [0; FB_PIXELS]
 
@@ -34,8 +34,8 @@ pub datac Timed(val at: u64, val ev: event.Event)
 pub datac FbPlatform(
     var f: fb.Fb,
     var script: [Timed; MAX_SCRIPT],
-    var script_len: usize,
-    var cursor: usize,
+    var script_len: int,
+    var cursor: int,
     var time_ms: u64,
     var frames: i32,
     var presented: i32,
@@ -87,10 +87,10 @@ fun mut FbPlatform.advance_ms(ms: u64) {
 // Where the surface is, for the ramfb registration: the display device needs the physical address
 // and the stride, in pixels, of the memory it scans out. The cast is a separate binding because a
 // method with type arguments cannot be written on a call expression (`plan/user-ffi-gap-analysis.md`).
-pub fun framebuffer_addr() => usize {
+pub fun framebuffer_addr() => int {
     val base: Ptr<[u32; FB_PIXELS]> = unsafe { Ptr.from_mut(FRAME) }
     val bytes: Ptr<u8> = base.cast<u8>()
-    return bytes.addr()
+    return bytes.addr().to_int()
 }
 
 pub fun framebuffer_stride() => i32 = FB_W

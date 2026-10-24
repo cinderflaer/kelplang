@@ -47,8 +47,8 @@ fun glob_match(pat: &str, path: &str) => bool {
     val sv = path.view()
     val plen = pv.len()
     val slen = sv.len()
-    var pi: usize = 0
-    var si: usize = 0
+    var pi: int = 0
+    var si: int = 0
     while pi < plen {
         // A trailing `/**` also matches the directory itself: `**` is zero or
         // more segments, and `fs.mkdir_all`/`fs.remove_all` walk up to (and back
@@ -66,7 +66,7 @@ fun glob_match(pat: &str, path: &str) => bool {
             if rest == plen {
                 return true
             }
-            var p: usize = si
+            var p: int = si
             while true {
                 if glob_match(str.substring(pat, rest), str.substring(path, p)) {
                     return true
@@ -84,7 +84,7 @@ fun glob_match(pat: &str, path: &str) => bool {
             // only ever succeeds at `p == slen`, so the verdict is exactly
             // "no `/` from `si` to `slen`".
             if rest == plen {
-                var p: usize = si
+                var p: int = si
                 while p < slen {
                     if sv.get(p) == 47 {
                         return false
@@ -93,7 +93,7 @@ fun glob_match(pat: &str, path: &str) => bool {
                 }
                 return true
             }
-            var p: usize = si
+            var p: int = si
             while true {
                 if glob_match(str.substring(pat, rest), str.substring(path, p)) {
                     return true
@@ -120,7 +120,7 @@ fun glob_match(pat: &str, path: &str) => bool {
 }
 
 // `s[i..]` is exactly `/`, `*`, `*`. The caller guarantees `i + 3 <= len`.
-fun dir_wildcard_at(s: View, i: usize) => bool {
+fun dir_wildcard_at(s: View, i: int) => bool {
     return s.get(i) == 47 && s.get(i + 1) == 42 && s.get(i + 2) == 42
 }
 
@@ -139,7 +139,7 @@ fun host_glob(pat: &str, text: &str) => bool {
 // was, and this version matches only as far as `tend` instead. Nothing is
 // copied, and the verdicts are the same, which is what the corpus checks, the
 // `host:port` cases included.
-fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usize) => bool {
+fun host_glob_at(pat: &str, pstart: int, text: &str, tstart: int, tend: int) => bool {
     val pv = pat.view()
     val tv = text.view()
     val plen = pv.len()
@@ -196,7 +196,7 @@ fun host_match(pat: &str, hostport: &str) => bool {
 // is, cut the way `kelp_host_part`'s `char host[PATH_MAX]` cuts it. `PATH_MAX`
 // is 4096 on Linux, and the C version keeps the first `cap - 1` bytes of what it
 // copied.
-fun host_end(hostport: &str) => usize {
+fun host_end(hostport: &str) => int {
     val hv = hostport.view()
     val n = hv.len()
     var end = n
@@ -220,7 +220,7 @@ fun host_end(hostport: &str) => usize {
 fun has_colon(pat: &str) => bool {
     val pv = pat.view()
     val n = pv.len()
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         if pv.get(i) == 58 {
             return true
@@ -258,9 +258,9 @@ fun path_normalize(s: &str, out: mut Bytes) => bool {
         return false
     }
     out.set(0, 47)
-    var o: usize = 1
-    var p: usize = 0
-    var depth: usize = 0
+    var o: int = 1
+    var p: int = 0
+    var depth: int = 0
     while p < n {
         while p < n && sv.get(p) == 47 {
             p = p + 1
@@ -306,7 +306,7 @@ fun path_normalize(s: &str, out: mut Bytes) => bool {
                 if o + len >= cap {
                     return false
                 }
-                var i: usize = 0
+                var i: int = 0
                 while i < len {
                     out.set(o + i, sv.get(start + i))
                     i = i + 1

@@ -15,7 +15,7 @@ fun shl64(x: u64, n: u64) => u64 = x << n
 fun shr64(x: u64, n: u64) => u64 = x >> n
 fun shli64(x: i64, n: i64) => i64 = x << n
 fun shri64(x: i64, n: i64) => i64 = x >> n
-fun shlz(x: usize, n: usize) => usize = x << n
+fun shlz(x: int, n: int) => int = x << n
 
 fun main() {
     print(shl8(1, 7))

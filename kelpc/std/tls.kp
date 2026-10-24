@@ -58,7 +58,7 @@ impl "std/str"
    Nothing here closes on drop either, the same rule `net.Socket` and
    `net.Listener` follow.
 
-   `handle` is an `extern type` handle (`TlsHandle`), not a `usize`: a
+   `handle` is an `extern type` handle (`TlsHandle`), not a `int`: a
    compiler-shipped std module may now declare one (a module the compiler
    ships is admitted by `stdlib.rs`'s source table in `resolve.rs`, since its
    extern bodies come from `externs.rs` rather than a manifest), and the
@@ -95,12 +95,12 @@ extern fun accept_try_raw(ctx: TlsCtx, fd: i32, timeout_ms: u64, err_code: mut i
 extern fun ctx_free_raw(ctx: TlsCtx)
 extern fun alpn_raw(handle: TlsHandle, out: mut String) => bool
 extern fun peer_subject_raw(handle: TlsHandle, out: mut String) => bool
-extern fun pending_raw(handle: TlsHandle) => usize
+extern fun pending_raw(handle: TlsHandle) => int
 extern fun set_timeout_raw(handle: TlsHandle, ms: u64)
-extern fun write_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String) => usize
-extern fun write_all_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String) => usize
-extern fun read_try_raw(handle: TlsHandle, max: usize, err_code: mut i32, reason: mut String) => Bytes
-extern fun read_into_try_raw(handle: TlsHandle, buf: mut Bytes, at: usize, err_code: mut i32, reason: mut String) => usize
+extern fun write_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String) => int
+extern fun write_all_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String) => int
+extern fun read_try_raw(handle: TlsHandle, max: int, err_code: mut i32, reason: mut String) => Bytes
+extern fun read_into_try_raw(handle: TlsHandle, buf: mut Bytes, at: int, err_code: mut i32, reason: mut String) => int
 extern fun shutdown_try_raw(handle: TlsHandle, err_code: mut i32, reason: mut String)
 
 /// An OpenSSL `SSL*` for one TLS session, carried as an opaque value.
@@ -367,7 +367,7 @@ fun fail_bytes(e: move TlsError) => Bytes {
 }
 
 /// Panics with the text of a failed TLS operation that returns a count.
-fun fail_usize(e: move TlsError) => usize {
+fun fail_usize(e: move TlsError) => int {
     val text = error_text(e)
     panic(text)
 }
@@ -376,7 +376,7 @@ fun fail_usize(e: move TlsError) => usize {
 ///
 /// One `SSL_write`, or why it failed: like `net.send`, it may write fewer
 /// bytes than given.
-fun try_write(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
+fun try_write(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = write_try_raw(t.handle, data, &mut code, &mut reason)
@@ -390,7 +390,7 @@ fun try_write(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
 ///
 /// The whole buffer, looping over short writes, or why it stopped: the TLS
 /// twin of `net.send_all`.
-fun try_write_all(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
+fun try_write_all(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = write_all_try_raw(t.handle, data, &mut code, &mut reason)
@@ -406,7 +406,7 @@ fun try_write_all(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
 /// One `SSL_read`: up to `max` bytes, whatever is available. A clean
 /// `close_notify` is `Ok` with an empty `Bytes`; a stream that ends without
 /// one is `Err(PeerClosedUncleanly)`.
-fun try_read(t: TlsStream, max: usize) => result.Result<Bytes, TlsError> {
+fun try_read(t: TlsStream, max: int) => result.Result<Bytes, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val data = read_try_raw(t.handle, max, &mut code, &mut reason)
@@ -423,7 +423,7 @@ fun try_read(t: TlsStream, max: usize) => result.Result<Bytes, TlsError> {
 /// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
 /// a clean close), or why the read failed: the TLS twin of
 /// `net.recv_into`, for a message of known size.
-fun try_read_into(t: TlsStream, buf: mut Bytes, at: usize) => result.Result<usize, TlsError> {
+fun try_read_into(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = read_into_try_raw(t.handle, buf, at, &mut code, &mut reason)
@@ -458,7 +458,7 @@ fun try_shutdown(t: TlsStream) => result.Result<bool, TlsError> {
 /// One `SSL_write`.
 ///
 /// Panics: if the write fails or the peer has closed.
-fun write(t: TlsStream, data: Bytes) => usize {
+fun write(t: TlsStream, data: Bytes) => int {
     val r = try_write(t, data)
     return when r {
         Ok(n) -> n
@@ -474,7 +474,7 @@ fun write(t: TlsStream, data: Bytes) => usize {
 /// `net.send_all`.
 ///
 /// Panics: as `write`.
-fun write_all(t: TlsStream, data: Bytes) => usize {
+fun write_all(t: TlsStream, data: Bytes) => int {
     val r = try_write_all(t, data)
     return when r {
         Ok(n) -> n
@@ -491,7 +491,7 @@ fun write_all(t: TlsStream, data: Bytes) => usize {
 ///
 /// Panics: if the read fails, including a stream that ended without a
 /// `close_notify` (`TlsError.PeerClosedUncleanly`).
-fun read(t: TlsStream, max: usize) => Bytes {
+fun read(t: TlsStream, max: int) => Bytes {
     val r = try_read(t, max)
     return when r {
         Ok(b) -> b
@@ -508,7 +508,7 @@ fun read(t: TlsStream, max: usize) => Bytes {
 /// size.
 ///
 /// Panics: as `read`.
-fun read_into(t: TlsStream, buf: mut Bytes, at: usize) => usize {
+fun read_into(t: TlsStream, buf: mut Bytes, at: int) => int {
     val r = try_read_into(t, buf, at)
     return when r {
         Ok(n) -> n
@@ -694,7 +694,7 @@ fun ServerOptions.key_password(phrase: &str) => ServerOptions = ServerOptions(
 /// cannot be sent leaves a zero length, which the C side refuses.
 fun alpn_wire(protocols: &List<String>) => Bytes {
     var out = Bytes.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < protocols.len() {
         val name = protocols.get(i)
         val n = str.len(name.as_str())
@@ -702,7 +702,7 @@ fun alpn_wire(protocols: &List<String>) => Bytes {
             out.push(0)
         } else {
             out.push(n.to_u8())
-            var k: usize = 0
+            var k: int = 0
             while k < n {
                 out.push(str.byte(name.as_str(), k))
                 k = k + 1
@@ -848,7 +848,7 @@ fun TlsStream.peer_cert_subject() => option.Option<String> {
 /// Decrypted bytes OpenSSL is holding that a `read` would return at once, which
 /// a caller that waits for socket readability first has to check (`std/http`'s
 /// server does).
-fun TlsStream.pending() => usize = pending_raw(handle)
+fun TlsStream.pending() => int = pending_raw(handle)
 
 /// The client's options with ALPN and a client certificate.
 ///

@@ -40,7 +40,7 @@ fun main() {
     val ok2 = t(1) > 0 || t(2) > 0
     flush("or")
     var arr: [i32; 3] = [0, 0, 0]
-    arr.set(i = t(1).to_usize(), v = t(2))
+    arr.set(i = t(1).to_int(), v = t(2))
     flush("set")
     var p2 = P(a = 0, b = 0, c = 0)
     p2.a += t(7)

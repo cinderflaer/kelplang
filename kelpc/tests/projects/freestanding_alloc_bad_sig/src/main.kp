@@ -7,6 +7,6 @@ fun alloc(size: usize) => Ptr<u8> {
 fun dealloc(_p: Ptr<u8>, _size: usize, _align: usize) {}
 
 fun kmain() {
-    var i: usize = 0
+    var i: int = 0
     i = i + 1
 }

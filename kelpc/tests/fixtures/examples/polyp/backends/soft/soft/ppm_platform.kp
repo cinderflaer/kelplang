@@ -44,7 +44,7 @@ fun PpmPlatform.checksum() => u64 = inner.checksum()
 
 fun PpmPlatform.frame_count() => i32 = inner.frame_count()
 
-fun PpmPlatform.presented_count() => usize = inner.presented_count()
+fun PpmPlatform.presented_count() => int = inner.presented_count()
 
 fun PpmPlatform.pixel(x: i32, y: i32) => u32 = inner.pixel(x, y)
 

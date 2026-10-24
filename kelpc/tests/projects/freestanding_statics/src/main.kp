@@ -3,18 +3,18 @@
 // (`.rodata`) and a 4096-byte zero buffer (`.bss`, `NOBITS`, so it does not
 // grow the file). `kmain` perturbs the cursor and loops, which is all a
 // section-layout test needs.
-static mut CURSOR: usize = 0
-static mut COUNT: usize = 7
+static mut CURSOR: int = 0
+static mut COUNT: int = 7
 static MESSAGE: [u8; 5] = [104, 101, 108, 108, 111]
 static ZEROED: [u8; 4096] = [0; 4096]
 
 section(".text.boot") fun kmain() {
-    var count: usize = 0
+    var count: int = 0
     unsafe {
         CURSOR = CURSOR + 1
         count = COUNT
     }
-    var seed: usize = MESSAGE.get(i = 0).to_usize() + ZEROED.get(i = 0).to_usize() + count
+    var seed: int = MESSAGE.get(i = 0).to_int() + ZEROED.get(i = 0).to_int() + count
     var i: u64 = 1
     while true {
         i = i * 3 + seed.to_u64()

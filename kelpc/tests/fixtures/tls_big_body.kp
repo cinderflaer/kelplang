@@ -42,7 +42,7 @@ fun arg_port() => u16 {
     return p.to_u16()
 }
 
-fun chunk_size() => usize {
+fun chunk_size() => int {
     val args = process.args()
     if str.eq(args.get(2).as_str(), "large") {
         return 65536

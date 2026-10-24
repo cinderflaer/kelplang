@@ -9,7 +9,7 @@ impl "std/str"
 
 datac Stats(var run: i32, var bad: i32)
 
-fun push_num(out: mut String, n: usize) {
+fun push_num(out: mut String, n: int) {
     val s = str.from_u64(n.to_u64())
     out.push_str(s)
 }
@@ -21,7 +21,7 @@ fun render(pat: &str, text: &str) => String {
         var re = re0
         val c = re.captures(text)
         if let Some(caps) = c {
-            var i: usize = 0
+            var i: int = 0
             while i < caps.len() {
                 if i > 0 {
                     out.push(' ')

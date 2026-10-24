@@ -33,7 +33,7 @@ fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
 }
 
 section(".text.boot") fun kmain() {
-    var n: usize = 0
+    var n: int = 0
     val compiled = regex.compile("[a-z]+(\\d+)")
     if let Ok(re) = compiled {
         var rx = re

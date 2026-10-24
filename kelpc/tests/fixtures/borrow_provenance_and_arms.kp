@@ -70,9 +70,9 @@ fun round_trip(n: i64) => String {
     return fmt.int(n)
 }
 
-datac P(val text: String, val n: usize)
+datac P(val text: String, val n: int)
 
-fun P.tag() => usize = n
+fun P.tag() => int = n
 
 // 5. **A `Copy` value is never moved**, so reading one while a borrow of it is
 //    live is allowed, and, before this, `self` (a `&mut P` inside a `mut`

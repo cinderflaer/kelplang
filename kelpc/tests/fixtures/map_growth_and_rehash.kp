@@ -38,7 +38,7 @@ fun main() {
 
     val ks = m.keys()
     print(ks.len())
-    var j: usize = 0
+    var j: int = 0
     while j < ks.len() {
         print(ks.get(j))
         j += 1

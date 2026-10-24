@@ -7,7 +7,7 @@ datac Bag(val name: String, val xs: List<i32>)
 
 fun take_name(b: move Bag) => String = b.name
 
-fun take_count(b: move Bag) => usize {
+fun take_count(b: move Bag) => int {
     val xs = b.xs
     return xs.len()
 }

@@ -15,7 +15,7 @@ fun main() {
     print(ns.len())
     print(ns.get(2))
     var sum: i64 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < ns.len() {
         sum += ns.get(i)
         i += 1

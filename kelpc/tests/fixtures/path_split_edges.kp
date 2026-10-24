@@ -9,7 +9,7 @@ impl "std/list"
 fun show(s: &str) {
     val parts = path.split(s)
     print(parts.len())
-    var i: usize = 0
+    var i: int = 0
     while i < parts.len() {
         print(parts.get(i).as_str())
         i = i + 1

@@ -17,7 +17,7 @@ pub fun putc(c: u8) {
 }
 
 pub fun puts(text: &str) {
-    var i: usize = 0
+    var i: int = 0
     while i < str.len(text) {
         unsafe {
             putc(str.byte(text, i))

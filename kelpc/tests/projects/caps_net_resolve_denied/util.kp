@@ -3,7 +3,7 @@ impl "std/net"
 // `example.com` is never looked up: the denial is at the `net.resolve` call
 // site, before `getaddrinfo` runs, so this needs no network to be denied and
 // the test never touches the internet.
-pub fun look_up_the_wrong_name() => usize {
+pub fun look_up_the_wrong_name() => int {
     val addrs = net.resolve("example.com")
     return addrs.len()
 }

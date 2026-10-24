@@ -19,7 +19,7 @@ fun radius(s: &Shape) => f64 {
     return 0.0
 }
 
-fun width(t: &Token) => usize {
+fun width(t: &Token) => int {
     if let Word(text) = t {
         return text.len()
     }

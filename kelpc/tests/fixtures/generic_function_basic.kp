@@ -9,7 +9,7 @@ fun repeat<T>(x: T, n: i32) => T = if n <= 0 { x } else { repeat(x = x, n = n - 
 // determines it.
 fun empty_of<T>() => List<T> = List.empty()
 
-fun length_of<T>(xs: &List<T>) => usize = xs.len()
+fun length_of<T>(xs: &List<T>) => int = xs.len()
 
 // A generic function over a user generic type: `Pair`'s parameters are
 // independent of the function's.

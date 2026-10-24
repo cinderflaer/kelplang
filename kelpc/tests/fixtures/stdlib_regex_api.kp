@@ -22,7 +22,7 @@ fun show_match(label: &str, m: &option.Option<regex.Match>) {
 }
 
 fun show_all(label: &str, ms: &List<regex.Match>) {
-    var i: usize = 0
+    var i: int = 0
     while i < ms.len() {
         val m = ms.get(i)
         print("${label}[${i}]: ${m.start}..${m.end} '${m.text}'")
@@ -32,7 +32,7 @@ fun show_all(label: &str, ms: &List<regex.Match>) {
 }
 
 fun show_parts(label: &str, ps: &List<String>) {
-    var i: usize = 0
+    var i: int = 0
     while i < ps.len() {
         print("${label}[${i}]: '${ps.get(i)}'")
         i += 1
@@ -66,7 +66,7 @@ fun main() {
     val c = d.captures("id 12-345 end")
     if let Some(cc) = c {
         print(cc.len())
-        var i: usize = 0
+        var i: int = 0
         while i < 5 {
             val g = cc.get(i)
             if let Some(s) = g {

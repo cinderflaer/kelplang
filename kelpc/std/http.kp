@@ -77,7 +77,7 @@ const DEFAULT_MAX_REDIRECTS: i32 = 5
 /// compiler substitutes the number here *before* this text is lexed, so a
 /// project with no manifest gets the compiler default. `0` means "no pooling":
 /// every exchange gets a fresh connection and nothing is kept.
-const pool_size: usize = __KELP_HTTP_POOL__
+const pool_size: int = __KELP_HTTP_POOL__
 
 /// A parsed URL.
 /// A parsed URL.
@@ -232,7 +232,7 @@ datac Pool(
     /// The port the pool connects to.
     val port: u16,
     /// How many idle connections the pool keeps.
-    val size: usize,
+    val size: int,
     /// The timeout for each exchange, in milliseconds.
     val timeout_ms: u64,
     /// The descriptors of the idle plain connections ready for reuse. A `Conn`
@@ -306,7 +306,7 @@ fun Conn.tls() => tls.TlsStream {
 }
 
 /// Panics: as `tls.write_all`/`net.send_all`.
-fun conn_send_all(c: Conn, data: Bytes) => usize {
+fun conn_send_all(c: Conn, data: Bytes) => int {
     if c.is_tls() {
         return tls.write_all(c.tls(), data)
     }
@@ -314,7 +314,7 @@ fun conn_send_all(c: Conn, data: Bytes) => usize {
 }
 
 /// Panics: as `tls.read`/`net.recv`.
-fun conn_recv(c: Conn, max: usize) => Bytes {
+fun conn_recv(c: Conn, max: int) => Bytes {
     if c.is_tls() {
         return tls.read(c.tls(), max)
     }
@@ -322,7 +322,7 @@ fun conn_recv(c: Conn, max: usize) => Bytes {
 }
 
 /// Panics: as `tls.read_into`/`net.recv_into`.
-fun conn_recv_into(c: Conn, buf: mut Bytes, at: usize) => usize {
+fun conn_recv_into(c: Conn, buf: mut Bytes, at: int) => int {
     if c.is_tls() {
         return tls.read_into(c.tls(), buf, at)
     }
@@ -331,7 +331,7 @@ fun conn_recv_into(c: Conn, buf: mut Bytes, at: usize) => usize {
 
 /// The fallible twins of the three calls above. A failure is `Exchange`: the
 /// connection was open, so the request may have reached the server.
-fun conn_send_all_try(c: Conn, data: Bytes) => result.Result<usize, HttpErr> {
+fun conn_send_all_try(c: Conn, data: Bytes) => result.Result<int, HttpErr> {
     if c.is_tls() {
         return when tls.try_write_all(c.tls(), data) {
             Ok(n) -> result.Result.Ok(value = n)
@@ -345,7 +345,7 @@ fun conn_send_all_try(c: Conn, data: Bytes) => result.Result<usize, HttpErr> {
 }
 
 /// Reads up to `max` bytes, or the error.
-fun conn_recv_try(c: Conn, max: usize) => result.Result<Bytes, HttpErr> {
+fun conn_recv_try(c: Conn, max: int) => result.Result<Bytes, HttpErr> {
     if c.is_tls() {
         return when tls.try_read(c.tls(), max) {
             Ok(b) -> result.Result.Ok(value = b)
@@ -359,7 +359,7 @@ fun conn_recv_try(c: Conn, max: usize) => result.Result<Bytes, HttpErr> {
 }
 
 /// Reads into `buf` at `at`, returning the byte count or the error.
-fun conn_recv_into_try(c: Conn, buf: mut Bytes, at: usize) => result.Result<usize, HttpErr> {
+fun conn_recv_into_try(c: Conn, buf: mut Bytes, at: int) => result.Result<int, HttpErr> {
     if c.is_tls() {
         return when tls.try_read_into(c.tls(), buf, at) {
             Ok(n) -> result.Result.Ok(value = n)
@@ -452,7 +452,7 @@ datac Cursor(
     /// Bytes received and not yet consumed.
     var buf: Bytes,
     /// How far into `buf` the reader has read.
-    var start: usize,
+    var start: int,
 )
 
 /// The connection a cursor reads.
@@ -576,7 +576,7 @@ fun empty_headers() => List<Header> {
 
 /// Whether the response has a header called `name`.
 fun Response.has_header(name: &str) => bool {
-    var i: usize = 0
+    var i: int = 0
     while i < headers.len() {
         val h = headers.get(i)
         if name_eq(h.name, name) {
@@ -600,7 +600,7 @@ fun Response.has_header(name: &str) => bool {
 /// One allocation per lookup, until the length-carrying view (open item 44)
 /// makes the borrow expressible.
 fun Response.header(name: &str) => String {
-    var i: usize = 0
+    var i: int = 0
     while i < headers.len() {
         val h = headers.get(i)
         if name_eq(h.name, name) {
@@ -661,7 +661,7 @@ fun Response.rate_limit() => RateLimit = RateLimit(
 /// No `Connection` header is sent on purpose. HTTP/1.1 is persistent unless the
 /// client asks otherwise, and staying silent is what lets the server's own
 /// `Connection: close` (if it sends one) be the single source of truth.
-fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize) => String {
+fun build_head(method: &str, u: Url, headers: List<Header>, body_len: int) => String {
     var out = String.with_capacity(256)
     out.push_str(method)
     out.push_str(" ")
@@ -677,7 +677,7 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize) => 
         out.push_str(port_text)
     }
     out.push_str("\r\n")
-    var i: usize = 0
+    var i: int = 0
     while i < headers.len() {
         out.push_str(headers.get(i).name.as_str())
         out.push_str(": ")
@@ -699,9 +699,9 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize) => 
 
 /// Makes at least one byte available, refilling from the socket if needed.
 ///
-/// Fallible core; `ensure` is the panicking form. The `usize` is always 0: a
+/// Fallible core; `ensure` is the panicking form. The `int` is always 0: a
 /// refill has no count to report.
-fun mut Cursor.try_ensure() => result.Result<usize, HttpErr> {
+fun mut Cursor.try_ensure() => result.Result<int, HttpErr> {
     if start >= buf.len() {
         val chunk = conn_recv_try(self.conn(), 4096)?
         if chunk.is_empty() {
@@ -757,7 +757,7 @@ fun mut Cursor.read_line() => String {
 /// exists because discarding an owned `String` in statement position is
 /// rejected ("a non-tail statement that produces an owned value"), and there is
 /// no `_ =` to say "drop this".
-fun mut Cursor.try_skip_line() => result.Result<usize, HttpErr> {
+fun mut Cursor.try_skip_line() => result.Result<int, HttpErr> {
     var going = true
     while going {
         self.try_ensure()?
@@ -782,9 +782,9 @@ fun mut Cursor.skip_line() {
 /// a buffer sized for the whole thing. Reading straight into the destination
 /// means the socket can never over-read past the body, which is what makes a
 /// pooled connection safe to reuse afterwards.
-fun mut Cursor.try_read_exact(n: usize) => result.Result<Bytes, HttpErr> {
+fun mut Cursor.try_read_exact(n: int) => result.Result<Bytes, HttpErr> {
     var out = mem.alloc(n)
-    var got: usize = 0
+    var got: int = 0
     while got < n && start < buf.len() {
         out.set(got, buf.get(start))
         start = start + 1
@@ -805,7 +805,7 @@ fun mut Cursor.try_read_exact(n: usize) => result.Result<Bytes, HttpErr> {
 }
 
 /// Panics: if the peer closes before `n` bytes have arrived.
-fun mut Cursor.read_exact(n: usize) => Bytes {
+fun mut Cursor.read_exact(n: int) => Bytes {
     val body = when self.try_read_exact(n) {
         Ok(b) -> b
         Err(e) -> fail_http(e)
@@ -872,15 +872,15 @@ fun hex_digit(c: u8) => u32 {
 
 /// A chunk size: hex digits, optionally followed by `;extension`, which is
 /// ignored. A malformed size is an `Exchange` failure: the response is broken.
-fun parse_hex_try(text: &str) => result.Result<usize, HttpErr> {
+fun parse_hex_try(text: &str) => result.Result<int, HttpErr> {
     if str.is_empty(text) {
         return exchange_failed("http: empty chunk size")
     }
-    var value: usize = 0
-    var digits: usize = 0
+    var value: int = 0
+    var digits: int = 0
     val tv = text.view()
     val n = tv.len()
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         val c = tv.get(i)
         if c == 59 {
@@ -890,7 +890,7 @@ fun parse_hex_try(text: &str) => result.Result<usize, HttpErr> {
             if d < 0 {
                 return exchange_failed("http: chunk size is not a hexadecimal number")
             }
-            value = value * 16 + d.to_usize()
+            value = value * 16 + d.to_int()
             digits = digits + 1
             i = i + 1
         }
@@ -902,7 +902,7 @@ fun parse_hex_try(text: &str) => result.Result<usize, HttpErr> {
 }
 
 /// Panics: if there are no digits, or a digit is not hexadecimal.
-fun parse_hex(text: &str) => usize {
+fun parse_hex(text: &str) => int {
     val v = when parse_hex_try(text) {
         Ok(n) -> n
         Err(e) -> fail_http(e)
@@ -960,9 +960,9 @@ fun mut Cursor.read_chunked() => Bytes {
 /// before the headers had even been located. Every synthetic test had an
 /// all-ASCII body, which is why it took `examples/download.kp` (a 200 KB image)
 /// to find this.
-fun find_head_end(b: Bytes) => usize {
+fun find_head_end(b: Bytes) => int {
     val n = b.len()
-    var i: usize = 0
+    var i: int = 0
     while i + 4 <= n {
         if b.get(i) == 13 && b.get(i + 1) == 10 && b.get(i + 2) == 13 && b.get(i + 3) == 10 {
             return i + 4
@@ -977,10 +977,10 @@ fun find_head_end(b: Bytes) => usize {
 /// of copying it. A header block that is not valid utf-8 is a malformed
 /// response, and this is where that becomes loud rather than producing a
 /// `String` that lies about its own invariant.
-fun head_text(b: Bytes, end: usize) => String {
+fun head_text(b: Bytes, end: int) => String {
     val n = end - 4
     var raw = mem.alloc(n)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         raw.set(i, b.get(i))
         i = i + 1
@@ -1040,7 +1040,7 @@ fun status_code(text: &str) => i32 {
 /// error: HTTP allows a recipient to ignore what it does not understand.
 fun parse_headers(lines: List<String>) => List<Header> {
     var hs: List<Header> = List.empty()
-    var i: usize = 1
+    var i: int = 1
     while i < lines.len() {
         val text = lines.get(i).as_str()
         if !str.is_empty(text) {
@@ -1058,7 +1058,7 @@ fun parse_headers(lines: List<String>) => List<Header> {
 
 /// The value of header `name`, or an empty string.
 fun header_value(hs: List<Header>, name: &str) => String {
-    var i: usize = 0
+    var i: int = 0
     while i < hs.len() {
         if name_eq(hs.get(i).name.as_str(), name) {
             return String.from_str(hs.get(i).value.as_str())
@@ -1162,7 +1162,7 @@ fun wants_close(hs: List<Header>) => bool {
 /// Fallible core: every failure is an `HttpErr.Exchange`.
 fun read_response_try(c: Conn) => result.Result<Response, HttpErr> {
     var buf = Bytes.empty()
-    var end: usize = 0
+    var end: int = 0
     var eof = false
     while end == 0 && !eof {
         val chunk = conn_recv_try(c, 4096)?
@@ -1193,7 +1193,7 @@ fun read_response_try(c: Conn) => result.Result<Response, HttpErr> {
         body = cursor.try_read_chunked()?
     } else {
         if len >= 0 {
-            body = cursor.try_read_exact(len.to_usize())?
+            body = cursor.try_read_exact(len.to_int())?
         } else {
             body = cursor.try_read_to_end()?
         }
@@ -1226,7 +1226,7 @@ fun one_exchange_try(c: Conn, method: &str, u: Url, headers: List<Header>, body:
     val head = build_head(method, u, headers, body.len())
     conn_send_all_try(c, head.into_bytes())?
     // Unconditional: `send_all` of an empty buffer writes nothing, and this
-    // avoids an `if` without an `else` whose body is a `usize` expression.
+    // avoids an `if` without an `else` whose body is a `int` expression.
     conn_send_all_try(c, body)?
     return read_response_try(c)
 }
@@ -1443,10 +1443,10 @@ fun empty_stamps() => List<i64> {
 }
 
 /// How many idle connections the pool keeps.
-fun Pool.size() => usize = size
+fun Pool.size() => int = size
 
 /// How many connections the pool is keeping right now.
-fun Pool.len() => usize = idle.len()
+fun Pool.len() => int = idle.len()
 
 /// The connection a lease holds.
 fun Lease.conn() => Conn = Conn(fd = fd, tls_handle = tls_handle)
@@ -1475,7 +1475,7 @@ fun mut Pool.warm(use_tls: bool) {
     val p = port
     val t = timeout_ms
     val cap = size
-    var i: usize = 0
+    var i: int = 0
     {
         i = idle.len()
     }
@@ -1587,11 +1587,11 @@ fun mut Pool.set_idle_timeout(ms: u64) {
 /// module needs no `time` grant.
 ///
 /// Panics: if closing a connection fails.
-fun mut Pool.close_idle(after_ms: u64) => usize {
+fun mut Pool.close_idle(after_ms: u64) => int {
     val now = net.mono_ms()
     var kept_fds: List<i32> = List.empty()
     var kept_since: List<i64> = List.empty()
-    var closed: usize = 0
+    var closed: int = 0
     // Popping is newest first, so the survivors are pushed back in reverse.
     while !idle.is_empty() {
         val fd = idle.pop()
@@ -1877,7 +1877,7 @@ datac Multipart(
     /// The body built so far.
     var out: Bytes,
     /// How many parts have been added.
-    var parts: usize,
+    var parts: int,
 )
 
 /// A boundary byte RFC 2046 allows: letters, digits and `'()+_,-./:=?`.
@@ -1895,7 +1895,7 @@ fun multipart(boundary: &str) => Multipart {
     if n == 0 || n > 70 {
         panic("http.multipart: the boundary must be 1 to 70 bytes")
     }
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         if !boundary_ok(str.byte(boundary, i)) {
             panic("http.multipart: the boundary holds a byte that is not allowed")
@@ -2003,13 +2003,13 @@ fun multipart_request(url: &str, form: mut Multipart) => Request {
 /// deadline passes, which a per-`recv` timeout would never do.
 datac Limits(
     /// The longest request line accepted.
-    val max_request_line: usize,
+    val max_request_line: int,
     /// The most header bytes accepted.
-    val max_header_bytes: usize,
+    val max_header_bytes: int,
     /// The most headers accepted.
-    val max_headers: usize,
+    val max_headers: int,
     /// The largest body accepted.
-    val max_body: usize,
+    val max_body: int,
     /// How long to wait for a request head, in milliseconds.
     val head_timeout_ms: u64,
     /// How long to wait for a body, in milliseconds.
@@ -2017,7 +2017,7 @@ datac Limits(
     /// How long a kept-alive connection may idle, in milliseconds.
     val idle_timeout_ms: u64,
     /// The most requests served on one connection.
-    val max_requests_per_conn: usize,
+    val max_requests_per_conn: int,
 )
 
 /// 8 KiB request line, 16 KiB of headers, 100 headers, 1 MiB body, 10 s for the
@@ -2085,7 +2085,7 @@ datac ServerResponse(
 
 /// Whether the list has a header called `name`.
 fun headers_have(hs: List<Header>, name: &str) => bool {
-    var i: usize = 0
+    var i: int = 0
     while i < hs.len() {
         if name_eq(hs.get(i).name.as_str(), name) {
             return true
@@ -2126,7 +2126,7 @@ fun srv_decode_path(raw: &str) => String {
 /// `None`. `?a` is `Some("")` for `a`; names are compared after decoding.
 fun ServerRequest.query_param(name: &str) => option.Option<String> {
     val pairs = str.split(query, "&")
-    var i: usize = 0
+    var i: int = 0
     while i < pairs.len() {
         val pair = pairs.get(i).as_str()
         if !str.is_empty(pair) {
@@ -2154,7 +2154,7 @@ fun ServerRequest.query_param(name: &str) => option.Option<String> {
 fun ServerRequest.path_segments() => List<String> {
     val raw = str.split(path, "/")
     var out: List<String> = List.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < raw.len() {
         val piece = raw.get(i).as_str()
         if !str.is_empty(piece) {
@@ -2303,7 +2303,7 @@ fun bad_request(message: &str) => ServerResponse = srv_response(400, "text/plain
 /// this copies its headers and body; use `add_header` to grow one in place.
 fun ServerResponse.with_header(name: &str, value: &str) => ServerResponse {
     var hs: List<Header> = List.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < headers.len() {
         val h = headers.get(i)
         hs.push(Header(name = String.from_str(h.name.as_str()), value = String.from_str(h.value.as_str())))
@@ -2372,9 +2372,9 @@ datac ServerConn(
     /// Bytes read but not yet consumed.
     var buf: Bytes,
     /// Where unconsumed bytes start in `buf`.
-    var start: usize,
+    var start: int,
     /// Requests served so far.
-    var served: usize,
+    var served: int,
     /// Whether to close after this response.
     var close_after: bool,
     /// Whether the current request is a HEAD.
@@ -2416,7 +2416,7 @@ fun ServerConn.conn() => Conn = Conn(fd = fd, tls_handle = tls_handle)
 /// Decrypted bytes OpenSSL already holds for this connection (always 0 for a
 /// plain one): the socket shows nothing readable while a whole record waits
 /// there, so `fill` has to ask before it waits.
-fun ServerConn.pending() => usize {
+fun ServerConn.pending() => int {
     if let Some(h) = tls_handle {
         val t = tls.TlsStream(fd = fd, handle = h)
         return t.pending()
@@ -2468,7 +2468,7 @@ fun srv_reason_status(reason: &str) => i32 {
         return 0
     }
     var code: i32 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < 3 {
         val c = str.byte(reason, i)
         if !str.is_digit(c) {
@@ -2502,7 +2502,7 @@ fun http_error_text(e: &HttpErr) => String {
 /// Reads at most 4096 more bytes into the buffer, waiting no later than
 /// `deadline` (a `net.mono_ms` reading). `Ok(0)` is the peer's end of stream;
 /// a deadline that passes is `408`.
-fun mut ServerConn.fill(deadline: i64) => result.Result<usize, HttpErr> {
+fun mut ServerConn.fill(deadline: i64) => result.Result<int, HttpErr> {
     val now = net.mono_ms()
     if now >= deadline {
         return srv_err(408, "the request did not arrive in time")
@@ -2540,7 +2540,7 @@ fun mut ServerConn.compact() {
 }
 
 /// The bytes from `from` up to `to`.
-fun srv_bytes_range(b: Bytes, from: usize, to: usize) => Bytes {
+fun srv_bytes_range(b: Bytes, from: int, to: int) => Bytes {
     var out = Bytes.empty()
     var i = from
     while i < to {
@@ -2557,8 +2557,8 @@ fun srv_bytes_range(b: Bytes, from: usize, to: usize) => Bytes {
 /// what lets it become a `String` without a validation that could panic.
 fun srv_scan_head(b: Bytes) => i64 {
     val n = b.len()
-    var line_start: usize = 0
-    var i: usize = 0
+    var line_start: int = 0
+    var i: int = 0
     while i < n {
         val c = b.get(i)
         if c == 13 {
@@ -2590,8 +2590,8 @@ fun srv_scan_head(b: Bytes) => i64 {
 }
 
 /// The offset of the first `LF`, or the buffer length when there is none.
-fun srv_first_lf(b: Bytes) => usize {
-    var i: usize = 0
+fun srv_first_lf(b: Bytes) => int {
+    var i: int = 0
     while i < b.len() {
         if b.get(i) == 10 {
             return i
@@ -2621,7 +2621,7 @@ fun srv_is_token(s: &str) => bool {
     if n == 0 {
         return false
     }
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         if !srv_tchar(str.byte(s, i)) {
             return false
@@ -2632,9 +2632,9 @@ fun srv_is_token(s: &str) => bool {
 }
 
 /// How many headers are called `name`.
-fun srv_count_headers(hs: List<Header>, name: &str) => usize {
-    var n: usize = 0
-    var i: usize = 0
+fun srv_count_headers(hs: List<Header>, name: &str) => int {
+    var n: int = 0
+    var i: int = 0
     while i < hs.len() {
         if name_eq(hs.get(i).name.as_str(), name) {
             n = n + 1
@@ -2646,12 +2646,12 @@ fun srv_count_headers(hs: List<Header>, name: &str) => usize {
 
 /// Whether any `Connection` header lists `token` (compared lower-case).
 fun srv_connection_has(hs: List<Header>, token: &str) => bool {
-    var i: usize = 0
+    var i: int = 0
     while i < hs.len() {
         if name_eq(hs.get(i).name.as_str(), "connection") {
             val low = str.to_lower(hs.get(i).value.as_str())
             val parts = str.split(low, ",")
-            var j: usize = 0
+            var j: int = 0
             while j < parts.len() {
                 val part = str.trim(parts.get(j).as_str())
                 if str.eq(part, token) {
@@ -2672,7 +2672,7 @@ fun srv_connection_has(hs: List<Header>, token: &str) => bool {
 fun srv_content_length(hs: List<Header>) => result.Result<i64, HttpErr> {
     var found = false
     var value: i64 = -1
-    var i: usize = 0
+    var i: int = 0
     while i < hs.len() {
         if name_eq(hs.get(i).name.as_str(), "content-length") {
             val text = hs.get(i).value.as_str()
@@ -2681,7 +2681,7 @@ fun srv_content_length(hs: List<Header>) => result.Result<i64, HttpErr> {
                 return srv_err(400, "empty Content-Length")
             }
             var v: i64 = 0
-            var k: usize = 0
+            var k: int = 0
             while k < n {
                 val c = str.byte(text, k)
                 if !str.is_digit(c) {
@@ -2718,11 +2718,11 @@ fun srv_method_needs_length(m: &str) => bool {
 /// One line of the chunked framing (a size line or a trailer), without its
 /// `CRLF`. Waits for more bytes until `deadline`; a line longer than `max_len`
 /// is `too_long`.
-fun mut ServerConn.take_line(deadline: i64, max_len: usize, too_long: i32) => result.Result<String, HttpErr> {
+fun mut ServerConn.take_line(deadline: i64, max_len: int, too_long: i32) => result.Result<String, HttpErr> {
     var from = start
     while true {
         var i = from
-        var at: usize = 0
+        var at: int = 0
         var found = false
         while i < buf.len() && !found {
             if buf.get(i) == 10 {
@@ -2761,7 +2761,7 @@ fun mut ServerConn.take_line(deadline: i64, max_len: usize, too_long: i32) => re
 }
 
 /// Makes `n` bytes available from `start`.
-fun mut ServerConn.need(n: usize, deadline: i64) => result.Result<usize, HttpErr> {
+fun mut ServerConn.need(n: int, deadline: i64) => result.Result<int, HttpErr> {
     while buf.len() - start < n {
         val got = self.fill(deadline)?
         if got == 0 {
@@ -2772,11 +2772,11 @@ fun mut ServerConn.need(n: usize, deadline: i64) => result.Result<usize, HttpErr
 }
 
 /// Parses a chunk-size line, refusing sizes over `max_body`.
-fun srv_hex_size(text: &str, max_body: usize) => result.Result<usize, HttpErr> {
+fun srv_hex_size(text: &str, max_body: int) => result.Result<int, HttpErr> {
     val n = str.len(text)
-    var value: usize = 0
-    var digits: usize = 0
-    var i: usize = 0
+    var value: int = 0
+    var digits: int = 0
+    var i: int = 0
     var going = true
     while i < n && going {
         val c = str.byte(text, i)
@@ -2791,7 +2791,7 @@ fun srv_hex_size(text: &str, max_body: usize) => result.Result<usize, HttpErr> {
             if digits > 12 {
                 return srv_err(413, "chunk too large")
             }
-            value = value * 16 + d.to_usize()
+            value = value * 16 + d.to_int()
             i = i + 1
         }
     }
@@ -2823,7 +2823,7 @@ fun mut ServerConn.read_chunked(limits: &Limits, deadline: i64) => result.Result
             start = start + size + 2
         }
     }
-    var trailer_bytes: usize = 0
+    var trailer_bytes: int = 0
     var trailing = true
     while trailing {
         val line = self.take_line(deadline, limits.max_header_bytes, 431)?
@@ -2870,7 +2870,7 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
         }
     }
     val head_deadline = net.mono_ms() + limits.head_timeout_ms.to_i64()
-    var end: usize = 0
+    var end: int = 0
     var scanning = true
     while scanning {
         val r = srv_scan_head(buf)
@@ -2888,14 +2888,14 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
             }
             var seen = buf.len()
             if r > 0 {
-                seen = r.to_usize()
+                seen = r.to_int()
             }
             if seen - (eol + 1) > limits.max_header_bytes {
                 return srv_err(431, "the request headers are too large")
             }
         }
         if r > 0 {
-            end = r.to_usize()
+            end = r.to_int()
             scanning = false
         } else {
             val got = self.fill(head_deadline)?
@@ -2941,7 +2941,7 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
     }
     // The headers.
     var hs: List<Header> = List.empty()
-    var i: usize = 1
+    var i: int = 1
     while i < lines.len() {
         val line = lines.get(i).as_str()
         if str.byte(line, 0) == 32 || str.byte(line, 0) == 9 {
@@ -3015,7 +3015,7 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
         if chunked {
             body = self.read_chunked(limits, body_deadline)?
         } else {
-            val n = cl.to_usize()
+            val n = cl.to_int()
             self.need(n, body_deadline)?
             body = srv_bytes_range(buf, start, start + n)
             start = start + n
@@ -3070,14 +3070,14 @@ fun ServerConn.wants_close() => bool = close_after
 fun srv_clean_header(h: Header) => bool {
     val n = str.len(h.name)
     val v = str.len(h.value)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         if !srv_tchar(str.byte(h.name, i)) {
             return false
         }
         i = i + 1
     }
-    var k: usize = 0
+    var k: int = 0
     while k < v {
         val c = str.byte(h.value, k)
         if c == 13 || c == 10 || c == 0 {
@@ -3093,7 +3093,7 @@ fun srv_clean_header(h: Header) => bool {
 /// name or value could split the response), the framing the server owns, and
 /// the body unless the request was `HEAD` or the status has none. A write that
 /// fails because the peer is gone is an `Err`, never a panic.
-fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<usize, HttpErr> {
+fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<int, HttpErr> {
     val code = resp.status
     var out = String.with_capacity(256)
     out.push_str("HTTP/1.1 ")
@@ -3103,7 +3103,7 @@ fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<usize,
     val reason = srv_reason(code)
     out.push_str(reason.as_str())
     out.push_str("\r\n")
-    var i: usize = 0
+    var i: int = 0
     while i < resp.headers.len() {
         val h = resp.headers.get(i)
         if name_eq(h.name, "connection") {
@@ -3144,7 +3144,7 @@ fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<usize,
 /// Answers a failed `read_request` with its status and the reason as text, and
 /// marks the connection to close; does nothing when the failure has no status
 /// (the peer is gone, or the connection was only idle).
-fun mut ServerConn.write_error(e: &HttpErr) => result.Result<usize, HttpErr> {
+fun mut ServerConn.write_error(e: &HttpErr) => result.Result<int, HttpErr> {
     val code = http_error_status(e)
     if code == 0 {
         return result.Result.Ok(value = 0)
@@ -3174,7 +3174,7 @@ fun ServerConn.close() {
     val sock = net.Socket(fd = fd)
     if net.try_shutdown_write(sock) {
         val until = net.mono_ms() + 250
-        var drained: usize = 0
+        var drained: int = 0
         var going = true
         while going {
             val now = net.mono_ms()
@@ -3388,7 +3388,7 @@ fun worker_main(w: move WorkerStart) => u64 {
 /// One thread per worker, spawned one inside the next so that the handles never
 /// need a container (a `Thread` cannot be a list element): each level spawns its
 /// worker, runs the rest, then joins its own.
-fun run_workers(n: usize, fd: i32, handler: fun(&ServerRequest) => ServerResponse, limits: &Limits) => u64 {
+fun run_workers(n: int, fd: i32, handler: fun(&ServerRequest) => ServerResponse, limits: &Limits) => u64 {
     if n == 0 {
         return 0
     }
@@ -3405,14 +3405,14 @@ fun run_workers(n: usize, fd: i32, handler: fun(&ServerRequest) => ServerRespons
 /// connection at a time. With `idle_ms` above 0 a worker stops when no client
 /// has connected for that long and the call returns the total requests
 /// answered; with 0 it never returns. The listener is not closed.
-fun serve_threaded_on(server: &Server, handler: fun(&ServerRequest) => ServerResponse, limits: &Limits, workers: usize, idle_ms: u64) => u64 {
+fun serve_threaded_on(server: &Server, handler: fun(&ServerRequest) => ServerResponse, limits: &Limits, workers: int, idle_ms: u64) => u64 {
     server.set_accept_timeout(idle_ms)
     return run_workers(workers, server.fd, handler, limits)
 }
 
 /// Listens on `port` and serves forever on `workers` threads, with the default
 /// limits. A panic in a handler ends its worker thread, not the process.
-fun serve_threaded(port: u16, handler: fun(&ServerRequest) => ServerResponse, workers: usize) {
+fun serve_threaded(port: u16, handler: fun(&ServerRequest) => ServerResponse, workers: int) {
     val s = listen(port)
     val limits = default_limits()
     val n = serve_threaded_on(&s, handler, &limits, workers, 0)

@@ -37,7 +37,7 @@ fun main() {
     names.push(String.from_str("ab"))
     names.push(String.from_str("cdef"))
 
-    val lens = list.map(xs = names, f = fun(s: &String) => usize = s.len())
+    val lens = list.map(xs = names, f = fun(s: &String) => int = s.len())
     print(lens.get(0))
     print(lens.get(1))
 

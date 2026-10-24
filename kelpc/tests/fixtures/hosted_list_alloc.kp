@@ -10,7 +10,7 @@ fun main() {
         i = i + 1
     }
     var sum: i32 = 0
-    var j: usize = 0
+    var j: int = 0
     while j < xs.len() {
         sum = sum + xs.get(j)
         j = j + 1

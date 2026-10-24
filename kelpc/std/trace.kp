@@ -14,19 +14,19 @@ datac Span(
 
 /// Emits one trace event. Pass `source.file()` and `source.line()` so the
 /// record names this call site rather than the implementation in `std/trace`.
-fun event(file: &str, line: usize, name: &str) {
+fun event(file: &str, line: int, name: &str) {
     emit(kind = "event", file = file, line = line, name = name, elapsed_ns = -1)
 }
 
 /// Starts a duration span and emits its `begin` record.
-fun begin(file: &str, line: usize, name: &str) => Span {
+fun begin(file: &str, line: int, name: &str) => Span {
     val start = time.now_mono_ns()
     emit(kind = "begin", file = file, line = line, name = name, elapsed_ns = -1)
     return Span(name = String.from_str(name), start_ns = start)
 }
 
 /// Ends `span` and emits its duration in nanoseconds at this call site.
-fun end(file: &str, line: usize, span: Span) {
+fun end(file: &str, line: int, span: Span) {
     val elapsed = time.now_mono_ns() - span.start_ns
     emit(kind = "end", file = file, line = line, name = span.name.as_str(), elapsed_ns = elapsed)
 }
@@ -34,7 +34,7 @@ fun end(file: &str, line: usize, span: Span) {
 /// Writes one tab-separated trace line to stderr: the record kind, the monotonic
 /// time, the escaped `file:line` and the escaped name. A negative `elapsed_ns`
 /// leaves out the final duration field, which only `end` records carry.
-fun emit(kind: &str, file: &str, line: usize, name: &str, elapsed_ns: i64) {
+fun emit(kind: &str, file: &str, line: int, name: &str, elapsed_ns: i64) {
     val at = fmt.uint(line.to_u64())
     val time_ns = fmt.int(time.now_mono_ns())
     val safe_file = escape(file)

@@ -39,10 +39,10 @@ fun absolute(base: &str, p: &str) => String {
 /// The byte index just past the last `/` in `s`, or 0 when the path has none.
 /// A path with no separator has no directory part at all, so `file_name`
 /// reports the whole string, which is what every other path library does.
-fun last_sep(s: &str) => usize {
+fun last_sep(s: &str) => int {
     val sv = s.view()
     val n = sv.len()
-    var i: usize = n
+    var i: int = n
     while i > 0 {
         if sv.get(i - 1) == 47 {
             return i
@@ -61,7 +61,7 @@ fun extension(s: &str) => &str {
     val start = last_sep(s)
     val sv = s.view()
     val n = sv.len()
-    var i: usize = n
+    var i: int = n
     while i > start {
         if sv.get(i - 1) == 46 {
             return str.substring(s, i)
@@ -80,8 +80,8 @@ fun stem(s: &str) => String {
     val start = last_sep(s)
     val sv = s.view()
     val n = sv.len()
-    var cut: usize = n
-    var i: usize = n
+    var cut: int = n
+    var i: int = n
     while i > start {
         if sv.get(i - 1) == 46 && i - 1 > start {
             cut = i - 1
@@ -106,8 +106,8 @@ fun split(s: &str) => List<String> {
     var out: List<String> = List.empty()
     val sv = s.view()
     val n = sv.len()
-    var start: usize = 0
-    var i: usize = 0
+    var start: int = 0
+    var i: int = 0
     while i <= n {
         if i == n || sv.get(i) == 47 {
             if i > start {
@@ -127,7 +127,7 @@ fun split(s: &str) => List<String> {
 fun join_all(parts: List<String>) => String {
     var out = String.empty()
     var first = true
-    var i: usize = 0
+    var i: int = 0
     while i < parts.len() {
         val part = parts.get(i).as_str()
         if is_absolute(part) {
@@ -153,7 +153,7 @@ fun parent(s: &str) => String {
     if end == 0 {
         return String.empty()
     }
-    var cut: usize = end - 1
+    var cut: int = end - 1
     val sv = s.view()
     while cut > 1 && sv.get(cut - 1) == 47 {
         cut = cut - 1
@@ -173,9 +173,9 @@ fun join(a: &str, b: &str) => String {
     val bv = b.view()
     val la = av.len()
     val lb = bv.len()
-    val sep: usize = if la > 0 && av.get(la - 1) == 47 { 0 } else { 1 }
+    val sep: int = if la > 0 && av.get(la - 1) == 47 { 0 } else { 1 }
     var out = mem.alloc(la + lb + sep)
-    var i: usize = 0
+    var i: int = 0
     while i < la {
         out.set(i, av.get(i))
         i = i + 1
@@ -183,7 +183,7 @@ fun join(a: &str, b: &str) => String {
     if sep == 1 {
         out.set(la, 47)
     }
-    var j: usize = 0
+    var j: int = 0
     while j < lb {
         out.set(la + sep + j, bv.get(j))
         j = j + 1

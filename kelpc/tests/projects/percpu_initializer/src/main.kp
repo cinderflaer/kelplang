@@ -1,6 +1,6 @@
-percpu static mut SLOT: usize = seed()
+percpu static mut SLOT: int = seed()
 
-fun seed() => usize = 7
+fun seed() => int = 7
 
 section(".text.boot") fun kmain() {
     while true {

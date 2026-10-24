@@ -27,8 +27,8 @@ static LOCK: Atomic<bool> = Atomic.new(false)
 // context can be between the test and the set.
 pub fun lock_acquire() {
     unsafe {
-        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
-        asm("csrw mstatus, {0}", in("r") mstatus & (~MIE_BIT))
+        val mstatus: int = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") mstatus & (~MIE_BIT.to_int()))
     }
     while LOCK.load(order = atomic.Ordering.SeqCst) {}
     LOCK.store(value = true, order = atomic.Ordering.SeqCst)
@@ -37,8 +37,8 @@ pub fun lock_acquire() {
 pub fun lock_release() {
     LOCK.store(value = false, order = atomic.Ordering.SeqCst)
     unsafe {
-        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
-        asm("csrw mstatus, {0}", in("r") mstatus | MIE_BIT)
+        val mstatus: int = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") mstatus | MIE_BIT.to_int())
     }
 }
 
@@ -56,7 +56,7 @@ pub fun putc(c: u8) {
 
 pub fun puts(s: str) {
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         putc(str.byte(s, i))
         i = i + 1
@@ -66,7 +66,7 @@ pub fun puts(s: str) {
 // `scause`, `mcause`, an exit code and a count are printed in decimal, so the
 // kernel has one decimal printer rather than a hex one per site. Zero is a
 // single digit and not an empty string, which is why it is handled first.
-pub fun put_dec(value: usize) {
+pub fun put_dec(value: int) {
     if value == 0 {
         putc(48)
         return
@@ -74,8 +74,8 @@ pub fun put_dec(value: usize) {
     var digits: [u8; 20] = [0; 20]
     val bytes: Ptr<[u8; 20]> = Ptr.from_ref(&digits)
     val p: Ptr<u8> = bytes.cast<u8>()
-    var n: usize = value
-    var i: usize = 0
+    var n: int = value
+    var i: int = 0
     while n > 0 {
         unsafe {
             p.offset(i.to_isize()).write_volatile((48 + n % 10).to_u8())
@@ -92,7 +92,7 @@ pub fun put_dec(value: usize) {
 // One whole line: a task's letter, a space, its counter and a newline, under
 // the lock. The deferred release runs when the block is left, so every exit
 // from this function re-enables interrupts.
-pub fun line(c: u8, n: usize) {
+pub fun line(c: u8, n: int) {
     lock_acquire()
     defer lock_release()
     putc(c)

@@ -90,8 +90,8 @@ pub fun range_step(a: i64, b: i64, step: i64) => Range = Range(lo = a, hi = b, s
 
 /* How many items an iterator still holds, measured by draining it. */
 /// The number of items the iterator yields, counted by draining it.
-pub fun count<I: Iterator>(it: move I) => usize {
-    var total: usize = 0
+pub fun count<I: Iterator>(it: move I) => int {
+    var total: int = 0
     // A parameter is an immutable binding, and `for` borrows the iterator it
     // walks, so an owned one is bound to a `var` first. (A `var` local or a
     // temporary needs no such step.)
@@ -235,7 +235,7 @@ pub datac TakeIter<I, T>(
     /// The wrapped iterator.
     var inner: I,
     /// How many more items may be yielded.
-    var left: usize,
+    var left: int,
 )
 
 /// Yields the next item of the wrapped iterator, until `left` items have been yielded.
@@ -249,7 +249,7 @@ fun mut TakeIter<I, T>.next() => option.Option<T> {
 
 /* At most the first `n` items. */
 /// At most the first `n` items of `it`.
-pub fun take<I: Iterator>(it: move I, n: usize) => TakeIter<I, I::Item> {
+pub fun take<I: Iterator>(it: move I, n: int) => TakeIter<I, I::Item> {
     return TakeIter(inner = it, left = n)
 }
 
@@ -258,7 +258,7 @@ pub datac SkipIter<I, T>(
     /// The wrapped iterator.
     var inner: I,
     /// How many more items are still to be skipped.
-    var left: usize,
+    var left: int,
 )
 
 /// Skips the items still to be skipped, then yields the next item of the wrapped iterator.
@@ -278,7 +278,7 @@ fun mut SkipIter<I, T>.next() => option.Option<T> {
 
 /* The items after the first `n`. */
 /// The items of `it` after the first `n`.
-pub fun skip<I: Iterator>(it: move I, n: usize) => SkipIter<I, I::Item> {
+pub fun skip<I: Iterator>(it: move I, n: int) => SkipIter<I, I::Item> {
     return SkipIter(inner = it, left = n)
 }
 
@@ -287,11 +287,11 @@ pub datac EnumerateIter<I, T>(
     /// The wrapped iterator.
     var inner: I,
     /// The position of the next item, counting from 0.
-    var index: usize,
+    var index: int,
 )
 
 /// Yields the next item of the wrapped iterator paired with its position.
-fun mut EnumerateIter<I, T>.next() => option.Option<(usize, T)> {
+fun mut EnumerateIter<I, T>.next() => option.Option<(int, T)> {
     val item = self.inner.next()
     return when item {
         Some(x) -> {

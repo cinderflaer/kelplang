@@ -14,7 +14,7 @@ fun main() {
     // buffered reader with `io.read_line` above, so nothing is skipped.
     val rest = io.read_lines()
     print(rest.len())
-    var i: usize = 0
+    var i: int = 0
     while i < rest.len() {
         io.print(rest.get(i).as_str())
         i = i + 1

@@ -73,7 +73,7 @@ fun main() {
     // check that costs one syscall and catches the class of bug where a
     // download "succeeds" with a truncated file.
     //
-    // `fs.size` is `u64` and `Bytes.len` is `usize`, and there is no implicit
+    // `fs.size` is `u64` and `Bytes.len` is `int`, and there is no implicit
     // numeric conversion in Kelp, so the comparison needs the `to_u64`, widening,
     // therefore exact.
     val on_disk = fs.size(out.as_str())

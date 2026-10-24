@@ -23,7 +23,7 @@ datac Cell(val v: i64)
 
 fun main() {
     val n = size_arg(500000)
-    var xs: List<Box<Cell>> = List.with_capacity(n.to_usize())
+    var xs: List<Box<Cell>> = List.with_capacity(n.to_int())
     var i: i64 = 0
     while i < n {
         xs.push(Box.of(Cell(v = i)))
@@ -33,7 +33,7 @@ fun main() {
     while round <= 400 {
         var k: i64 = round % 4
         while k < n {
-            xs.set(k.to_usize(), Box.of(Cell(v = k * round)))
+            xs.set(k.to_int(), Box.of(Cell(v = k * round)))
             k = k + 4
         }
         round = round + 1
@@ -41,7 +41,7 @@ fun main() {
     var sum: i64 = 0
     var r: i64 = 0
     while r < n {
-        sum = sum + xs.get(r.to_usize()).get().v
+        sum = sum + xs.get(r.to_int()).get().v
         r = r + 1
     }
     print("heap-pressure $n $sum")

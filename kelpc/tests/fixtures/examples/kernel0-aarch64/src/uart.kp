@@ -28,7 +28,7 @@ pub fun putc(c: u8) {
 
 pub fun puts(s: str) {
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         putc(str.byte(s, i))
         i = i + 1

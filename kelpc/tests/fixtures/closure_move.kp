@@ -8,7 +8,7 @@
 // environment" a verified claim rather than an argument.
 fun early(stop: bool) => i32 {
     val payload = String.from_str("payload")
-    val size = fun() => usize = payload.len()
+    val size = fun() => int = payload.len()
     if stop {
         return size().to_i32()
     }
@@ -19,7 +19,7 @@ fun main() {
     // End of the block: the closure and its environment are dropped at `}`.
     {
         val first = String.from_str("first")
-        val f = fun() => usize = first.len()
+        val f = fun() => int = first.len()
         print(f())
     }
 

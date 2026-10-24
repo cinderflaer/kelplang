@@ -13,6 +13,6 @@ fun main() {
     var words: List<String> = List.empty()
     words.push(String.from_str(s = "a"))
     words.push(String.from_str(s = "bcd"))
-    val zu: usize = 0
-    print(iter.fold(iter.into_iter(words), zu, fun(a: &usize, s: &String) => usize = a + s.len()))
+    val zu: int = 0
+    print(iter.fold(iter.into_iter(words), zu, fun(a: &int, s: &String) => int = a + s.len()))
 }

@@ -5,6 +5,6 @@
 impl "std/str"
 
 fun main(s: str) {
-    val f = fun() => usize = str.len(s)
+    val f = fun() => int = str.len(s)
     print(f())
 }

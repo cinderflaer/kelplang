@@ -22,11 +22,11 @@ pub const REPLACEMENT: i32 = 0xFFFD
 fun is_cont(b: u8) => bool = b >= 0x80 && b <= 0xBF
 
 // `(len << 32) | codepoint` for the unit starting at byte `i` (which must be inside the string).
-pub fun decode(s: str, i: usize) => i64 {
+pub fun decode(s: str, i: int) => i64 {
     val n = str.len(s)
     val b0 = str.byte(s, i).to_i64()
     if b0 < 0x80 { return (1 << 32) | b0 }
-    var need: usize = 0
+    var need: int = 0
     var min: i64 = 0
     var cp: i64 = 0
     if b0 >= 0xC2 && b0 <= 0xDF {
@@ -44,7 +44,7 @@ pub fun decode(s: str, i: usize) => i64 {
     } else {
         return (1 << 32) | REPLACEMENT.to_i64()
     }
-    var k: usize = 0
+    var k: int = 0
     while k < need && i + 1 + k < n && is_cont(str.byte(s, i + 1 + k)) {
         cp = (cp << 6) | (str.byte(s, i + 1 + k).to_i64() & 0x3F)
         k += 1
@@ -57,14 +57,14 @@ pub fun decode(s: str, i: usize) => i64 {
     return (len << 32) | cp
 }
 
-pub fun unit_len(r: i64) => usize = (r >> 32).to_usize()
+pub fun unit_len(r: i64) => int = (r >> 32).to_int()
 
 pub fun unit_cp(r: i64) => i32 = (r & 0xFFFFFFFF).to_i32()
 
 // The number of units (code points, each malformed run counting once) in the whole string.
 pub fun count(s: str) => i32 {
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     var c: i32 = 0
     while i < n {
         i += unit_len(decode(s, i))
@@ -74,9 +74,9 @@ pub fun count(s: str) => i32 {
 }
 
 // The number of units that start before byte offset `upto`.
-pub fun count_before(s: str, upto: usize) => i32 {
+pub fun count_before(s: str, upto: int) => i32 {
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     var c: i32 = 0
     while i < n && i < upto {
         i += unit_len(decode(s, i))
@@ -86,17 +86,17 @@ pub fun count_before(s: str, upto: usize) => i32 {
 }
 
 // The byte offset just after the unit that starts at `i` (or `i` itself at the end of the string).
-pub fun next_boundary(s: str, i: usize) => usize {
+pub fun next_boundary(s: str, i: int) => int {
     if i >= str.len(s) { return str.len(s) }
     return i + unit_len(decode(s, i))
 }
 
 // The start of the unit that ends at or before `i`: the largest unit boundary strictly below `i`
 // (0 when there is none). Units are defined by scanning from the start, so this scans from there too.
-pub fun prev_boundary(s: str, i: usize) => usize {
+pub fun prev_boundary(s: str, i: int) => int {
     val n = str.len(s)
-    var at: usize = 0
-    var last: usize = 0
+    var at: int = 0
+    var last: int = 0
     while at < n && at < i {
         last = at
         at += unit_len(decode(s, at))
@@ -105,9 +105,9 @@ pub fun prev_boundary(s: str, i: usize) => usize {
 }
 
 // The largest unit boundary at or below `i`: a caret that sits inside a unit snaps to its start.
-pub fun snap_boundary(s: str, i: usize) => usize {
+pub fun snap_boundary(s: str, i: int) => int {
     val n = str.len(s)
-    var at: usize = 0
+    var at: int = 0
     while at < n {
         val nx = at + unit_len(decode(s, at))
         if nx > i { return at }

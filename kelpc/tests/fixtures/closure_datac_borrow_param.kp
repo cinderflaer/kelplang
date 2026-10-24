@@ -8,7 +8,7 @@
 datac Item(val n: i64)
 
 fun each(items: &List<Item>, f: closure(&Item)) {
-    var i: usize = 0
+    var i: int = 0
     while i < items.len() {
         f(items.get(i))
         i += 1

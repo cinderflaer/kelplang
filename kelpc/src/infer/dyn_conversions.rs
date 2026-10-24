@@ -750,12 +750,12 @@ pub(crate) fn check_container_associated(
                     span,
                 });
             }
-            let cap = check_expr(&args[0].value, ctx, Some(&Ty::Usize))?;
-            if !matches!(cap.ty, Ty::Usize | Ty::I64 | Ty::Int) {
+            let cap = check_expr(&args[0].value, ctx, Some(&Ty::Int))?;
+            if !matches!(cap.ty, Ty::Int) {
                 return Err(TypeError {
                     help: None,
                     message: format!(
-                        "'{container}.with_capacity' needs a 'usize' or 'i64' count, found '{}'",
+                        "'{container}.with_capacity' needs an 'int' count, found '{}'",
                         cap.ty.display()
                     ),
                     span: args[0].value.span(),

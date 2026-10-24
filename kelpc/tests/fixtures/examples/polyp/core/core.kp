@@ -187,12 +187,12 @@ pub fun copy_deps(d: &Deps) => Deps {
 
 fun Deps.eq(other: &Deps) => bool {
     if ints.len() != other.ints.len() || strs.len() != other.strs.len() { return false }
-    var i: usize = 0
+    var i: int = 0
     while i < ints.len() {
         if ints.get(i) != other.ints.get(i) { return false }
         i += 1
     }
-    var j: usize = 0
+    var j: int = 0
     while j < strs.len() {
         if !str.eq(strs.get(j).as_str(), other.strs.get(j).as_str()) { return false }
         j += 1
@@ -283,7 +283,7 @@ pub fun key_is_none(k: &Key) => bool = when k {
 pub fun hash_str(s: str) => u64 {
     var h: u64 = 14695981039346656037
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         h = (h ^ str.byte(s, i).to_u64()) * 1099511628211
         i += 1
@@ -321,10 +321,10 @@ fun duplicate_message(k: &Key) => String = when k {
 // Panics, naming the key, when two children of one container carry it. Run before any widget is
 // touched, so a refused tree builds nothing.
 fun check_duplicate_keys<M>(children: List<Child<M>>) {
-    var i: usize = 0
+    var i: int = 0
     while i < children.len() {
         if !key_is_none(children.get(i).key.get()) {
-            var j: usize = i + 1
+            var j: int = i + 1
             while j < children.len() {
                 if key_eq(children.get(i).key.get(), children.get(j).key.get()) {
                     panic(duplicate_message(children.get(i).key.get()))
@@ -849,7 +849,7 @@ fun opts_eq(a: &Opts, b: &Opts) => bool {
     }
     if !anim.same(&a.anim_ox, &b.anim_ox) || !anim.same(&a.anim_oy, &b.anim_oy) { return false }
     if a.classes.len() != b.classes.len() { return false }
-    var i: usize = 0
+    var i: int = 0
     while i < a.classes.len() {
         if !str.eq(a.classes.get(i).as_str(), b.classes.get(i).as_str()) { return false }
         i += 1
@@ -908,7 +908,7 @@ fun node_props_eq<M>(a: &Node<M>, b: &Node<M>) => bool = when a {
 
 // The first unused old index with this key, or -1.
 fun find_key<M>(old: List<Child<M>>, used: List<bool>, key: &Key) => i32 {
-    var j: usize = 0
+    var j: int = 0
     while j < old.len() {
         if !used.get(j) && key_eq(old.get(j).key.get(), key) { return j.to_i32() }
         j += 1
@@ -970,7 +970,7 @@ pub fun new_memo_store<M>() => MemoStore<M> = MemoStore<M>(entries = List.empty(
 // segments by key (ignoring the index), unkeyed ones by index.
 fun ident_eq(a: &Path, b: &Path) => bool {
     if a.segs.len() != b.segs.len() { return false }
-    var i: usize = 0
+    var i: int = 0
     while i < a.segs.len() {
         if !seg_ident_eq(a.segs.get(i), b.segs.get(i)) { return false }
         i += 1
@@ -992,7 +992,7 @@ fun seg_ident_eq(a: &Seg, b: &Seg) => bool = when a {
 // Whether `prefix` is `p` or one of its ancestors.
 fun ident_prefix(prefix: &Path, p: &Path) => bool {
     if prefix.segs.len() > p.segs.len() { return false }
-    var i: usize = 0
+    var i: int = 0
     while i < prefix.segs.len() {
         if !seg_ident_eq(prefix.segs.get(i), p.segs.get(i)) { return false }
         i += 1
@@ -1002,9 +1002,9 @@ fun ident_prefix(prefix: &Path, p: &Path) => bool {
 
 fun mut MemoStore<M>.find(path: &Path) => i32 {
     val n = entries.len()
-    var k: usize = 0
+    var k: int = 0
     while k < n {
-        val j = (hint.to_usize() + k) % n
+        val j = (hint.to_int() + k) % n
         if ident_eq(entries.get(j).ident, path) {
             hint = j.to_i32() + 1
             return j.to_i32()
@@ -1016,7 +1016,7 @@ fun mut MemoStore<M>.find(path: &Path) => i32 {
 
 // Forget the memo at `path` and every memo nested below it.
 fun mut MemoStore<M>.drop_under(path: &Path) {
-    var i: usize = entries.len()
+    var i: int = entries.len()
     while i > 0 {
         i -= 1
         val inside = ident_prefix(path, entries.get(i).ident)
@@ -1043,7 +1043,7 @@ fun memo_build<M>(path: &Path, deps: &Deps, build: fun (&Deps) => List<Child<M>>
 fun memo_match<M>(path: &Path, deps: &Deps, build: fun (&Deps) => List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
     val at = store.find(path)
     if at >= 0 {
-        val same = deps.eq(&store.entries.get(at.to_usize()).deps)
+        val same = deps.eq(&store.entries.get(at.to_int()).deps)
         if same {
             store.hits += 1
             return
@@ -1061,11 +1061,11 @@ fun memo_match<M>(path: &Path, deps: &Deps, build: fun (&Deps) => List<Child<M>>
     store.view_calls += 1
     val body = run_build(deps, build)
     val bp = with_seg(path, Seg.Index(i = 0))
-    var e = store.entries.remove(at.to_usize())
+    var e = store.entries.remove(at.to_int())
     diff_node(bp, e.body.get(), &body, out, store)
     e.body.set(body)
     e.deps = copy_deps(deps)
-    var back = at.to_usize()
+    var back = at.to_int()
     if back > store.entries.len() {
         back = store.entries.len()
     }
@@ -1145,13 +1145,13 @@ fun diff_matched<M>(path: &Path, old: &Child<M>, new: &Child<M>, out: mut List<P
 fun diff_children<M>(parent: &Path, old: List<Child<M>>, new: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
     var unmatched_key = false
     var used: List<bool> = List.empty()
-    var u: usize = 0
+    var u: int = 0
     while u < old.len() {
         used.push(false)
         u += 1
     }
     var matches: List<i32> = List.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < new.len() {
         var m: i32 = -1
         if !key_is_none(new.get(i).key.get()) {
@@ -1163,14 +1163,14 @@ fun diff_children<M>(parent: &Path, old: List<Child<M>>, new: List<Child<M>>, ou
                 m = find_key(old, used, new.get(i).key.get())
             }
             // A memo and a plain node under one key are different widgets: no match.
-            if m >= 0 && is_memo(old.get(m.to_usize()).node.get()) != is_memo(new.get(i).node.get()) {
+            if m >= 0 && is_memo(old.get(m.to_int()).node.get()) != is_memo(new.get(i).node.get()) {
                 m = -1
             }
         } else if i < old.len() && !used.get(i) && key_is_none(old.get(i).key.get()) && kind_of_node(new.get(i).node.get()) == kind_of_node(old.get(i).node.get()) {
             m = i.to_i32()
         }
         if m >= 0 {
-            used.set(m.to_usize(), true)
+            used.set(m.to_int(), true)
         } else if !key_is_none(new.get(i).key.get()) {
             unmatched_key = true
         }
@@ -1186,12 +1186,12 @@ fun diff_children<M>(parent: &Path, old: List<Child<M>>, new: List<Child<M>>, ou
     }
 
     // Updates, in new order, each followed by its subtree.
-    var i2: usize = 0
+    var i2: int = 0
     while i2 < new.len() {
         val m = matches.get(i2)
         if m >= 0 {
             val p = with_seg(parent, seg_for(new.get(i2).key.get(), i2.to_i32()))
-            diff_matched(p, old.get(m.to_usize()), new.get(i2), out, store)
+            diff_matched(p, old.get(m.to_int()), new.get(i2), out, store)
         }
         i2 += 1
     }
@@ -1199,8 +1199,8 @@ fun diff_children<M>(parent: &Path, old: List<Child<M>>, new: List<Child<M>>, ou
     // Removals, highest old index first, so a lower index is still the index it was.
     var j: i32 = old.len().to_i32() - 1
     while j >= 0 {
-        if !used.get(j.to_usize()) {
-            val gone = with_seg(parent, seg_for(old.get(j.to_usize()).key.get(), j))
+        if !used.get(j.to_int()) {
+            val gone = with_seg(parent, seg_for(old.get(j.to_int()).key.get(), j))
             if !store.entries.is_empty() {
                 store.drop_under(gone)
             }
@@ -1210,7 +1210,7 @@ fun diff_children<M>(parent: &Path, old: List<Child<M>>, new: List<Child<M>>, ou
     }
 
     // Creations, in new order.
-    var k: usize = 0
+    var k: int = 0
     while k < new.len() {
         if matches.get(k) < 0 {
             val p = with_seg(parent, seg_for(new.get(k).key.get(), k.to_i32()))
@@ -1244,40 +1244,40 @@ fun diff_children<M>(parent: &Path, old: List<Child<M>>, new: List<Child<M>>, ou
 // where its path says). Then for each target `t` in turn, if the child at `t` is not `new[t]`, that
 // child moves to `t`. Positions before `t` are final by then, so each move is one step, whatever
 // the old order was.
-fun diff_moves<M>(parent: &Path, new: List<Child<M>>, matches: List<i32>, old_len: usize, used: List<bool>, out: mut List<Patch>) {
+fun diff_moves<M>(parent: &Path, new: List<Child<M>>, matches: List<i32>, old_len: int, used: List<bool>, out: mut List<Patch>) {
     var old_to_new: List<i32> = List.empty()
-    var u: usize = 0
+    var u: int = 0
     while u < old_len {
         old_to_new.push(-1)
         u += 1
     }
-    var i: usize = 0
+    var i: int = 0
     while i < new.len() {
         val m = matches.get(i)
         if m >= 0 {
-            old_to_new.set(m.to_usize(), i.to_i32())
+            old_to_new.set(m.to_int(), i.to_i32())
         }
         i += 1
     }
     var order: List<i32> = List.empty()
-    var o: usize = 0
+    var o: int = 0
     while o < old_len {
         if used.get(o) {
             order.push(old_to_new.get(o))
         }
         o += 1
     }
-    var k: usize = 0
+    var k: int = 0
     while k < new.len() {
         if matches.get(k) < 0 {
             order.insert(k, k.to_i32())
         }
         k += 1
     }
-    var t: usize = 0
+    var t: int = 0
     while t < new.len() {
         if order.get(t) != t.to_i32() {
-            var p: usize = t + 1
+            var p: int = t + 1
             while order.get(p) != t.to_i32() {
                 p += 1
             }
@@ -1303,7 +1303,7 @@ fun create_subtree<M>(path: &Path, node: &Node<M>, out: mut List<Patch>, store: 
 
 fun create_children<M>(parent: &Path, children: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
     check_duplicate_keys(children)
-    var i: usize = 0
+    var i: int = 0
     while i < children.len() {
         val p = with_seg(parent, seg_for(children.get(i).key.get(), i.to_i32()))
         out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(children.get(i).node.get()), props = child_props(children.get(i))))
@@ -1362,7 +1362,7 @@ pub fun take_message<B: Backend, M>(root: move Node<M>, path: &Path, backend: &B
     return take_at(root, path, 0, backend, id)
 }
 
-fun take_at<B: Backend, M>(node: move Node<M>, path: &Path, depth: usize, backend: &B, id: i32) => option.Option<M> {
+fun take_at<B: Backend, M>(node: move Node<M>, path: &Path, depth: int, backend: &B, id: i32) => option.Option<M> {
     if depth >= path.segs.len() {
         return when node {
             Button(_, msg) -> option.Option.Some(value = unbox(msg))
@@ -1383,7 +1383,7 @@ fun take_at<B: Backend, M>(node: move Node<M>, path: &Path, depth: usize, backen
 // A click inside a memoised subtree: the placeholder holds no widgets, so the subtree is built here
 // (not counted, and the store is not touched) and the rest of the path is followed into it. The
 // wrapper column's only child is segment `Index(0)`.
-fun take_memo<B: Backend, M>(deps: &Deps, build: fun (&Deps) => List<Child<M>>, path: &Path, depth: usize, backend: &B, id: i32) => option.Option<M> {
+fun take_memo<B: Backend, M>(deps: &Deps, build: fun (&Deps) => List<Child<M>>, path: &Path, depth: int, backend: &B, id: i32) => option.Option<M> {
     val want = path.segs.get(depth)
     val ok = when want {
         Index(i) -> i == 0
@@ -1394,10 +1394,10 @@ fun take_memo<B: Backend, M>(deps: &Deps, build: fun (&Deps) => List<Child<M>>, 
     return take_at(body, path, depth + 1, backend, id)
 }
 
-fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth: usize, backend: &B, id: i32) => option.Option<M> {
+fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth: int, backend: &B, id: i32) => option.Option<M> {
     val want = path.segs.get(depth)
     var rest = children
-    var i: usize = 0
+    var i: int = 0
     while !rest.is_empty() {
         val c = rest.remove(0)
         if child_at(want, c.key.get(), i) {
@@ -1408,7 +1408,7 @@ fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth:
     return option.Option.None
 }
 
-pub fun child_at(seg: &Seg, key: &Key, index: usize) => bool = when seg {
+pub fun child_at(seg: &Seg, key: &Key, index: int) => bool = when seg {
     Index(i) -> key_is_none(key) && index.to_i32() == i
     Keyed(_, k) -> key_eq(k.get(), key)
 }
@@ -1584,7 +1584,7 @@ pub fun next_wake_us(t: &Timers) => i64 {
 }
 
 // Reconcile slot `i` with the sub the state now asks for, and say whether it fires at `now`.
-fun mut Timers.step(i: usize, kind: i32, ms: i32, now: u64) => bool {
+fun mut Timers.step(i: int, kind: i32, ms: i32, now: u64) => bool {
     var period_ms = ms
     if period_ms < 1 {
         period_ms = 1
@@ -1620,7 +1620,7 @@ fun mut Timers.step(i: usize, kind: i32, ms: i32, now: u64) => bool {
 pub fun collect_due<M>(timers: mut Timers, subs: move List<Sub<M>>, now: u64) => List<M> {
     var out: List<M> = List.empty()
     var rest = subs
-    var i: usize = 0
+    var i: int = 0
     while !rest.is_empty() {
         val s = rest.remove(0)
         when s {
@@ -1764,8 +1764,8 @@ fun snapshot<B: Backend>(backend: &B, before: option.Option<i32>) {
 fun entry_at<B: Backend>(backend: &B, index: i32) => option.Option<i32> {
     if index < 0 { return option.Option.None }
     val ids = backend.entry_ids()
-    if index.to_usize() >= ids.len() { return option.Option.None }
-    return option.Option.Some(value = ids.get(index.to_usize()))
+    if index.to_int() >= ids.len() { return option.Option.None }
+    return option.Option.Some(value = ids.get(index.to_int()))
 }
 
 pub fun stats() => Stats = Stats(

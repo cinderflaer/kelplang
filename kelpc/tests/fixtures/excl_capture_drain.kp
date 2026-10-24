@@ -9,7 +9,7 @@ enum Msg {
 datac Queue(var pending: List<i32>)
 
 fun mut Queue.drain(f: scoped fun(Msg)) {
-    var i: usize = 0
+    var i: int = 0
     while i < pending.len() {
         val n = pending.get(i)
         if n == 0 { f(Msg.Inc) } else { f(Msg.Add(n = n)) }
@@ -45,7 +45,7 @@ fun main() {
         update(m, msg)
         mark(m)
     }
-    var i: usize = 0
+    var i: int = 0
     while i < m.marks.len() {
         print(m.marks.get(i))
         i += 1

@@ -20,6 +20,6 @@ fun main() {
 
     print(size_of<i32>())
     print(size_of<u64>())
-    print(size_of<usize>())
+    print(size_of<int>())
     print(size_of<Ptr<u8>>())
 }

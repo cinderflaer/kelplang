@@ -16,7 +16,7 @@ fun path_of(dir: &str, name: &str) => String {
 fun clear(dir: &str) {
     if fs.exists(dir) {
         val entries = fs.list(dir)
-        var i: usize = 0
+        var i: int = 0
         while i < entries.len() {
             val p = path_of(dir, entries.get(i).as_str())
             if fs.is_dir(p) {
@@ -41,7 +41,7 @@ fun main() {
     val entries = fs.list(dir)
     print(entries.len())
     print(str.join(entries, sep = ","))
-    var i: usize = 0
+    var i: int = 0
     while i < entries.len() {
         print!(entries.get(i).as_str())
         print!(" ")

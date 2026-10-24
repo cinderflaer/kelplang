@@ -37,7 +37,7 @@ fun main() {
     g(7)
 
     // A literal's parameters take the same qualifiers a declaration's do.
-    val h = fun(s: move String) => usize = s.len()
+    val h = fun(s: move String) => int = s.len()
     print(h(String.from_str("abcd")))
 
     // A literal inside a literal: each becomes its own function.

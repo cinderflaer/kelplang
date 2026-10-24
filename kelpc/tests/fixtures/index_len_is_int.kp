@@ -3,7 +3,9 @@
 impl "std/str"
 
 fun main() {
-    var xs: List<i32> = List.of(10, 20, 30)
+    var xs: List<i32> = List.of(10)
+    xs.push(20)
+    xs.push(30)
     val n: int = xs.len()
     val i: int = 1
     print(n)

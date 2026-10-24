@@ -19,7 +19,7 @@ fun push_uint(out: mut Bytes, n: i64) {
         return
     }
     var buf: [u8; 20] = [0; 20]
-    var k: usize = 0
+    var k: int = 0
     var v: i64 = n
     while v > 0 {
         buf.set(k, (48 + (v % 10).to_u8()))

@@ -4,7 +4,7 @@
 pub datac Item(val n: i64)
 
 pub fun each(items: &List<Item>, f: closure(&Item)) {
-    var i: usize = 0
+    var i: int = 0
     while i < items.len() {
         f(items.get(i))
         i += 1
@@ -12,7 +12,7 @@ pub fun each(items: &List<Item>, f: closure(&Item)) {
 }
 
 pub fun any_big(items: &List<Item>, f: closure(&Item) => bool) => bool {
-    var i: usize = 0
+    var i: int = 0
     while i < items.len() {
         if f(items.get(i)) {
             return true

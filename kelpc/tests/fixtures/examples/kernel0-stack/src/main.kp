@@ -89,7 +89,7 @@ fun recurse_small(depth: u64, limit: u64) => u64 {
 // at a time and faults at the guard.
 fun recurse_big(depth: u64, limit: u64) => u64 {
     var buf: [u8; 16384] = [(depth % 256).to_u8(); 16384]
-    var pad: u64 = buf.get((depth % 16384).to_usize()).to_u64()
+    var pad: u64 = buf.get((depth % 16384).to_int()).to_u64()
     if depth >= limit { return pad }
     val next: u64 = recurse_big(depth + 1, limit)
     sink(next)

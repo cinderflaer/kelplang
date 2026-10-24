@@ -151,18 +151,18 @@ pub(crate) fn list_sig(key: &str, elem: &Ty, sortable: bool, clonable: bool) -> 
     let p = |n: &str, t: Ty| (n.to_string(), t);
     let elem_ref = Ty::Ref { mutable: false, inner: Box::new(elem.clone()) };
     Some(match key {
-        "List#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Usize },
+        "List#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Int },
         "List#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
         "List#push" => FnSig {
             params: vec![p("self", exclusive), p("v", elem.clone())],
             ret: Ty::Unit,
         },
         "List#get" => FnSig {
-            params: vec![p("self", shared), p("i", Ty::Usize)],
+            params: vec![p("self", shared), p("i", Ty::Int)],
             ret: if elem.is_copy() { elem.clone() } else { elem_ref },
         },
         "List#set" => FnSig {
-            params: vec![p("self", exclusive), p("i", Ty::Usize), p("v", elem.clone())],
+            params: vec![p("self", exclusive), p("i", Ty::Int), p("v", elem.clone())],
             ret: Ty::Unit,
         },
         "List#pop" => FnSig {
@@ -184,7 +184,7 @@ pub(crate) fn list_sig(key: &str, elem: &Ty, sortable: bool, clonable: bool) -> 
             ret: Ty::Bool,
         },
         "List#slice" if clonable => FnSig {
-            params: vec![p("self", shared), p("from", Ty::Usize), p("to", Ty::Usize)],
+            params: vec![p("self", shared), p("from", Ty::Int), p("to", Ty::Int)],
             ret: list.clone(),
         },
         // `clone()` under the name a caller reaches for first: the copy
@@ -195,11 +195,11 @@ pub(crate) fn list_sig(key: &str, elem: &Ty, sortable: bool, clonable: bool) -> 
             FnSig { params: vec![p("self", shared)], ret: list.clone() }
         }
         "List#insert" => FnSig {
-            params: vec![p("self", exclusive), p("i", Ty::Usize), p("v", elem.clone())],
+            params: vec![p("self", exclusive), p("i", Ty::Int), p("v", elem.clone())],
             ret: Ty::Unit,
         },
         "List#remove" => FnSig {
-            params: vec![p("self", exclusive), p("i", Ty::Usize)],
+            params: vec![p("self", exclusive), p("i", Ty::Int)],
             ret: elem.clone(),
         },
         _ => return None,
@@ -229,7 +229,7 @@ pub(crate) fn map_sig(key: &str, map_key: &Ty, value: &Ty, clonable: bool) -> Op
     // key is passed by value.
     let key_param = map_key_param(map_key);
     Some(match key {
-        "Map#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Usize },
+        "Map#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Int },
         "Map#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
         "Map#has" => FnSig {
             params: vec![p("self", shared), p("key", key_param.clone())],

@@ -14,9 +14,9 @@ fun compile_or_die(pat: &str) => regex.Regex {
     panic("bad pattern in the fixture")
 }
 
-fun repeated(unit: &str, times: usize, tail: &str) => String {
+fun repeated(unit: &str, times: int, tail: &str) => String {
     var s = String.with_capacity(str.len(unit) * times + str.len(tail))
-    var i: usize = 0
+    var i: int = 0
     while i < times {
         s.push_str(unit)
         i += 1

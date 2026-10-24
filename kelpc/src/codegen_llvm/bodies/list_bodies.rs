@@ -138,10 +138,19 @@ impl<'a> Gen<'a> {
         // sized once and the list grows past it like any other ---
         {
             let (f, _) = self.start(&format!("{base}__with_capacity"), "entry")?;
+            let n = f.get_param(0);
+            let zero = self.ctx.const_int(self.ctx.i64(), 0, false);
+            let neg = self.builder.build_icmp(IntCmp::Slt, n, zero, "neg");
+            let bad = self.block(f, "negative");
+            let ok = self.block(f, "counted");
+            self.builder.build_cond_br(neg, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("List.with_capacity: negative count")?;
+            self.builder.position_at_end(ok);
             let l = self.builder.build_alloca(list_ty, "l");
             self.st(self.ctx.const_null(list_ty), l);
             let (reserve, rty) = self.cfn(&format!("{base}__reserve"))?;
-            self.call(reserve, rty, &[l, f.get_param(0)], "");
+            self.call(reserve, rty, &[l, n], "");
             let out = self.ld(list_ty, l, "wc");
             self.builder.build_ret(out);
         }

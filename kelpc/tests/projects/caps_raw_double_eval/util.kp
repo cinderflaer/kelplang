@@ -13,8 +13,8 @@ fun mk() => str {
     return "/etc/passwd"
 }
 
-pub fun inside_once() => usize = fs.read_raw(mk()).len()
+pub fun inside_once() => int = fs.read_raw(mk()).len()
 
 // The control: out of the grant on every evaluation, so the check denies and
 // the denial names the primitive's own call site.
-pub fun outside() => usize = fs.read_raw("/etc/passwd").len()
+pub fun outside() => int = fs.read_raw("/etc/passwd").len()

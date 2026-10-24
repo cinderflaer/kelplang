@@ -18,7 +18,7 @@ fun below(n: u64) => u64 {
 }
 
 /// `n` fresh random bytes.
-fun bytes(n: usize) => Bytes {
+fun bytes(n: int) => Bytes {
     var out = mem.alloc(n)
     fill_raw(out)
     return out

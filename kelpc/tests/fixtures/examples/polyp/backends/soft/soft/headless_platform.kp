@@ -14,7 +14,7 @@ impl "deps/polyp/backends/soft/soft/fb"
 impl "deps/polyp/backends/soft/soft/platform"
 impl "std/option"
 
-const MAX_PRESENTED: usize = 32
+const MAX_PRESENTED: int = 32
 
 // The event sits in a `Box`: a managed datac cannot hold an enum inline, and a Box payload is
 // the form the collector describes.
@@ -34,7 +34,7 @@ pub datac HeadlessPlatform(
     var tick_due: bool,
     var frames: i32,
     var presented: [fb.Rect; MAX_PRESENTED],
-    var presented_len: usize,
+    var presented_len: int,
     var last_checksum: u64,
 )
 
@@ -47,9 +47,9 @@ pub fun new(width: i32, height: i32) => HeadlessPlatform {
     if h < 1 {
         h = 1
     }
-    val count = (w * h).to_usize()
-    val p: Ptr<u32> = unsafe { Ptr.alloc<u32>(count) }
-    var i: usize = 0
+    val count = (w * h).to_int()
+    val p: Ptr<u32> = unsafe { Ptr.alloc<u32>(count.to_usize()) }
+    var i: int = 0
     while i < count {
         unsafe { p.offset(i.to_isize()).write(0) }
         i += 1
@@ -106,9 +106,9 @@ fun HeadlessPlatform.checksum() => u64 = fb.checksum(f)
 
 fun HeadlessPlatform.frame_count() => i32 = frames
 
-fun HeadlessPlatform.presented_count() => usize = presented_len
+fun HeadlessPlatform.presented_count() => int = presented_len
 
-fun HeadlessPlatform.presented_at(i: usize) => fb.Rect {
+fun HeadlessPlatform.presented_at(i: int) => fb.Rect {
     val r = presented.get(i)
     return fb.Rect(x = r.x, y = r.y, w = r.w, h = r.h)
 }
@@ -140,7 +140,7 @@ fun checksum_of(f: fb.Fb) => u64 = fb.checksum(f)
 
 impl platform.Platform for HeadlessPlatform {
     fun mut Self.present(fb: fb.Fb, dirty: &damage.Damage) {
-        var i: usize = 0
+        var i: int = 0
         while i < dirty.count() && i < MAX_PRESENTED {
             presented.set(i, dirty.at(i))
             i += 1
@@ -165,7 +165,7 @@ impl platform.Platform for HeadlessPlatform {
             return option.Option.Some(value = event.Event.Tick(now_us = time_us))
         }
         if cursor >= script.len().to_i32() { return option.Option.None }
-        val t = script.get(cursor.to_usize())
+        val t = script.get(cursor.to_int())
         if t.at > time_ms { return option.Option.None }
         cursor += 1
         return option.Option.Some(value = event.clone(t.ev.get()))

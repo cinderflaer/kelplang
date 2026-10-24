@@ -18,13 +18,13 @@ fun size_arg(default: i64) => i64 {
 
 fun main() {
     val n = size_arg(400)
-    val nu = n.to_usize()
+    val nu = n.to_int()
     var a: List<f64> = List.empty()
     var b: List<f64> = List.empty()
     var c: List<f64> = List.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < nu {
-        var j: usize = 0
+        var j: int = 0
         while j < nu {
             a.push(((i + j) % 7).to_f64() * 0.25)
             b.push(((i * 3 + j) % 5).to_f64() * 0.5)
@@ -35,10 +35,10 @@ fun main() {
     }
     i = 0
     while i < nu {
-        var j: usize = 0
+        var j: int = 0
         while j < nu {
             var s: f64 = 0.0
-            var k: usize = 0
+            var k: int = 0
             while k < nu {
                 s = s + a.get(i * nu + k) * b.get(k * nu + j)
                 k = k + 1
@@ -52,7 +52,7 @@ fun main() {
     var trace: f64 = 0.0
     i = 0
     while i < nu {
-        var j: usize = 0
+        var j: int = 0
         while j < nu {
             sum = sum + c.get(i * nu + j)
             j = j + 1

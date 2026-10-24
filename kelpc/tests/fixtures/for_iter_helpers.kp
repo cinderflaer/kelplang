@@ -8,6 +8,6 @@ fun main() {
     val xs = iter.collect_list(iter.range(0, 3))
     print(xs.len())
     for i in iter.range(0, 3) {
-        print(xs.get(i.to_usize()))
+        print(xs.get(i.to_int()))
     }
 }

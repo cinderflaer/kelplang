@@ -602,7 +602,7 @@ pub(crate) fn a_tls_handle_cannot_be_read_as_an_integer() {
     // with no `[extern.*]` section of its own.
     assert_rejected_with(
         "tests/fixtures/tls_handle_not_an_integer.kp",
-        "cannot assign value of type 'std.tls.TlsHandle' to 'n' declared as 'usize'",
+        "cannot assign value of type 'std.tls.TlsHandle' to 'n' declared as 'int'",
     );
 }
 

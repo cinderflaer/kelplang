@@ -54,7 +54,7 @@ fun main() {
     // count of a mixed string is the count of its digits.
     val text = "12x34"
     var value: i64 = 0
-    var i: usize = 0
+    var i: int = 0
     var digits: i64 = 0
     while i < str.len(text) {
         val c = str.byte(text, i)
@@ -78,9 +78,9 @@ fun main() {
     words.push("pear")
     words.push("apple")
     words.push("fig")
-    var a: usize = 1
+    var a: int = 1
     while a < words.len() {
-        var b: usize = a
+        var b: int = a
         var moved = true
         while b > 0 && moved {
             val left_text = String.from_str(words.get(b - 1).as_str())
@@ -100,7 +100,7 @@ fun main() {
         }
         a = a + 1
     }
-    var w: usize = 0
+    var w: int = 0
     while w < words.len() {
         print(words.get(w))
         w = w + 1

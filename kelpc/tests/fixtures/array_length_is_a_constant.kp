@@ -1,7 +1,7 @@
 // A-18/A-19: an array's length is part of its type, so it has to be a
 // compile-time constant. A `val` computed at runtime is not one, however
 // obviously constant the initializer looks here.
-fun slots() => usize = 3
+fun slots() => int = 3
 
 fun main() {
     val k = slots()

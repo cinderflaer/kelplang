@@ -180,7 +180,7 @@ fun main() {
         xs.set(1, (-13))
         print(xs.get(1))
         print(xs.pop())
-        var i: usize = 0
+        var i: int = 0
         var sum: i32 = 0
         while i < xs.len() {
             sum = sum + xs.get(i)
@@ -215,7 +215,7 @@ fun main() {
         val mid = fs.slice(0, 2)
         print(mid.get(0))
         print(mid.get(1))
-        var i: usize = 0
+        var i: int = 0
         var s = 0.0
         while i < fs.len() {
             s = s + fs.get(i)
@@ -244,7 +244,7 @@ fun main() {
         print(m.remove(35))
         print(m.len())
         val ks = m.keys()
-        var i: usize = 0
+        var i: int = 0
         while i < ks.len() {
             print(ks.get(i))
             i += 1
@@ -293,7 +293,7 @@ fun main() {
 
     {
         val s = String.from_str("yz")
-        val f = fun() => usize = s.len()
+        val f = fun() => int = s.len()
         print(f())
         val k: i32 = (-32)
         val g = fun(x: i32) => i32 = x + k
@@ -305,7 +305,7 @@ fun main() {
         var i: i32 = 0
         while i < 3 {
             val t = String.from_str("alpha")
-            val c = fun() => usize = t.len()
+            val c = fun() => int = t.len()
             print(c())
             i = i + 1
         }

@@ -2,7 +2,7 @@
 // datac construction. This constructor has no such owner and is refused.
 impl "std/str"
 
-datac Scanner(val text: View, var pos: usize)
+datac Scanner(val text: View, var pos: int)
 
 fun main() {
     val scanner = Scanner(text = "x".view(), pos = 0)

@@ -4,7 +4,7 @@
 datac State(var count: i32, var items: List<i32>)
 
 fun each(xs: &List<i32>, f: scoped fun(i32)) {
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         f(xs.get(i))
         i += 1

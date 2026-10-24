@@ -5,7 +5,7 @@
 // `kmain` prints `counter 3` through the UART and halts.
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 
-static mut COUNTER: usize = 0
+static mut COUNTER: int = 0
 static LABEL: [u8; 8] = [99, 111, 117, 110, 116, 101, 114, 32]
 const PANIC_MSG: [u8; 6] = [112, 97, 110, 105, 99, 10]
 
@@ -22,13 +22,13 @@ section(".text.boot") fun kmain() {
 
     val label: [u8; 8] = LABEL
     val bytes: Ptr<[u8; 8]> = Ptr.from_ref(&label)
-    uart.puts(bytes.cast<u8>(), label.len())
+    uart.puts(bytes.cast<u8>(), label.len().to_usize())
 
     // The counter's value plus `'0'`, one step per unit, so the digit comes
     // from the static rather than from a second literal.
-    val n: usize = unsafe { COUNTER }
+    val n: int = unsafe { COUNTER }
     var digit: u8 = 48
-    var k: usize = 0
+    var k: int = 0
     while k < n {
         digit = digit + 1
         k = k + 1
@@ -41,6 +41,6 @@ section(".text.boot") fun kmain() {
 fun kp_panic(_msg: str) {
     val msg: [u8; 6] = PANIC_MSG
     val bytes: Ptr<[u8; 6]> = Ptr.from_ref(&msg)
-    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.puts(bytes.cast<u8>(), msg.len().to_usize())
     uart.halt()
 }

@@ -23,7 +23,7 @@ fun quarter(n: i64) => result.Result<i64, String> {
 }
 
 fun find(xs: &List<String>, needle: &str) => option.Option<i64> {
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         if str.eq(xs.get(i = i).as_str(), needle) {
             return option.Option.Some(value = i.to_i64())

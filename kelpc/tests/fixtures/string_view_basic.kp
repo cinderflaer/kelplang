@@ -11,11 +11,11 @@
 impl "std/str"
 
 // A `View` parameter and a `View` return, both by value.
-fun head(text: View, n: usize) => View = text.slice(0, n)
+fun head(text: View, n: int) => View = text.slice(0, n)
 
-fun count_byte(text: View, want: u8) => usize {
-    var i: usize = 0
-    var n: usize = 0
+fun count_byte(text: View, want: u8) => int {
+    var i: int = 0
+    var n: int = 0
     while i < text.len() {
         if text.get(i) == want {
             n += 1

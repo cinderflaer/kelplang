@@ -1,10 +1,10 @@
 // Release goal 1: a `TlsStream`'s `handle` is the opaque `tls.TlsHandle`, not
-// the `usize` it used to be, so it cannot be read as an integer. Nothing here
+// the `int` it used to be, so it cannot be read as an integer. Nothing here
 // runs; the rejection is the point.
 impl "std/tls"
 
 fun probe(t: tls.TlsStream) {
-    val n: usize = t.handle
+    val n: int = t.handle
     print(n)
 }
 

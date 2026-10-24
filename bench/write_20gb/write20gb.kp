@@ -7,15 +7,15 @@ impl "std/fs"
 impl "std/mem"
 impl "std/time"
 
-const MIB: usize = 1048576
-const TOTAL: usize = 21474836480
+const MIB: int = 1048576
+const TOTAL: int = 21474836480
 
 fun main() {
     val path = "/mnt/bigdrive/kelp_bench_write20gb_kelp.bin"
     val chunk = mem.alloc(MIB)
 
     val work_start = time.now_mono_ns()
-    var written: usize = 0
+    var written: int = 0
     while written < TOTAL {
         fs.append(path, chunk)
         written = written + MIB

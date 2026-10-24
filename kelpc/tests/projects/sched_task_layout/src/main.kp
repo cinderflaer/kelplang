@@ -46,8 +46,8 @@ repr(c) datac TrapFrame(
 datac Task(
     var frame: [u64; 33],
     var dispatch: u64,
-    var state: usize,
-    var id: usize,
+    var state: int,
+    var id: int,
     var stack: [u8; 4096],
 )
 

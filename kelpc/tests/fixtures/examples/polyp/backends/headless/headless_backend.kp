@@ -85,7 +85,7 @@ fun key_of_path(path: &core.Path) => core.Key {
 
 // The index of the child `seg` names in this sibling list, or -1.
 fun kid_index(kids: List<HNode>, seg: &core.Seg) => i32 {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         if core.child_at(seg, kids.get(i).key.get(), i) { return i.to_i32() }
         i += 1
@@ -113,7 +113,7 @@ fun count_nodes(node: &HNode) => i32 {
 // a field out of the value it is written through. `depth` is how far into `path` the sibling list
 // passed in sits: the list holds the children of the node `path[0..depth]` names, and the child to
 // touch is the one `path[depth]` names.
-fun insert_into(kids: mut List<HNode>, path: &core.Path, depth: usize, at: i32, node: move HNode) {
+fun insert_into(kids: mut List<HNode>, path: &core.Path, depth: int, at: i32, node: move HNode) {
     if depth + 1 == path.segs.len() {
         var i = at
         if i < 0 {
@@ -122,10 +122,10 @@ fun insert_into(kids: mut List<HNode>, path: &core.Path, depth: usize, at: i32, 
         if i > kids.len().to_i32() {
             i = kids.len().to_i32()
         }
-        kids.insert(i.to_usize(), node)
+        kids.insert(i.to_int(), node)
         return
     }
-    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+    val idx = kid_index(kids, path.segs.get(depth)).to_int()
     var child = kids.remove(idx)
     insert_into(child.kids, path, depth + 1, at, node)
     kids.insert(idx, child)
@@ -141,8 +141,8 @@ fun set_props_on(n: mut HNode, props: &core.Props, focus: i32) {
     n.props = p
 }
 
-fun patch_into(kids: mut List<HNode>, path: &core.Path, depth: usize, props: &core.Props, focus: i32, n: mut i32) {
-    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+fun patch_into(kids: mut List<HNode>, path: &core.Path, depth: int, props: &core.Props, focus: i32, n: mut i32) {
+    val idx = kid_index(kids, path.segs.get(depth)).to_int()
     var child = kids.remove(idx)
     if depth + 1 == path.segs.len() {
         *n += 1
@@ -158,10 +158,10 @@ fun patch_into(kids: mut List<HNode>, path: &core.Path, depth: usize, props: &co
 // the focused widget was one of them.
 datac Gone(var count: i32, var had_focus: bool)
 
-fun drop_into(kids: mut List<HNode>, path: &core.Path, depth: usize, focus: i32, gone: mut Gone) {
+fun drop_into(kids: mut List<HNode>, path: &core.Path, depth: int, focus: i32, gone: mut Gone) {
     val idx = kid_index(kids, path.segs.get(depth))
     if idx < 0 { return }
-    var child = kids.remove(idx.to_usize())
+    var child = kids.remove(idx.to_int())
     if depth + 1 == path.segs.len() {
         gone.count += count_nodes(child)
         if contains_slot(child, focus) {
@@ -170,13 +170,13 @@ fun drop_into(kids: mut List<HNode>, path: &core.Path, depth: usize, focus: i32,
         return
     }
     drop_into(child.kids, path, depth + 1, focus, gone)
-    kids.insert(idx.to_usize(), child)
+    kids.insert(idx.to_int(), child)
 }
 
-fun move_into(kids: mut List<HNode>, path: &core.Path, depth: usize, to_index: i32) {
+fun move_into(kids: mut List<HNode>, path: &core.Path, depth: int, to_index: i32) {
     val idx = kid_index(kids, path.segs.get(depth))
     if idx < 0 { return }
-    var child = kids.remove(idx.to_usize())
+    var child = kids.remove(idx.to_int())
     if depth + 1 == path.segs.len() {
         var at = to_index
         if at < 0 {
@@ -185,15 +185,15 @@ fun move_into(kids: mut List<HNode>, path: &core.Path, depth: usize, to_index: i
         if at > kids.len().to_i32() {
             at = kids.len().to_i32()
         }
-        kids.insert(at.to_usize(), child)
+        kids.insert(at.to_int(), child)
         return
     }
     move_into(child.kids, path, depth + 1, to_index)
-    kids.insert(idx.to_usize(), child)
+    kids.insert(idx.to_int(), child)
 }
 
 fun collect_entries(kids: List<HNode>, out: mut List<i32>) {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.kind == core.KIND_ENTRY && n.slot >= 0 {
@@ -206,7 +206,7 @@ fun collect_entries(kids: List<HNode>, out: mut List<i32>) {
 
 // `base` is the path of the node whose children are in this list.
 fun find_path(kids: List<HNode>, base: &core.Path, id: i32) => option.Option<core.Path> {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         val here = core.with_seg(base, core.seg_for(n.key.get(), i.to_i32()))
@@ -223,7 +223,7 @@ fun find_path(kids: List<HNode>, base: &core.Path, id: i32) => option.Option<cor
 }
 
 fun find_text(kids: List<HNode>, id: i32) => option.Option<String> {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.slot == id {
@@ -241,7 +241,7 @@ fun find_text(kids: List<HNode>, id: i32) => option.Option<String> {
 }
 
 fun set_text(kids: mut List<HNode>, id: i32, text: str) {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         var n = kids.remove(i)
         if n.slot == id {
@@ -288,7 +288,7 @@ fun indent(level: i32) => String {
 }
 
 fun render(kids: List<HNode>, level: i32, out: mut List<String>) {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         var line = indent(level)
@@ -421,7 +421,7 @@ impl core.Backend for Headless {
     fun mut Self.poll() => core.Event {
         if !pending.is_empty() { return pending.remove(0) }
         if cursor >= script.len().to_i32() { return core.Event.Quit }
-        val ev = script.get(cursor.to_usize())
+        val ev = script.get(cursor.to_int())
         cursor += 1
         return core.clone_event(ev)
     }

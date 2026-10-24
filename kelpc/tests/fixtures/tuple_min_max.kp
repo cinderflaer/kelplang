@@ -4,7 +4,7 @@
 fun min_max(xs: &List<i32>) => (i32, i32) {
     var lo = xs.get(i = 0)
     var hi = xs.get(i = 0)
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         val v = xs.get(i = i)
         if v < lo { lo = v }

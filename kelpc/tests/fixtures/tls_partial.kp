@@ -14,11 +14,11 @@ impl "std/str"
 impl "std/tls"
 
 // The payload the client sends, byte `i` of it, matching the harness's own copy.
-fun payload_byte(i: usize) => u8 = ((i * 31 + 7) % 256).to_u8()
+fun payload_byte(i: int) => u8 = ((i * 31 + 7) % 256).to_u8()
 
-fun payload(n: usize) => Bytes {
+fun payload(n: int) => Bytes {
     var b = mem.alloc(n)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         b.set(i, payload_byte(i))
         i = i + 1
@@ -56,13 +56,13 @@ fun arg_port() => u16 {
     return p.to_u16()
 }
 
-fun arg_reply_len() => usize {
+fun arg_reply_len() => int {
     val args = process.args()
     val p = result.expect(
         r = str.parse_u64(args.get(2).as_str()),
         message = "tls_partial: argv[2] is not the reply length",
     )
-    return p.to_usize()
+    return p.to_int()
 }
 
 fun main() {
@@ -84,7 +84,7 @@ fun main() {
     // sized: with the server writing one byte at a time this is many partial
     // reads, and `got` reaching the full length is the proof none was lost.
     var buf = mem.alloc(reply_len)
-    var got: usize = 0
+    var got: int = 0
     var going = true
     while going {
         val r = tls.try_read_into(t, buf, got)

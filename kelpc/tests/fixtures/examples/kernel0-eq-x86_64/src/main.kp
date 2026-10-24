@@ -51,8 +51,8 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
     val fresh: Ptr<u8> = alloc(new, align)
     if fresh.is_null() { return Ptr.null() }
     if p.is_null() == false {
-        var i: usize = 0
-        while i < old {
+        var i: int = 0
+        while i < old.to_int() {
             unsafe {
                 val src: Ptr<u8> = p.byte_offset(i.to_isize())
                 val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())
@@ -80,7 +80,7 @@ datac Blob(val data: Bytes, val tag: i32)
 
 fun Blob.eq(other: &Blob) => bool {
     if self.tag != other.tag || self.data.len() != other.data.len() { return false }
-    var i: usize = 0
+    var i: int = 0
     while i < self.data.len() {
         if self.data.get(i) != other.data.get(i) { return false }
         i = i + 1

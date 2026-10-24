@@ -40,7 +40,7 @@ impl fmt.Display for Vec2 {
 
 datac Buf<const N: usize>(var data: [i32; N])
 
-fun Buf<const N: usize>.size() => usize = N
+fun Buf<const N: usize>.size() => int = N.to_int()
 
 enum LowErr {
     Bad

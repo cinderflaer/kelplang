@@ -55,9 +55,9 @@ fun is_w(b: u8) => bool {
 }
 
 // The end positions of `n` matched at `pos`, best first.
-fun Ref.ends(n: i32, pos: usize, text: View) => List<usize> {
-    var out: List<usize> = List.empty()
-    val i = n.to_usize()
+fun Ref.ends(n: i32, pos: int, text: View) => List<int> {
+    var out: List<int> = List.empty()
+    val i = n.to_int()
     val kind = k.get(i)
     val len = text.len()
     if kind == K_LIT {
@@ -98,10 +98,10 @@ fun Ref.ends(n: i32, pos: usize, text: View) => List<usize> {
         }
     } elif kind == K_CAT {
         val first = self.ends(a.get(i), pos, text)
-        var x: usize = 0
+        var x: int = 0
         while x < first.len() {
             val second = self.ends(b.get(i), first.get(x), text)
-            var y: usize = 0
+            var y: int = 0
             while y < second.len() {
                 out.push(second.get(y))
                 y += 1
@@ -111,7 +111,7 @@ fun Ref.ends(n: i32, pos: usize, text: View) => List<usize> {
     } elif kind == K_ALT {
         val left = self.ends(a.get(i), pos, text)
         val right = self.ends(b.get(i), pos, text)
-        var x: usize = 0
+        var x: int = 0
         while x < left.len() {
             out.push(left.get(x))
             x += 1
@@ -128,22 +128,22 @@ fun Ref.ends(n: i32, pos: usize, text: View) => List<usize> {
 }
 
 // The ends of `count` iterations already done, then as many more as allowed.
-fun Ref.rep_ends(n: i32, pos: usize, count: i32, text: View) => List<usize> {
-    var out: List<usize> = List.empty()
-    val i = n.to_usize()
+fun Ref.rep_ends(n: i32, pos: int, count: i32, text: View) => List<int> {
+    var out: List<int> = List.empty()
+    val i = n.to_int()
     val mn = b.get(i)
     val mx = c.get(i)
     val greedy = d.get(i) == 1
-    var more: List<usize> = List.empty()
+    var more: List<int> = List.empty()
     if mx == -1 || count < mx {
         val one = self.ends(a.get(i), pos, text)
-        var x: usize = 0
+        var x: int = 0
         while x < one.len() {
             val e = one.get(x)
             // An empty iteration is only taken while the minimum is unmet.
             if e != pos || count < mn {
                 val rest = self.rep_ends(n, e, count + 1, text)
-                var y: usize = 0
+                var y: int = 0
                 while y < rest.len() {
                     more.push(rest.get(y))
                     y += 1
@@ -154,7 +154,7 @@ fun Ref.rep_ends(n: i32, pos: usize, count: i32, text: View) => List<usize> {
     }
     val may_stop = count >= mn
     if greedy {
-        var x: usize = 0
+        var x: int = 0
         while x < more.len() {
             out.push(more.get(x))
             x += 1
@@ -166,7 +166,7 @@ fun Ref.rep_ends(n: i32, pos: usize, count: i32, text: View) => List<usize> {
         if may_stop {
             out.push(pos)
         }
-        var x: usize = 0
+        var x: int = 0
         while x < more.len() {
             out.push(more.get(x))
             x += 1
@@ -202,9 +202,9 @@ fun mut Lcg.next() => u64 {
 }
 
 // The input: `len` bytes from "abcd\n", biased towards a and b.
-fun mut Lcg.input(len: usize) => String {
+fun mut Lcg.input(len: int) => String {
     var s = String.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < len {
         val r = self.next() % 8
         if r < 3 {
@@ -231,13 +231,13 @@ fun check(label: &str, pat: &str, r: &Ref, root: i32, seed: u64, count: i32, nul
     var matched: i32 = 0
     var n: i32 = 0
     while n < count {
-        val len = (rng.next() % 11).to_usize()
+        val len = (rng.next() % 11).to_int()
         val text = rng.input(len)
         val tv = text.view()
         // The reference's answer.
         var rs: i64 = -1
         var re_end: i64 = -1
-        var s: usize = 0
+        var s: int = 0
         while s <= len && rs < 0 {
             val es = r.ends(root, s, tv)
             if es.len() > 0 {

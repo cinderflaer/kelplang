@@ -55,7 +55,7 @@ fun size<M>(n: Node<M>) => i32 = when n {
 
 fun total<M>(xs: List<Node<M>>) => i32 {
     var sum: i32 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         sum += size(xs.get(i))
         i += 1

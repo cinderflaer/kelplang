@@ -64,7 +64,7 @@ fun sum_one_to_ten() => i32 {
         i = i + 1
     }
     var sum: i32 = 0
-    var j: usize = 0
+    var j: int = 0
     while j < xs.len() {
         sum = sum + xs.get(j)
         j = j + 1
@@ -75,8 +75,8 @@ fun sum_one_to_ten() => i32 {
 fun print_heap_sum(sum: i32) {
     val prefix: [u8; 9] = PREFIX
     val prefix_ptr: Ptr<[u8; 9]> = Ptr.from_ref(&prefix)
-    uart.puts(prefix_ptr.cast<u8>(), prefix.len())
-    val value: usize = sum.to_usize()
+    uart.puts(prefix_ptr.cast<u8>(), prefix.len().to_usize())
+    val value: int = sum.to_int()
     uart.putc(48 + (value / 10).to_u8())
     uart.putc(48 + (value % 10).to_u8())
     uart.putc(10)
@@ -89,7 +89,7 @@ section(".text.boot") fun kmain() {
         if ALLOCS == DEALLOCS {
             val line: [u8; 9] = BALANCED
             val line_ptr: Ptr<[u8; 9]> = Ptr.from_ref(&line)
-            uart.puts(line_ptr.cast<u8>(), line.len())
+            uart.puts(line_ptr.cast<u8>(), line.len().to_usize())
         }
     }
     uart.halt()
@@ -102,6 +102,6 @@ section(".text.boot") fun kmain() {
 fun kp_panic(_msg: str) {
     val msg: [u8; 6] = PANIC_MSG
     val bytes: Ptr<[u8; 6]> = Ptr.from_ref(&msg)
-    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.puts(bytes.cast<u8>(), msg.len().to_usize())
     uart.halt()
 }

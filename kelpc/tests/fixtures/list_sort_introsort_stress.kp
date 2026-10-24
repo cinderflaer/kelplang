@@ -10,7 +10,7 @@
 // benchmark.
 fun check(xs: List<i32>) {
     var ok = true
-    var j: usize = 1
+    var j: int = 1
     while j < xs.len() {
         if xs.get(j - 1) > xs.get(j) {
             ok = false

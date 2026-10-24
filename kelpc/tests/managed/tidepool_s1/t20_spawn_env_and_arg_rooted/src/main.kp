@@ -15,12 +15,12 @@ fun make_names() => List<String> {
     return names
 }
 
-fun weigh(s: String) => usize = str.len(s.as_str())
+fun weigh(s: String) => int = str.len(s.as_str())
 
 fun main() {
     val names = make_names()
     val tag = String.from_str("delta-epsilon")
-    val f = fun(s: move String) => usize = names.len() * 100 + weigh(s)
+    val f = fun(s: move String) => int = names.len() * 100 + weigh(s)
     val t = thread.spawn(f, tag)
     when thread.join(t) {
         Ok(v) -> print(v)

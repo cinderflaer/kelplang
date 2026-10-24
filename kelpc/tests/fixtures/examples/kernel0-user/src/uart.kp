@@ -27,7 +27,7 @@ pub fun putc(c: u8) {
 
 pub fun puts(s: str) {
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         putc(str.byte(s, i))
         i = i + 1
@@ -37,8 +37,8 @@ pub fun puts(s: str) {
 // A length-tagged buffer that is not a `str`: the syscall copy's bytes, and the
 // digits `put_dec` just built.
 pub fun puts_bytes(p: Ptr<u8>, len: usize) {
-    var i: usize = 0
-    while i < len {
+    var i: int = 0
+    while i < len.to_int() {
         putc(unsafe { p.offset(i.to_isize()).read_volatile() })
         i = i + 1
     }
@@ -56,7 +56,7 @@ pub fun put_dec(value: usize) {
     val bytes: Ptr<[u8; 20]> = Ptr.from_ref(&digits)
     val p: Ptr<u8> = bytes.cast<u8>()
     var n: usize = value
-    var i: usize = 0
+    var i: int = 0
     while n > 0 {
         unsafe {
             p.offset(i.to_isize()).write_volatile((48 + n % 10).to_u8())

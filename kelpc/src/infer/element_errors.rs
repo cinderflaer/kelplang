@@ -476,14 +476,14 @@ pub(crate) fn array_sig(key: &str, elem: &Ty, len: u64) -> Option<FnSig> {
     let p = |n: &str, t: Ty| (n.to_string(), t);
     let elem_ref = Ty::Ref { mutable: false, inner: Box::new(elem.clone()) };
     Some(match key {
-        "Array#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Usize },
+        "Array#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Int },
         "Array#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
         "Array#get" => FnSig {
-            params: vec![p("self", shared), p("i", Ty::Usize)],
+            params: vec![p("self", shared), p("i", Ty::Int)],
             ret: if elem.is_copy() { elem.clone() } else { elem_ref },
         },
         "Array#set" => FnSig {
-            params: vec![p("self", exclusive), p("i", Ty::Usize), p("v", elem.clone())],
+            params: vec![p("self", exclusive), p("i", Ty::Int), p("v", elem.clone())],
             ret: Ty::Unit,
         },
         _ => return None,

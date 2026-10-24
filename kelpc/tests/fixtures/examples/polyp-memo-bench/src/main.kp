@@ -29,7 +29,7 @@ enum Msg {
 }
 
 fun find(m: &Model, id: i32) => i32 {
-    var i: usize = 0
+    var i: int = 0
     while i < m.items.len() {
         if m.items.get(i).id == id { return i.to_i32() }
         i += 1
@@ -42,7 +42,7 @@ fun update(m: mut Model, msg: Msg) {
         Toggle(id) -> {
             val at = find(m, id)
             if at >= 0 {
-                val u = at.to_usize()
+                val u = at.to_int()
                 val t = String.from_str(m.items.get(u).title.as_str())
                 val was = m.items.get(u).done
                 m.items.set(u, Item(id = id, title = t, done = !was))
@@ -52,7 +52,7 @@ fun update(m: mut Model, msg: Msg) {
         Remove(id) -> {
             val at = find(m, id)
             if at >= 0 {
-                val gone = m.items.remove(at.to_usize())
+                val gone = m.items.remove(at.to_int())
             }
             m.clicks += 1
         }
@@ -114,7 +114,7 @@ fun view_plain(m: Model) => core.Node<Msg> {
         k.expand()
         k.scrolled { sc ->
             sc.spacing(4)
-            var i: usize = 0
+            var i: int = 0
             while i < m.items.len() {
                 val item = m.items.get(i)
                 val key = str.from_i64(item.id.to_i64())
@@ -178,7 +178,7 @@ fun run(label: str, rows: i32, use_memo: bool) {
             val idx = (k * 7) % rows
             val num = str.from_i64(k.to_i64())
             val title = str.concat("changed ", num.as_str())
-            st.items.set(idx.to_usize(), Item(id = idx, title = title, done = false))
+            st.items.set(idx.to_int(), Item(id = idx, title = title, done = false))
             val start = time.now_mono_ns()
             val next = if use_memo {
                 view_memo(st)
@@ -199,7 +199,7 @@ fun run(label: str, rows: i32, use_memo: bool) {
             px += b.pixels_written()
             k += 1
         }
-        samples.set(r.to_usize(), total / n.to_i64())
+        samples.set(r.to_int(), total / n.to_i64())
         view_us = view_total / n.to_i64()
         diff_us = diff_total / n.to_i64()
         calls = store.view_calls
@@ -210,13 +210,13 @@ fun run(label: str, rows: i32, use_memo: bool) {
     var a = samples
     var i: i32 = 1
     while i < RUNS {
-        val key = a.get(i.to_usize())
+        val key = a.get(i.to_int())
         var j = i - 1
-        while j >= 0 && a.get(j.to_usize()) > key {
-            a.set((j + 1).to_usize(), a.get(j.to_usize()))
+        while j >= 0 && a.get(j.to_int()) > key {
+            a.set((j + 1).to_int(), a.get(j.to_int()))
             j -= 1
         }
-        a.set((j + 1).to_usize(), key)
+        a.set((j + 1).to_int(), key)
         i += 1
     }
     print(label)
@@ -225,7 +225,7 @@ fun run(label: str, rows: i32, use_memo: bool) {
     print(calls)
     print(hits)
     print(pixels)
-    print(a.get((RUNS / 2).to_usize()))
+    print(a.get((RUNS / 2).to_int()))
     print(view_us)
     print(diff_us)
 }

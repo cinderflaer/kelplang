@@ -12,9 +12,9 @@
 // second hart up.
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 
-percpu static mut SLOT: usize = 7
+percpu static mut SLOT: int = 7
 
-fun digit(v: usize) => u8 = 48 + v.to_u8()
+fun digit(v: int) => u8 = 48 + v.to_u8()
 
 section(".text.boot") fun kmain() {
     // The register is the kernel's to set: the compiler never writes it.
@@ -34,11 +34,11 @@ section(".text.boot") fun kmain() {
     uart.putc(10)
 
     uart.puts("idx ")
-    uart.putc(digit(cpu_index()))
+    uart.putc(digit(cpu_index().to_int()))
     uart.putc(10)
 
     uart.puts("count ")
-    uart.putc(digit(cpu_count()))
+    uart.putc(digit(cpu_count().to_int()))
     uart.putc(10)
 
     uart.halt()

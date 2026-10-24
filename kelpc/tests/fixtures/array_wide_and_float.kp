@@ -12,7 +12,7 @@
 // both directions. `[[i32; 5]; 2]` is the same shape one level in, because a
 // twenty-byte *element* is itself `MEMORY` class, its `get` goes through the
 // hidden pointer too.
-const WIDE: usize = 300
+const WIDE: int = 300
 
 fun pairs(xs: [f64; 2]) => f64 = xs.get(i = 0) + xs.get(i = 1)
 
@@ -36,7 +36,7 @@ fun inner(xs: [[i32; 5]; 2]) => i32 = xs.get(i = 1).get(i = 4)
 // An owned-element array does not have to be a place: a literal handed to a
 // borrow parameter is staged and then freed after the call, which is the one
 // drop site an array temporary reaches.
-fun first_len(names: [String; 2]) => usize = names.get(i = 0).len()
+fun first_len(names: [String; 2]) => int = names.get(i = 0).len()
 
 fun main() {
     val p: [f64; 2] = [1.5, 2.25]

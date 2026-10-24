@@ -89,14 +89,14 @@ const WS_GUID: str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 /// announces, so this is the ceiling it agrees to instead, and a longer frame
 /// is a protocol error. A megabyte is headroom for a JSON payload and far below
 /// what a peer would need to exhaust memory.
-const MAX_FRAME: usize = 1048576
+const MAX_FRAME: int = 1048576
 
 /// The largest response head, in bytes, that the handshake accepts before it gives up.
 ///
 /// The largest response head `connect` accepts before it gives up. A 101 with a
 /// `Sec-WebSocket-Accept` is under 200 bytes; the ceiling is what stops a peer
 /// that never sends the terminator from growing this client's buffer.
-const MAX_HEAD: usize = 8192
+const MAX_HEAD: int = 8192
 
 /// The opcode of a continuation frame, which carries on a fragmented message.
 ///
@@ -209,7 +209,7 @@ datac Conn(
     /// Bytes that have arrived from the peer and are not yet read.
     var buf: Bytes,
     /// How far into `buf` the frame reader has read.
-    var start: usize,
+    var start: int,
     /// The opcode of a fragmented message that is still open, or 0 when there is none.
     var frag_opcode: u8,
     /// The payload assembled so far for a fragmented message that is still open.
@@ -222,7 +222,7 @@ datac Conn(
 /// `Some`, a plain socket otherwise. Both are rebuilt from the `Copy` fields
 /// because a datac parameter is always a borrow and cannot be moved into a
 /// struct field.
-fun conn_send_all(fd: i32, tls_handle: option.Option<tls.TlsHandle>, data: Bytes) => usize {
+fun conn_send_all(fd: i32, tls_handle: option.Option<tls.TlsHandle>, data: Bytes) => int {
     if let Some(h) = tls_handle {
         return tls.write_all(tls.TlsStream(fd = fd, handle = h), data)
     }
@@ -230,7 +230,7 @@ fun conn_send_all(fd: i32, tls_handle: option.Option<tls.TlsHandle>, data: Bytes
 }
 
 /// Reads up to `max` bytes from the connection, over TLS when `tls_handle` is set.
-fun conn_recv(fd: i32, tls_handle: option.Option<tls.TlsHandle>, max: usize) => Bytes {
+fun conn_recv(fd: i32, tls_handle: option.Option<tls.TlsHandle>, max: int) => Bytes {
     if let Some(h) = tls_handle {
         return tls.read(tls.TlsStream(fd = fd, handle = h), max)
     }
@@ -238,7 +238,7 @@ fun conn_recv(fd: i32, tls_handle: option.Option<tls.TlsHandle>, max: usize) => 
 }
 
 /// Reads into `buf` from offset `at`, over TLS when `tls_handle` is set. Returns the number of bytes read.
-fun conn_recv_into(fd: i32, tls_handle: option.Option<tls.TlsHandle>, buf: mut Bytes, at: usize) => usize {
+fun conn_recv_into(fd: i32, tls_handle: option.Option<tls.TlsHandle>, buf: mut Bytes, at: int) => int {
     if let Some(h) = tls_handle {
         return tls.read_into(tls.TlsStream(fd = fd, handle = h), buf, at)
     }
@@ -413,9 +413,9 @@ fun build_head(scheme: &str, host: &str, port: u16, path: &str, key: &str) => St
 /// head, which is the first frames, and `Bytes.as_str` validates UTF-8 and
 /// would panic on a binary frame before the head was even located. `std/http`
 /// learned that from a 200 KB image (`find_head_end` in that module).
-fun find_head_end(b: Bytes) => usize {
+fun find_head_end(b: Bytes) => int {
     val n = b.len()
-    var i: usize = 0
+    var i: int = 0
     while i + 4 <= n {
         if b.get(i) == 13 && b.get(i + 1) == 10 && b.get(i + 2) == 13 && b.get(i + 3) == 10 {
             return i + 4
@@ -430,10 +430,10 @@ fun find_head_end(b: Bytes) => usize {
 /// The header block as text: the bytes before the terminator, copied and
 /// validated in one step, since `String.from_bytes` adopts the buffer instead
 /// of copying it.
-fun head_text(b: Bytes, end: usize) => String {
+fun head_text(b: Bytes, end: int) => String {
     val n = end - 4
     var raw = mem.alloc(n)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         raw.set(i, b.get(i))
         i = i + 1
@@ -463,7 +463,7 @@ fun name_eq(a: &str, b: &str) => bool {
 fun split_head_headers(head: &str) => List<Header> {
     val lines = str.split(head, "\r\n")
     var hs: List<Header> = List.empty()
-    var i: usize = 1
+    var i: int = 1
     while i < lines.len() {
         val text = lines.get(i).as_str()
         if !str.is_empty(text) {
@@ -486,7 +486,7 @@ fun split_head_headers(head: &str) => List<Header> {
 /// for the reason `std/http`'s `Response.header` gives: a borrow reached
 /// through `List.get` cannot be handed back, so the value is copied.
 fun header_value(hs: List<Header>, name: &str) => String {
-    var i: usize = 0
+    var i: int = 0
     while i < hs.len() {
         if name_eq(hs.get(i).name.as_str(), name) {
             return String.from_str(hs.get(i).value.as_str())
@@ -831,18 +831,18 @@ fun Conn.send_frame(opcode: u8, data: &Bytes) {
         out.push((n & 255).to_u8())
     } else {
         out.push(127 | 128)
-        var i: usize = 0
+        var i: int = 0
         while i < 8 {
             out.push(((n >> (56 - i * 8)) & 255).to_u8())
             i = i + 1
         }
     }
-    var k: usize = 0
+    var k: int = 0
     while k < 4 {
         out.push(key.get(k))
         k = k + 1
     }
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         out.push(data.get(i) ^ key.get(i % 4))
         i = i + 1
@@ -964,9 +964,9 @@ fun Conn.close(code: u16, reason: &str) {
 /// bytes of the *next* frame where the reader expects them.
 ///
 /// Panics: if the peer closes before `n` bytes have arrived.
-fun mut Conn.read_exact(n: usize) => Bytes {
+fun mut Conn.read_exact(n: int) => Bytes {
     var out = mem.alloc(n)
-    var got: usize = 0
+    var got: int = 0
     while got < n && start < buf.len() {
         out.set(got, buf.get(start))
         start = start + 1
@@ -1008,7 +1008,7 @@ fun mut Conn.read_frame() => Frame {
         len = (ext.get(0).to_u64() << 8) | ext.get(1).to_u64()
     } elif len == 127 {
         val ext = self.read_exact(8)
-        var i: usize = 0
+        var i: int = 0
         len = 0
         while i < 8 {
             len = (len << 8) | ext.get(i).to_u64()
@@ -1038,7 +1038,7 @@ fun mut Conn.read_frame() => Frame {
         )
         panic(over)
     }
-    return Frame(fin = fin, opcode = opcode, data = self.read_exact(len.to_usize()))
+    return Frame(fin = fin, opcode = opcode, data = self.read_exact(len.to_int()))
 }
 
 /// Makes a data message from an opcode and its assembled payload. A text payload must be valid UTF-8.
@@ -1070,7 +1070,7 @@ fun close_msg(data: Bytes) => Msg {
     }
     val code = (data.get(0).to_u16() << 8) | data.get(1).to_u16()
     var reason = Bytes.empty()
-    var i: usize = 2
+    var i: int = 2
     while i < data.len() {
         reason.push(data.get(i))
         i = i + 1

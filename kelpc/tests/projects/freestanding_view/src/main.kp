@@ -2,7 +2,7 @@
 // view, a byte read, and a length-aware comparison, all with no allocator.
 fun kmain() {
     val v = "kelp".view()
-    var n: usize = v.len() + v.get(0).to_usize()
+    var n: int = v.len() + v.get(0).to_int()
     if v.slice(1, 3).eq("el".view()) {
         n = n + 1
     }

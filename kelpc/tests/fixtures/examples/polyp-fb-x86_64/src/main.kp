@@ -22,11 +22,11 @@ const ARENA_BYTES: usize = 1048576
 // A bump arena for the heap types. `List`, `String` and `Box` allocate and free through `alloc` and
 // `dealloc`, so the image links no libc; the arena is `.bss`, which the `_start` stub zeroes.
 static mut ARENA: [u8; ARENA_BYTES] = [0; ARENA_BYTES]
-static mut USED: usize = 0
+static mut USED: int = 0
 
 // `align` is always a power of two (every type's alignment the compiler asks for is), so the
 // round-up is a divide and multiply rather than a bit mask: v1 has no bitwise operators.
-fun align_up(value: usize, align: usize) => usize {
+fun align_up(value: int, align: int) => int {
     return ((value + align - 1) / align) * align
 }
 
@@ -35,11 +35,11 @@ fun align_up(value: usize, align: usize) => usize {
 // a failed allocation never dereferences null.
 fun alloc(size: usize, align: usize) => Ptr<u8> {
     val out: Ptr<u8> = unsafe {
-        val start: usize = align_up(USED, align)
-        if start + size > ARENA_BYTES {
+        val start: int = align_up(USED.to_int(), align.to_int())
+        if start + size.to_int() > ARENA_BYTES.to_int() {
             Ptr.null()
         } else {
-            USED = start + size
+            USED = start + size.to_int()
             val arena: Ptr<[u8; ARENA_BYTES]> = Ptr.from_mut(ARENA)
             val base: Ptr<u8> = arena.cast<u8>()
             base.byte_offset(start.to_isize())

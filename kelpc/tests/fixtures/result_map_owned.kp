@@ -19,7 +19,7 @@ fun main() {
     // `map` over an owned success payload: the callback borrows the `String`
     // and the rebuilt `Ok` owns the result.
     val named: result.Result<String, Bad> = result.Result.Ok(value = String.from_str(s = "hello"))
-    val len = result.map(r = named, f = fun(s: &String) => usize = s.len())
+    val len = result.map(r = named, f = fun(s: &String) => int = s.len())
     print(result.expect(r = len, message = "err"))
 
     // `map` over an owned error type, the case the borrow receiver could not

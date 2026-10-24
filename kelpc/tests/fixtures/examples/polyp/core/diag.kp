@@ -24,7 +24,7 @@ pub fun capture<B: core.Backend>(backend: &B) {
 // The live text of the index-th entry of the tree the run finished with, or "" when there was no
 // such entry. A diagnostic: it reads what the display showed, not the model.
 pub fun entry_text(index: i32) => String {
-    if index < 0 || index.to_usize() >= entry_texts.len() { return "" }
-    val text = entry_texts.get(index.to_usize())
+    if index < 0 || index.to_int() >= entry_texts.len() { return "" }
+    val text = entry_texts.get(index.to_int())
     return String.from_str(text.as_str())
 }

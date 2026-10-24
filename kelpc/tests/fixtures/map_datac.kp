@@ -11,7 +11,7 @@ datac Bag(val counts: Map<i64>)
 fun total(b: Bag) => i64 {
     val ks = b.counts.keys()
     var sum: i64 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < ks.len() {
         sum += b.counts.get(ks.get(i).as_str())
         i += 1

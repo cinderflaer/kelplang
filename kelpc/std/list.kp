@@ -25,7 +25,7 @@ impl "std/option"
 /// built from what `f` returns, and nothing is taken out of `xs`.
 fun map<T, U>(xs: &List<T>, f: closure(&T) => U) => List<U> {
     var out: List<U> = List.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         out.push(f(xs.get(i)))
         i += 1
@@ -37,7 +37,7 @@ fun map<T, U>(xs: &List<T>, f: closure(&T) => U) => List<U> {
 /// is read out of `xs` by value.
 fun filter<T>(xs: &List<T>, f: closure(&T) => bool) => List<T> {
     var out: List<T> = List.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         if f(xs.get(i)) {
             out.push(xs.get(i))
@@ -50,7 +50,7 @@ fun filter<T>(xs: &List<T>, f: closure(&T) => bool) => List<T> {
 /// Run `f` over every element, in order, for its effect. Works for any element
 /// type.
 fun each<T>(xs: &List<T>, f: closure(&T)) {
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         f(xs.get(i))
         i += 1
@@ -59,8 +59,8 @@ fun each<T>(xs: &List<T>, f: closure(&T)) {
 
 /// The index of the first element `f` accepts, or `None`. Works for any element
 /// type, the index is the value, and no element is read out.
-fun find_index<T>(xs: &List<T>, f: closure(&T) => bool) => option.Option<usize> {
-    var i: usize = 0
+fun find_index<T>(xs: &List<T>, f: closure(&T) => bool) => option.Option<int> {
+    var i: int = 0
     while i < xs.len() {
         if f(xs.get(i)) {
             return option.Option.Some(value = i)
@@ -73,7 +73,7 @@ fun find_index<T>(xs: &List<T>, f: closure(&T) => bool) => option.Option<usize> 
 /// Whether `f` accepts any element, the predicate form of `find_index`, for a
 /// caller that does not care which one. Works for any element type.
 fun any<T>(xs: &List<T>, f: closure(&T) => bool) => bool {
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         if f(xs.get(i)) {
             return true
@@ -85,7 +85,7 @@ fun any<T>(xs: &List<T>, f: closure(&T) => bool) => bool {
 
 /// Whether `f` accepts every element. Works for any element type.
 fun all<T>(xs: &List<T>, f: closure(&T) => bool) => bool {
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         if !f(xs.get(i)) {
             return false

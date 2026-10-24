@@ -3,7 +3,7 @@
 // without a binding, and a copy that is then mutated all behave as before.
 fun total(xs: [i32; 300]) => i64 {
     var s: i64 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < 300 {
         s = s + xs.get(i).to_i64()
         i = i + 1

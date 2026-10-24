@@ -80,7 +80,7 @@ fun make_model(n: i32) => app.Model {
 // The sum of a presented rectangle list's areas, the pixels a repaint can actually change.
 fun presented_area(d: &damage.Damage) => i64 {
     var a: i64 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < d.count() {
         a += d.at(i).area()
         i += 1
@@ -91,7 +91,7 @@ fun presented_area(d: &damage.Damage) => i64 {
 fun smallest_y(b: &soft_backend.SoftBackend) => i32 {
     if b.damage_count() == 0 { return -1 }
     var y: i32 = b.damage_rect(0).y
-    var i: usize = 1
+    var i: int = 1
     while i < b.damage_count() {
         val r = b.damage_rect(i)
         if r.y < y {
@@ -242,7 +242,7 @@ fun run_focus() {
     }
     print(p.presented_count())
     var area: i64 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < p.presented_count() {
         area += p.presented_at(i).area()
         i += 1

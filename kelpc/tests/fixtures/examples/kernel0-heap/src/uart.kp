@@ -20,8 +20,8 @@ pub fun putc(c: u8) {
 }
 
 pub fun puts(msg: Ptr<u8>, len: usize) {
-    var i: usize = 0
-    while i < len {
+    var i: int = 0
+    while i < len.to_int() {
         unsafe {
             putc(msg.offset(i.to_isize()).read_volatile())
         }

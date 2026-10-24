@@ -8,7 +8,7 @@ enum Token {
     Blank
 }
 
-fun width(t: &Token) => usize = when t {
+fun width(t: &Token) => int = when t {
     Word(text) -> text.len()
     Digits(_) -> 0
     Blank -> 0
@@ -30,7 +30,7 @@ fun main() {
     print(width(line.token))
     print(line.note)
 
-    var i: usize = 0
+    var i: int = 0
     while i < 3 {
         val t = if i == 0 {
             Token.Word(text = String.from_str(s = "loop"))

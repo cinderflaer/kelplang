@@ -3,7 +3,7 @@
 // block is passed to, and returns its tail when that type's return is
 // non-unit. The callee calls it during the call and only during the call.
 fun each(xs: List<i32>, f: scoped fun(i32)) {
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         f(xs.get(i))
         i += 1
@@ -12,7 +12,7 @@ fun each(xs: List<i32>, f: scoped fun(i32)) {
 
 fun sum(xs: List<i32>, f: scoped fun(i32) => i32) => i32 {
     var total: i32 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         total += f(xs.get(i))
         i += 1

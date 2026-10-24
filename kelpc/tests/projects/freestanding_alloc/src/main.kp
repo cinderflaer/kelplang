@@ -40,8 +40,8 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
         return Ptr.null()
     }
     if p.is_null() == false {
-        var i: usize = 0
-        while i < old {
+        var i: int = 0
+        while i < old.to_int() {
             unsafe {
                 val src: Ptr<u8> = p.byte_offset(i.to_isize())
                 val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())

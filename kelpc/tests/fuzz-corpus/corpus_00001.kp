@@ -184,7 +184,7 @@ fun main() {
 
     {
         val s = String.from_str("yz")
-        val f = fun() => usize = s.len()
+        val f = fun() => int = s.len()
         print(f())
         val k: i32 = 34
         val g = fun(x: i32) => i32 = x + k
@@ -196,7 +196,7 @@ fun main() {
         var i: i32 = 0
         while i < 3 {
             val t = String.from_str("x")
-            val c = fun() => usize = t.len()
+            val c = fun() => int = t.len()
             print(c())
             i = i + 1
         }

@@ -13,14 +13,14 @@ static GRID: [[u8; 2]; 2] = [[1, 2], [3, 4]]
 
 static mut COUNTERS: [Slot; 2] = [Slot(id = 0, weight = [0, 0, 0, 0]), Slot(id = 0, weight = [0, 0, 0, 0])]
 
-datac Slot(val id: usize, val weight: [u8; 4])
+datac Slot(val id: int, val weight: [u8; 4])
 
 fun main() {
-    var sum: usize = 0
-    var i: usize = 0
+    var sum: int = 0
+    var i: int = 0
     while i < 3 {
         val s = TABLE.get(i = i)
-        sum = sum + s.id * 10 + s.weight.get(i = 0).to_usize()
+        sum = sum + s.id * 10 + s.weight.get(i = 0).to_int()
         i = i + 1
     }
     print(sum)

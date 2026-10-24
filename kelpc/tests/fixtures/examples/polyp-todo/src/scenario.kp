@@ -25,7 +25,7 @@ fun hex64(value: u64) => String {
     var out: String = "0x"
     var i: i32 = 15
     while i >= 0 {
-        val nibble = ((value >> (i * 4).to_u64()) & 15).to_usize()
+        val nibble = ((value >> (i * 4).to_u64()) & 15).to_int()
         out.push(DIGITS.get(nibble))
         i -= 1
     }

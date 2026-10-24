@@ -12,7 +12,7 @@ fun main() {
     print(xs.get(0))
     print(xs.get(2))
     xs.set(1, 20)
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         print!(xs.get(i))
         print!(" ")

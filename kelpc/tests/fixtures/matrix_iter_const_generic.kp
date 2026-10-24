@@ -5,7 +5,7 @@
 impl "std/iter"
 impl "std/option"
 
-datac Ring<const N: usize>(var data: [i32; N], var at: usize)
+datac Ring<const N: usize>(var data: [i32; N], var at: int)
 
 impl iter.Iterator for Ring<3> {
     type Item = i32

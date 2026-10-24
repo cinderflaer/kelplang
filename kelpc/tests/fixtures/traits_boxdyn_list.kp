@@ -22,7 +22,7 @@ fun main() {
     var xs: List<Box<dyn Shape>> = List.empty()
     xs.push(Box.of(Circle(r = 2.0)))
     xs.push(Box.of(Square(s = 3.0)))
-    var i: usize = 0
+    var i: int = 0
     var total: f64 = 0.0
     while i < xs.len() {
         print(xs.get(i).kind())

@@ -103,7 +103,7 @@ pub fun update(m: mut Model, msg: Msg) {
             m.toast = false
         }
         Toggle(id) -> {
-            var i: usize = 0
+            var i: int = 0
             while i < m.rows.len() {
                 val here = m.rows.get(i).id
                 if here == id {

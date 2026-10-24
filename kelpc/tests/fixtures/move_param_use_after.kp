@@ -1,6 +1,6 @@
 // A-4: a `move T` argument is moved out of the caller's binding, so reading
 // the binding again is exactly the error `val q = p` already produced.
-fun consume(s: move String) => usize = s.len()
+fun consume(s: move String) => int = s.len()
 
 fun main() {
     val a = String.from_str("x")

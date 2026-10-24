@@ -4,4 +4,4 @@
 extern fun file() => str
 
 /// The 1-based source line containing this call.
-extern fun line() => usize
+extern fun line() => int

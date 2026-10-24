@@ -29,7 +29,7 @@ fun main() {
     enc_show("fooba")
     enc_show("foobar")
     var all = mem.alloc(256)
-    var i: usize = 0
+    var i: int = 0
     while i < 256 {
         all.set(i, i.to_u8())
         i = i + 1

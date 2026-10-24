@@ -6,7 +6,7 @@ impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/net"
 impl "std/thread"
 
-fun show(label: &str, n: usize) {
+fun show(label: &str, n: int) {
     print("${label} ${n}")
 }
 

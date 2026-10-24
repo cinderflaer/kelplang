@@ -45,13 +45,13 @@ fun main() {
     print(fmt.hex(u64.from_be(w64))) // 807060504030201
     print(fmt.hex(u64.from_le(w64))) // 102030405060708
 
-    // `usize`/`isize` are the target's own word, so their swap follows its
+    // `int`/`isize` are the target's own word, so their swap follows its
     // width rather than a fixed one; on this 64-bit target that is the same
     // reversal a `u64` gets.
-    val uw: usize = 0x0102030405060708
+    val uw: int = 0x0102030405060708
     print(fmt.hex(uw.swap_bytes().to_u64())) // 807060504030201
     print(fmt.hex(uw.to_le().to_u64())) // 102030405060708
-    print(fmt.hex(usize.from_be(uw).to_u64())) // 807060504030201
+    print(fmt.hex(int.from_be(uw).to_u64())) // 807060504030201
     val sw: isize = 0x0102030405060708
     print(fmt.hex(sw.to_be().to_u64())) // 807060504030201
 

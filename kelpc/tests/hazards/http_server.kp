@@ -15,7 +15,7 @@ impl "std/result"
 impl "std/str"
 impl "std/http" caps(net = ["127.0.0.1:*"])
 
-fun arg_u64(i: usize) => u64 {
+fun arg_u64(i: int) => u64 {
     val args = process.args()
     return result.expect(
         r = str.parse_u64(args.get(i).as_str()),
@@ -31,7 +31,7 @@ fun say(text: &str) {
 
 fun big() => http.ServerResponse {
     var b = Bytes.empty()
-    var i: usize = 0
+    var i: int = 0
     while i < 4194304 {
         b.push(97)
         i = i + 1
@@ -82,7 +82,7 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
     }
     if str.eq(first, "seg") {
         var out = String.with_capacity(64)
-        var i: usize = 0
+        var i: int = 0
         while i < segs.len() {
             if i > 0 {
                 out.push_str("|")
@@ -140,7 +140,7 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
     return http.not_found()
 }
 
-fun fd_count() => usize {
+fun fd_count() => int {
     val listing = fs.list("/proc/self/fd")
     return listing.len()
 }
@@ -154,11 +154,11 @@ fun main() {
         max_request_line = 8192,
         max_header_bytes = 16384,
         max_headers = 100,
-        max_body = arg_u64(2).to_usize(),
+        max_body = arg_u64(2).to_int(),
         head_timeout_ms = arg_u64(3),
         body_timeout_ms = arg_u64(4),
         idle_timeout_ms = arg_u64(5),
-        max_requests_per_conn = arg_u64(6).to_usize(),
+        max_requests_per_conn = arg_u64(6).to_int(),
     )
     val n = http.serve_on(&s, handle, &limits, arg_u64(1))
     s.close()

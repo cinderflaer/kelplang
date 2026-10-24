@@ -20,7 +20,7 @@ pub fun putc(c: u8) {
 
 pub fun puts(s: str) {
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         putc(str.byte(s, i))
         i = i + 1
@@ -28,14 +28,14 @@ pub fun puts(s: str) {
 }
 
 // Decimal, no padding, the shape a vector number and an error code want.
-pub fun put_dec(value: usize) {
+pub fun put_dec(value: int) {
     if value == 0 {
         putc(48)
         return
     }
     var digits: [u8; 20] = [0; 20]
-    var n: usize = value
-    var i: usize = 0
+    var n: int = value
+    var i: int = 0
     while n > 0 {
         digits.set(i, 48 + (n % 10).to_u8())
         n = n / 10

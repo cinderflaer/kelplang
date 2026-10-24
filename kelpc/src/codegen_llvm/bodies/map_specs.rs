@@ -273,6 +273,13 @@ impl<'a> Gen<'a> {
             let cap = f.get_param(0);
             let m = self.builder.build_alloca(map_ty, "m");
             self.st(self.ctx.const_null(map_ty), m);
+            let negative = self.block(f, "wc.negative");
+            let counted = self.block(f, "wc.counted");
+            let neg = self.builder.build_icmp(IntCmp::Slt, cap, self.v_i64(0), "neg");
+            self.builder.build_cond_br(neg, negative, counted);
+            self.builder.position_at_end(negative);
+            self.emit_panic("Map.with_capacity: negative count")?;
+            self.builder.position_at_end(counted);
             let empty = self.block(f, "wc.empty");
             let sized = self.block(f, "wc.sized");
             let zerocap = self.builder.build_icmp(IntCmp::Eq, cap, self.v_i64(0), "zerocap");

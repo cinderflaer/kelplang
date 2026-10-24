@@ -9,7 +9,7 @@ fun main() {
     xs.push(8)
     xs.push(10)
     var ys: List<i32> = List.empty()
-    var count: usize = 0
+    var count: int = 0
     var sum: i32 = 0
     for x in xs.iter() {
         count += 1
@@ -19,7 +19,7 @@ fun main() {
     print(count)
     print(sum)
     print(ys.get(i = 4))
-    var pairs: usize = 0
+    var pairs: int = 0
     for a in xs.iter() {
         for b in xs.iter() {
             pairs += 1
@@ -32,7 +32,7 @@ fun main() {
     names.push("ab")
     names.push("cde")
     names.push("f")
-    var letters: usize = 0
+    var letters: int = 0
     for name in names.iter() {
         letters += name.len()
     }

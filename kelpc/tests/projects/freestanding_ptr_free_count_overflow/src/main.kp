@@ -9,7 +9,7 @@ impl "uart" caps(mmio = ["0x10000000+0x100"])
 static mut HEAP: [u8; 256] = [0; 256]
 static mut USED: usize = 0
 static mut DEALLOCS: usize = 0
-static mut LAST_BYTES: usize = 0
+static mut LAST_BYTES: int = 0
 static mut LAST_ALIGN: usize = 0
 
 const HEAP_CAP: usize = 256
@@ -42,27 +42,27 @@ fun dealloc(p: Ptr<u8>, size: usize, align: usize) {
     unsafe {
         if p.is_null() == false {
             DEALLOCS = DEALLOCS + 1
-            LAST_BYTES = size
+            LAST_BYTES = size.to_int()
             LAST_ALIGN = align
         }
     }
 }
 
-fun flag(value: bool) => usize {
+fun flag(value: bool) => int {
     if value {
         return 1
     }
     return 0
 }
 
-fun put_num(value: usize) {
+fun put_num(value: int) {
     if value == 0 {
         uart.putc(48)
         return
     }
     var digits: [u8; 20] = [0; 20]
-    var i: usize = 20
-    var v: usize = value
+    var i: int = 20
+    var v: int = value
     while v > 0 {
         i = i - 1
         digits.set(i = i, v = (48 + (v % 10)).to_u8())
@@ -74,7 +74,7 @@ fun put_num(value: usize) {
     }
 }
 
-fun line(label: str, value: usize) {
+fun line(label: str, value: int) {
     uart.puts(label)
     put_num(value)
     uart.puts("\n")

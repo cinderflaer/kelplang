@@ -8,7 +8,7 @@ datac Bag(val label: String, val xs: List<i32>)
 
 fun checksum(xs: List<i32>) => i32 {
     var total: i32 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < xs.len() {
         total += xs.get(i)
         i += 1

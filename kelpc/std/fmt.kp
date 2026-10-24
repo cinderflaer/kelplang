@@ -43,7 +43,7 @@ fun bytes(b: Bytes) => String = bytes_raw(b)
 /// `s` right-aligned in a field of `width`, padded with `fill`. The fill is a
 /// `u8`, not a `char`, so a character literal at the call site takes that type.
 /// A string at least `width` long is copied unchanged.
-fun pad_left(s: &str, width: usize, fill: u8) => String {
+fun pad_left(s: &str, width: int, fill: u8) => String {
     val n = str.len(s)
     if n >= width {
         return String.from_str(s)
@@ -60,7 +60,7 @@ fun pad_left(s: &str, width: usize, fill: u8) => String {
 
 /// `s` left-aligned in a field of `width`, padded with `fill`. A string at
 /// least `width` long is copied unchanged.
-fun pad_right(s: &str, width: usize, fill: u8) => String {
+fun pad_right(s: &str, width: int, fill: u8) => String {
     val n = str.len(s)
     if n >= width {
         return String.from_str(s)
@@ -98,12 +98,12 @@ fun group_digits(text: &str) => String {
     if len == 0 {
         return String.empty()
     }
-    var start: usize = 0
+    var start: int = 0
     if tv.get(0) == 45 {
         start = 1
     }
     var out = String.with_capacity(len + len / 3)
-    var i: usize = 0
+    var i: int = 0
     while i < start {
         out.push(tv.get(i))
         i = i + 1

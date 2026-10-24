@@ -21,21 +21,21 @@ fun classify(n: i32) => result.Result<i32, i32> {
     return result.Result.Ok(value = n)
 }
 
-fun flag(value: bool) => usize {
+fun flag(value: bool) => int {
     if value {
         return 1
     }
     return 0
 }
 
-fun put_num(value: usize) {
+fun put_num(value: int) {
     if value == 0 {
         uart.putc(48)
         return
     }
     var digits: [u8; 20] = [0; 20]
-    var i: usize = 20
-    var v: usize = value
+    var i: int = 20
+    var v: int = value
     while v > 0 {
         i = i - 1
         digits.set(i = i, v = (48 + (v % 10)).to_u8())
@@ -47,7 +47,7 @@ fun put_num(value: usize) {
     }
 }
 
-fun line(label: str, value: usize) {
+fun line(label: str, value: int) {
     uart.puts(label)
     put_num(value)
     uart.puts("\n")
@@ -58,13 +58,13 @@ section(".text.boot") fun kmain() {
     val empty: option.Option<i32> = find(1)
     line(label = "some ", value = flag(option.is_some(o = &full)))
     line(label = "none ", value = flag(option.is_none(o = &empty)))
-    line(label = "unwrapped ", value = option.unwrap(o = full).to_usize())
+    line(label = "unwrapped ", value = option.unwrap(o = full).to_int())
 
     val good: result.Result<i32, i32> = classify(3)
     val bad: result.Result<i32, i32> = classify(-1)
     line(label = "ok ", value = flag(result.is_ok(r = &good)))
     line(label = "err ", value = flag(result.is_err(r = &bad)))
-    line(label = "fallback ", value = result.unwrap_or(r = &bad, fallback = 9).to_usize())
+    line(label = "fallback ", value = result.unwrap_or(r = &bad, fallback = 9).to_int())
 
     // The arena carves a page-aligned block out of a static region; only the
     // returned address and the byte written through it are checked.
@@ -76,9 +76,9 @@ section(".text.boot") fun kmain() {
     }
     line(label = "arena aligned ", value = flag(p.addr() % 16 == 0))
     unsafe {
-        line(label = "arena byte ", value = p.read().to_usize())
+        line(label = "arena byte ", value = p.read().to_int())
     }
-    line(label = "arena used ", value = a.used())
+    line(label = "arena used ", value = a.used().to_int())
 
     uart.puts("done\n")
     uart.halt()

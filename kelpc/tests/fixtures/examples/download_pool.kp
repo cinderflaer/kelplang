@@ -39,7 +39,7 @@ const WORKER_COUNT: usize = 4
 // A thread takes only a scalar argument (a collected value is not scanned while a worker holds
 // it), so each worker is handed its index and reads its own job from the command line.
 datac Job(val host: String, val port: u16, val paths: List<String>)
-datac Outcome(val ok: usize, val failed: usize, val bytes: u64)
+datac Outcome(val ok: int, val failed: int, val bytes: u64)
 
 fun build_url(host: str, port: u16, path: str) => String {
     var url = String.empty()
@@ -56,13 +56,13 @@ fun build_url(host: str, port: u16, path: str) => String {
 // share, sequentially, the pool's keep-alive is what makes a sequential loop
 // here as cheap as it is, since only the first request per worker pays for a
 // handshake.
-fun fetch_all(worker: usize) => Outcome {
+fun fetch_all(worker: int) => Outcome {
     val job = job_for(worker)
     var pool = http.pool(job.host, job.port)
-    var ok: usize = 0
-    var failed: usize = 0
+    var ok: int = 0
+    var failed: int = 0
     var bytes: u64 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < job.paths.len() {
         val path = job.paths.get(i)
         val url = build_url(job.host, job.port, path.as_str())
@@ -85,10 +85,10 @@ fun fetch_all(worker: usize) => Outcome {
 }
 
 // The job of one worker, read from the command line: the host, the port and that worker's share.
-fun job_for(worker: usize) => Job {
+fun job_for(worker: int) => Job {
     val args = process.args()
     var paths: List<String> = List.empty()
-    var i: usize = 3
+    var i: int = 3
     while i < args.len() {
         paths.push(args.get(i).clone())
         i = i + 1
@@ -103,12 +103,12 @@ fun job_for(worker: usize) => Job {
 // Every `worker`th path, starting at `worker`: a round-robin split decided
 // entirely from the index, so it costs no coordination between the workers
 // that will each get one slice.
-fun slice_for(paths: List<String>, worker: usize) => List<String> {
+fun slice_for(paths: List<String>, worker: int) => List<String> {
     var out: List<String> = List.empty()
-    var i: usize = worker
+    var i: int = worker
     while i < paths.len() {
         out.push(paths.get(i).clone())
-        i = i + WORKER_COUNT
+        i = i + WORKER_COUNT.to_int()
     }
     return out
 }
@@ -145,17 +145,17 @@ fun main() {
         }
     }
 
-    val w0: usize = 0
-    val w1: usize = 1
-    val w2: usize = 2
-    val w3: usize = 3
+    val w0: int = 0
+    val w1: int = 1
+    val w2: int = 2
+    val w3: int = 3
     val h0 = thread.spawn(fetch_all, w0)
     val h1 = thread.spawn(fetch_all, w1)
     val h2 = thread.spawn(fetch_all, w2)
     val h3 = thread.spawn(fetch_all, w3)
 
-    var total_ok: usize = 0
-    var total_failed: usize = 0
+    var total_ok: int = 0
+    var total_failed: int = 0
     var total_bytes: u64 = 0
 
     when thread.join(h0) {

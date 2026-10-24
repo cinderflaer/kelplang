@@ -458,7 +458,7 @@ fun key_of_path(path: &core.Path) => core.Key {
 }
 
 fun kid_index(kids: List<SNode>, seg: &core.Seg) => i32 {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         if core.child_at(seg, kids.get(i).key.get(), i) { return i.to_i32() }
         i += 1
@@ -486,7 +486,7 @@ fun count_nodes(node: &SNode) => i32 {
 // match is the node.
 fun find_rect_in(kids: List<SNode>, id: i32) => fb.Rect {
     if id < 0 { return fb.empty_rect() }
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.slot == id { return rect_of(n) }
@@ -499,7 +499,7 @@ fun find_rect_in(kids: List<SNode>, id: i32) => fb.Rect {
 
 // Whether the widget with interactive id `id` is disabled.
 fun slot_disabled(kids: List<SNode>, id: i32) => bool {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.slot == id { return n.props.disabled }
@@ -511,7 +511,7 @@ fun slot_disabled(kids: List<SNode>, id: i32) => bool {
 
 fun find_caret_in(kids: List<SNode>, id: i32) => i32 {
     if id < 0 { return -1 }
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.slot == id { return n.caret }
@@ -524,7 +524,7 @@ fun find_caret_in(kids: List<SNode>, id: i32) => i32 {
 
 fun kind_of_in(kids: List<SNode>, id: i32) => i32 {
     if id < 0 { return -1 }
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.slot == id { return n.kind }
@@ -537,7 +537,7 @@ fun kind_of_in(kids: List<SNode>, id: i32) => i32 {
 
 // Add every interactive widget's slot, in tree order, which is Tab order.
 fun collect_interactive(kids: List<SNode>, out: mut List<i32>) {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if core.interactive(n.kind) && n.slot >= 0 && !n.props.disabled {
@@ -549,7 +549,7 @@ fun collect_interactive(kids: List<SNode>, out: mut List<i32>) {
 }
 
 fun collect_entries(kids: List<SNode>, out: mut List<i32>) {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.kind == core.KIND_ENTRY && n.slot >= 0 {
@@ -565,7 +565,7 @@ fun collect_entries(kids: List<SNode>, out: mut List<i32>) {
 // equality that compares the string through `kelp_map_key_eq`, a hosted runtime symbol a bare-metal
 // image has no body for (`plan/polyp-v3.md`, stage 4).
 fun find_text(kids: List<SNode>, id: i32, out: mut String) => bool {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.slot == id {
@@ -580,7 +580,7 @@ fun find_text(kids: List<SNode>, id: i32, out: mut String) => bool {
 }
 
 fun find_path(kids: List<SNode>, base: &core.Path, id: i32) => option.Option<core.Path> {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         val here = core.with_seg(base, core.seg_for(n.key.get(), i.to_i32()))
@@ -597,7 +597,7 @@ fun find_path(kids: List<SNode>, base: &core.Path, id: i32) => option.Option<cor
 }
 
 fun merge_damage(dst: mut damage.Damage, src: &damage.Damage) {
-    var i: usize = 0
+    var i: int = 0
     while i < src.count() {
         dst.add(src.at(i))
         i += 1
@@ -606,7 +606,7 @@ fun merge_damage(dst: mut damage.Damage, src: &damage.Damage) {
 
 fun damage_slot_in(kids: List<SNode>, id: i32, d: mut damage.Damage) {
     if id < 0 { return }
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.slot == id {
@@ -622,7 +622,7 @@ fun damage_slot_in(kids: List<SNode>, id: i32, d: mut damage.Damage) {
 // Tree writes, the same remove/recurse/insert shape `headless_backend.kp` uses so a write through
 // a `mut` borrow never has to move a field out of what it writes through.
 
-fun insert_into(kids: mut List<SNode>, path: &core.Path, depth: usize, at: i32, node: move SNode) {
+fun insert_into(kids: mut List<SNode>, path: &core.Path, depth: int, at: i32, node: move SNode) {
     if depth + 1 == path.segs.len() {
         var i = at
         if i < 0 {
@@ -631,10 +631,10 @@ fun insert_into(kids: mut List<SNode>, path: &core.Path, depth: usize, at: i32, 
         if i > kids.len().to_i32() {
             i = kids.len().to_i32()
         }
-        kids.insert(i.to_usize(), node)
+        kids.insert(i.to_int(), node)
         return
     }
-    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+    val idx = kid_index(kids, path.segs.get(depth)).to_int()
     var child = kids.remove(idx)
     insert_into(child.kids, path, depth + 1, at, node)
     kids.insert(idx, child)
@@ -656,7 +656,7 @@ fun sync_new_node(n: mut SNode, clock: u64) => bool {
 
 fun same_classes(a: List<String>, b: List<String>) => bool {
     if a.len() != b.len() { return false }
-    var i: usize = 0
+    var i: int = 0
     while i < a.len() {
         if !str.eq(a.get(i).as_str(), b.get(i).as_str()) { return false }
         i += 1
@@ -755,7 +755,7 @@ fun set_props_on(n: mut SNode, props: &core.Props, focus: i32, clock: u64) => bo
     n.props.disabled = props.disabled
     if !same_classes(n.props.classes, props.classes) {
         n.props.classes.clear()
-        var i: usize = 0
+        var i: int = 0
         while i < props.classes.len() {
             n.props.classes.push(String.from_str(props.classes.get(i).as_str()))
             i += 1
@@ -764,10 +764,10 @@ fun set_props_on(n: mut SNode, props: &core.Props, focus: i32, clock: u64) => bo
     return any_chan_running(n)
 }
 
-fun patch_into(kids: mut List<SNode>, path: &core.Path, depth: usize, props: &core.Props, focus: i32, clock: u64, n: mut i32, hit: mut Hit) {
+fun patch_into(kids: mut List<SNode>, path: &core.Path, depth: int, props: &core.Props, focus: i32, clock: u64, n: mut i32, hit: mut Hit) {
     val idx = kid_index(kids, path.segs.get(depth))
     if idx < 0 { return }
-    var child = kids.remove(idx.to_usize())
+    var child = kids.remove(idx.to_int())
     if depth + 1 == path.segs.len() {
         *n += 1
         hit.found = true
@@ -777,17 +777,17 @@ fun patch_into(kids: mut List<SNode>, path: &core.Path, depth: usize, props: &co
         }
         hit.rect2 = eff_rect(child, 0, 0)
         child.dirty = true
-        kids.insert(idx.to_usize(), child)
+        kids.insert(idx.to_int(), child)
         return
     }
     patch_into(child.kids, path, depth + 1, props, focus, clock, n, hit)
-    kids.insert(idx.to_usize(), child)
+    kids.insert(idx.to_int(), child)
 }
 
-fun drop_into(kids: mut List<SNode>, path: &core.Path, depth: usize, focus: i32, gone: mut Gone) {
+fun drop_into(kids: mut List<SNode>, path: &core.Path, depth: int, focus: i32, gone: mut Gone) {
     val idx = kid_index(kids, path.segs.get(depth))
     if idx < 0 { return }
-    var child = kids.remove(idx.to_usize())
+    var child = kids.remove(idx.to_int())
     if depth + 1 == path.segs.len() {
         gone.count += count_nodes(child)
         gone.rect = rect_of(child)
@@ -797,13 +797,13 @@ fun drop_into(kids: mut List<SNode>, path: &core.Path, depth: usize, focus: i32,
         return
     }
     drop_into(child.kids, path, depth + 1, focus, gone)
-    kids.insert(idx.to_usize(), child)
+    kids.insert(idx.to_int(), child)
 }
 
-fun move_into(kids: mut List<SNode>, path: &core.Path, depth: usize, to_index: i32, moved: mut Moved) {
+fun move_into(kids: mut List<SNode>, path: &core.Path, depth: int, to_index: i32, moved: mut Moved) {
     val idx = kid_index(kids, path.segs.get(depth))
     if idx < 0 { return }
-    var child = kids.remove(idx.to_usize())
+    var child = kids.remove(idx.to_int())
     if depth + 1 == path.segs.len() {
         moved.found = true
         moved.rect = rect_of(child)
@@ -814,15 +814,15 @@ fun move_into(kids: mut List<SNode>, path: &core.Path, depth: usize, to_index: i
         if at > kids.len().to_i32() {
             at = kids.len().to_i32()
         }
-        kids.insert(at.to_usize(), child)
+        kids.insert(at.to_int(), child)
         return
     }
     move_into(child.kids, path, depth + 1, to_index, moved)
-    kids.insert(idx.to_usize(), child)
+    kids.insert(idx.to_int(), child)
 }
 
 fun set_text(kids: mut List<SNode>, id: i32, text: str, d: mut damage.Damage) {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         var n = kids.remove(i)
         if n.slot == id && n.kind == core.KIND_ENTRY {
@@ -841,7 +841,7 @@ fun set_text(kids: mut List<SNode>, id: i32, text: str, d: mut damage.Damage) {
 
 fun set_pressed_in(kids: mut List<SNode>, id: i32, v: bool, d: mut damage.Damage) {
     if id < 0 { return }
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         var n = kids.remove(i)
         if n.slot == id {
@@ -860,7 +860,7 @@ fun set_pressed_in(kids: mut List<SNode>, id: i32, v: bool, d: mut damage.Damage
 
 fun set_hover_in(kids: mut List<SNode>, id: i32, v: bool, d: mut damage.Damage) {
     if id < 0 { return }
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         var n = kids.remove(i)
         if n.slot == id {
@@ -913,10 +913,10 @@ fun scalar_of(cp: i32) => i32 = if utf8.is_scalar(cp) {
     utf8.REPLACEMENT
 }
 
-fun insert_char(s: str, at: usize, cp: i32) => String {
+fun insert_char(s: str, at: int, cp: i32) => String {
     var out: String = ""
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     while i < at && i < n {
         out.push(str.byte(s, i))
         i += 1
@@ -939,10 +939,10 @@ fun insert_char(s: str, at: usize, cp: i32) => String {
     return out
 }
 
-fun remove_range(s: str, from: usize, to: usize) => String {
+fun remove_range(s: str, from: int, to: int) => String {
     var out: String = ""
     val n = str.len(s)
-    var i: usize = 0
+    var i: int = 0
     while i < n {
         if i < from || i >= to {
             out.push(str.byte(s, i))
@@ -956,7 +956,7 @@ fun remove_range(s: str, from: usize, to: usize) => String {
 // move changes pixels but not the text.
 fun edit_entry_in(kids: mut List<SNode>, id: i32, op: i32, cp: i32, d: mut damage.Damage) => bool {
     if id < 0 { return false }
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         var n = kids.remove(i)
         if n.slot == id && n.kind == core.KIND_ENTRY {
@@ -971,34 +971,34 @@ fun edit_entry_in(kids: mut List<SNode>, id: i32, op: i32, cp: i32, d: mut damag
             }
             // A caret always sits on a code point boundary: one left inside a sequence by a
             // programmatic text change snaps back to the start of that sequence.
-            care = utf8.snap_boundary(cur, care.to_usize()).to_i32()
+            care = utf8.snap_boundary(cur, care.to_int()).to_i32()
             var text_changed = false
             var caret_changed = false
             if op == OP_INSERT {
-                n.props.text = insert_char(cur, care.to_usize(), cp)
+                n.props.text = insert_char(cur, care.to_int(), cp)
                 care += utf8_len(scalar_of(cp))
                 text_changed = true
             } else if op == OP_BACKSPACE {
                 if care > 0 {
-                    val from = utf8.prev_boundary(cur, care.to_usize()).to_i32()
-                    n.props.text = remove_range(cur, from.to_usize(), care.to_usize())
+                    val from = utf8.prev_boundary(cur, care.to_int()).to_i32()
+                    n.props.text = remove_range(cur, from.to_int(), care.to_int())
                     care = from
                     text_changed = true
                 }
             } else if op == OP_DELETE {
                 if care < n_bytes {
-                    val to = utf8.next_boundary(cur, care.to_usize()).to_i32()
-                    n.props.text = remove_range(cur, care.to_usize(), to.to_usize())
+                    val to = utf8.next_boundary(cur, care.to_int()).to_i32()
+                    n.props.text = remove_range(cur, care.to_int(), to.to_int())
                     text_changed = true
                 }
             } else if op == OP_LEFT {
                 if care > 0 {
-                    care = utf8.prev_boundary(cur, care.to_usize()).to_i32()
+                    care = utf8.prev_boundary(cur, care.to_int()).to_i32()
                     caret_changed = true
                 }
             } else if op == OP_RIGHT {
                 if care < n_bytes {
-                    care = utf8.next_boundary(cur, care.to_usize()).to_i32()
+                    care = utf8.next_boundary(cur, care.to_int()).to_i32()
                     caret_changed = true
                 }
             } else if op == OP_HOME {
@@ -1155,7 +1155,7 @@ fun subtree_dirty(n: &SNode) => bool {
 
 fun mut SNode.remeasure(c: mut LayoutCount, th: &Theme) => bool {
     var child_changed = false
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         // Only a child with something dirty below it is taken out of the list, measured and put
         // back: a clean subtree answers `false` and costs a read-only scan instead of two list moves.
@@ -1184,7 +1184,7 @@ fun mut SNode.arrange_linear(r: fb.Rect, vertical: bool, grow: bool, th: &Theme,
     val spacing = props.spacing
     var fixed: i32 = 0
     var expand_n: i32 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val k = kids.get(i)
         val m = margin_of(k.props)
@@ -1329,7 +1329,7 @@ fun text_scale_of(n: &SNode, th: &Theme) => i32 {
 
 // Add one primitive's pixel count. Every stage-2 primitive returns the pixels it wrote, so the
 // paint walk's total is exact and a budget test can compare it with a rectangle's area.
-fun mut Px.add(n: usize) {
+fun mut Px.add(n: int) {
     self.n += n.to_i64()
 }
 
@@ -1415,7 +1415,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
             if care < 0 {
                 care = 0
             }
-            val cx = r.x + st.pad + utf8.count_before(n.props.text, care.to_usize()) * font.ADVANCE * sc
+            val cx = r.x + st.pad + utf8.count_before(n.props.text, care.to_int()) * font.ADVANCE * sc
             px.add(draw.vline(f, cs, cx, r.y + 2, r.h - 4, fade(th.caret, my_op, th.bg)))
         }
     } else if k == core.KIND_CHECKBOX {
@@ -1510,7 +1510,7 @@ fun hit_one(n: &SNode, clip: fb.Rect, x: i32, y: i32, th: &Theme) => i32 {
 }
 
 fun hit_nodes(kids: List<SNode>, clip: fb.Rect, x: i32, y: i32, th: &Theme) => i32 {
-    var i: usize = kids.len()
+    var i: int = kids.len()
     while i > 0 {
         i -= 1
         val id = hit_one(kids.get(i), clip, x, y, th)
@@ -1561,7 +1561,7 @@ fun mut SoftBackend.post_id(id: i32) {
 // The innermost `Scrolled` under a point, whose offset the wheel moves.
 fun scroll_in(kids: mut List<SNode>, clip: fb.Rect, x: i32, y: i32, dy: i32, pad: i32, sbw: i32, d: mut damage.Damage) => bool {
     if !fb.contains_point(clip, x, y) { return false }
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         var n = kids.remove(i)
         var found = false
@@ -1604,7 +1604,7 @@ fun mut SoftBackend.move_focus(back: bool) {
     if ids.is_empty() { return }
     var idx: i32 = 0
     var found = false
-    var i: usize = 0
+    var i: int = 0
     while i < ids.len() {
         if ids.get(i) == focus_id {
             idx = i.to_i32()
@@ -1612,16 +1612,16 @@ fun mut SoftBackend.move_focus(back: bool) {
         }
         i += 1
     }
-    var next: usize = 0
+    var next: int = 0
     if found {
         if back {
             if idx == 0 {
                 next = ids.len() - 1
             } else {
-                next = (idx - 1).to_usize()
+                next = (idx - 1).to_int()
             }
         } else {
-            next = ((idx + 1) % ids.len().to_i32()).to_usize()
+            next = ((idx + 1) % ids.len().to_i32()).to_int()
         }
     } else if back {
         next = ids.len() - 1
@@ -1819,7 +1819,7 @@ fun step_node(n: mut SNode, clock: u64, dx: i32, dy: i32, d: mut damage.Damage, 
 }
 
 fun advance_in(kids: mut List<SNode>, clock: u64, dx: i32, dy: i32, d: mut damage.Damage, fl: mut AnimFlags) {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         if any_running(kids.get(i)) {
             var n = kids.remove(i)
@@ -1868,7 +1868,7 @@ fun SoftBackend.shown_progress(index: i32) => i32 {
 }
 
 fun progress_in(kids: List<SNode>, index: i32, seen: mut i32) => i32 {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.kind == core.KIND_PROGRESS {
@@ -2068,7 +2068,7 @@ fun mut SoftBackend.paint_rect(f: fb.Fb, r: fb.Rect) => i64 {
 fun mut SoftBackend.paint(f: fb.Fb) => damage.Damage {
     var out = damage.new()
     var px: i64 = 0
-    var i: usize = 0
+    var i: int = 0
     while i < self.damage.count() {
         val r = self.damage.at(i)
         if !r.is_empty() {
@@ -2085,9 +2085,9 @@ fun mut SoftBackend.paint(f: fb.Fb) => damage.Damage {
 
 // Drop the first `n` damage rectangles, which `paint_until` has already painted. The list is at
 // most 16 entries, so rebuilding it is cheaper than a shift and keeps the code obvious.
-fun mut SoftBackend.consume_damage(n: usize) {
+fun mut SoftBackend.consume_damage(n: int) {
     var kept = damage.new()
-    var i: usize = n
+    var i: int = n
     while i < self.damage.count() {
         kept.add(self.damage.at(i))
         i += 1
@@ -2102,7 +2102,7 @@ fun paint_until<P: platform.Platform>(backend: mut SoftBackend, f: fb.Fb, platfo
     var out = damage.new()
     var px: i64 = 0
     var stop = false
-    var i: usize = 0
+    var i: int = 0
     while i < backend.damage.count() && !stop {
         val r = backend.damage.at(i)
         if !r.is_empty() {
@@ -2159,7 +2159,7 @@ fun a11y_role(n: &SNode, in_list: bool) => i32 {
 
 fun exposed(k: i32) => bool = k != core.KIND_SPACER && k != core.KIND_SEPARATOR
 
-fun a11y_build(kids: List<SNode>, i: usize, in_list: bool, focus: i32) => a11y.Node {
+fun a11y_build(kids: List<SNode>, i: int, in_list: bool, focus: i32) => a11y.Node {
     val n = kids.get(i)
     val role = a11y_role(n, in_list)
     var name: String = ""
@@ -2184,7 +2184,7 @@ fun a11y_build(kids: List<SNode>, i: usize, in_list: bool, focus: i32) => a11y.N
         name.push_str(n.props.label)
         if name.is_empty() {
             // Named after the label next to it.
-            var j: usize = i + 1
+            var j: int = i + 1
             while j < kids.len() && name.is_empty() {
                 if kids.get(j).kind == core.KIND_TEXT {
                     name.push_str(kids.get(j).props.text.as_str())
@@ -2224,7 +2224,7 @@ fun a11y_build(kids: List<SNode>, i: usize, in_list: bool, focus: i32) => a11y.N
         kids = List.empty(),
     )
     val child_in_list = n.kind == core.KIND_SCROLLED
-    var c: usize = 0
+    var c: int = 0
     while c < n.kids.len() {
         if exposed(n.kids.get(c).kind) {
             out.kids.push(a11y_build(n.kids, c, child_in_list, focus))
@@ -2246,7 +2246,7 @@ fun SoftBackend.a11y_tree() => a11y.Node {
 pub datac UidInfo(var found: bool, var slot: i32, var kind: i32, var disabled: bool)
 
 fun find_uid(kids: List<SNode>, uid: i32, out: mut UidInfo) {
-    var i: usize = 0
+    var i: int = 0
     while i < kids.len() && !out.found {
         val n = kids.get(i)
         if n.uid == uid {
@@ -2317,7 +2317,7 @@ fun SoftBackend.caret_chars_of(id: i32) => i32 {
             t = String.from_str(root.get(0).props.text.as_str())
         }
     }
-    return utf8.count_before(t, c.to_usize())
+    return utf8.count_before(t, c.to_int())
 }
 
 fun mut SoftBackend.reset_counts() {
@@ -2351,13 +2351,13 @@ fun SoftBackend.pixels_written_total() => i64 = pixels_total
 // driver reports it per step, and an idle frame reads 0 because `paint` returned nothing.
 fun SoftBackend.last_painted() => i32 = painted
 
-fun mut SoftBackend.note_painted(n: usize) {
+fun mut SoftBackend.note_painted(n: int) {
     painted = n.to_i32()
 }
 
-fun SoftBackend.damage_count() => usize = self.damage.count()
+fun SoftBackend.damage_count() => int = self.damage.count()
 
-fun SoftBackend.damage_rect(i: usize) => fb.Rect = self.damage.at(i)
+fun SoftBackend.damage_rect(i: int) => fb.Rect = self.damage.at(i)
 
 fun mut SoftBackend.clear_damage() {
     self.damage.clear()
@@ -2512,7 +2512,7 @@ impl core.Backend for SoftBackend {
             self.handle(ev)
         }
         if cursor < script.len().to_i32() {
-            val e = core.clone_event(script.get(cursor.to_usize()))
+            val e = core.clone_event(script.get(cursor.to_int()))
             pending.push(e)
             cursor += 1
         }

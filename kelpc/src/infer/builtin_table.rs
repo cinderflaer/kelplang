@@ -32,11 +32,11 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         };
         add("Bytes#empty", vec![], bytes.clone(), true);
         add("Bytes#from_str", vec![("s".to_string(), Ty::Str)], bytes.clone(), true);
-        add("Bytes#len", vec![("self".to_string(), shared.clone())], Ty::Usize, false);
+        add("Bytes#len", vec![("self".to_string(), shared.clone())], Ty::Int, false);
         add("Bytes#is_empty", vec![("self".to_string(), shared.clone())], Ty::Bool, false);
         add(
             "Bytes#get",
-            vec![("self".to_string(), shared.clone()), ("i".to_string(), Ty::Usize)],
+            vec![("self".to_string(), shared.clone()), ("i".to_string(), Ty::Int)],
             Ty::U8,
             false,
         );
@@ -44,7 +44,7 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
             "Bytes#set",
             vec![
                 ("self".to_string(), exclusive),
-                ("i".to_string(), Ty::Usize),
+                ("i".to_string(), Ty::Int),
                 ("b".to_string(), Ty::U8),
             ],
             Ty::Unit,
@@ -75,7 +75,7 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         );
         add(
             "Bytes#reserve",
-            vec![("self".to_string(), bytes_exclusive.clone()), ("extra".to_string(), Ty::Usize)],
+            vec![("self".to_string(), bytes_exclusive.clone()), ("extra".to_string(), Ty::Int)],
             Ty::Unit,
             false,
         );
@@ -99,7 +99,7 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
                     &format!("Bytes#read_{value}_{order}"),
                     vec![
                         ("self".to_string(), bytes_shared.clone()),
-                        ("offset".to_string(), Ty::Usize),
+                        ("offset".to_string(), Ty::Int),
                     ],
                     ty.clone(),
                     false,
@@ -108,7 +108,7 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
                     &format!("Bytes#write_{value}_{order}"),
                     vec![
                         ("self".to_string(), bytes_mut.clone()),
-                        ("offset".to_string(), Ty::Usize),
+                        ("offset".to_string(), Ty::Int),
                         ("value".to_string(), ty.clone()),
                     ],
                     Ty::Unit,
@@ -128,11 +128,11 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // By value: `from_bytes` takes ownership of the buffer, so the
         // receiver local is moved into this call rather than borrowed.
         add("String#from_bytes", vec![("b".to_string(), Ty::Bytes)], string.clone(), true);
-        add("String#len", vec![("self".to_string(), string_shared.clone())], Ty::Usize, false);
+        add("String#len", vec![("self".to_string(), string_shared.clone())], Ty::Int, false);
         add(
             "String#char_count",
             vec![("self".to_string(), string_shared.clone())],
-            Ty::Usize,
+            Ty::Int,
             false,
         );
         add("String#is_empty", vec![("self".to_string(), string_shared.clone())], Ty::Bool, false);
@@ -188,11 +188,11 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
             Ty::View,
             false,
         );
-        add("View#len", vec![("self".to_string(), Ty::View)], Ty::Usize, false);
+        add("View#len", vec![("self".to_string(), Ty::View)], Ty::Int, false);
         add("View#is_empty", vec![("self".to_string(), Ty::View)], Ty::Bool, false);
         add(
             "View#get",
-            vec![("self".to_string(), Ty::View), ("i".to_string(), Ty::Usize)],
+            vec![("self".to_string(), Ty::View), ("i".to_string(), Ty::Int)],
             Ty::U8,
             false,
         );
@@ -200,8 +200,8 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
             "View#slice",
             vec![
                 ("self".to_string(), Ty::View),
-                ("from".to_string(), Ty::Usize),
-                ("to".to_string(), Ty::Usize),
+                ("from".to_string(), Ty::Int),
+                ("to".to_string(), Ty::Int),
             ],
             Ty::View,
             false,
@@ -241,12 +241,12 @@ pub(crate) static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         );
         add(
             "String#reserve",
-            vec![("self".to_string(), string_exclusive.clone()), ("extra".to_string(), Ty::Usize)],
+            vec![("self".to_string(), string_exclusive.clone()), ("extra".to_string(), Ty::Int)],
             Ty::Unit,
             false,
         );
         add("String#clear", vec![("self".to_string(), string_exclusive)], Ty::Unit, false);
-        add("String#with_capacity", vec![("n".to_string(), Ty::Usize)], string.clone(), true);
+        add("String#with_capacity", vec![("n".to_string(), Ty::Int)], string.clone(), true);
 
         // Failing deliberately (S1): `kelp_panic`/`kelp_assert` already exist in
         // the runtime, these two entries are all that was missing. They are

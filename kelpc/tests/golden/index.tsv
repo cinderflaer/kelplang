@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1197 ran=585 c_refused=565 hosted_refused=9 excluded=38
+# counts candidates=1202 ran=589 c_refused=566 hosted_refused=9 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -433,6 +433,8 @@ fixture_impl_trait_args	ran	exit 0		0983e84648fb9b1d382a0a6675f34dc81a00e1fc1f05
 fixture_impl_trait_field_refused	c-refused		error: 'impl Shape' is only legal as a whole parameter type of a declared function	
 fixture_impl_trait_return_refused	c-refused		error: 'impl Trait' is not allowed in return position	
 fixture_impl_where_constraints	ran	exit 0		751f43ef30ddf4d6c674a46de13ceb7c92008fe3a8b8f71cf49b291112dc120b
+fixture_index_len_is_int	ran	exit 0		68563ba8ca8d48978dde7bf1fc3e901899408a3f65fb188f7451a055190e6b98
+fixture_index_usize_refused	c-refused		error: argument 'i' has type 'usize', expected 'int'	
 fixture_int_conversion_overflow	ran	exit 1	panic: i64.to_u8: value out of range	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_int_conversions	ran	exit 0		11de98707dcb186253d0e97063289e2762f68a16be293901aec30d8eeb45a569
 fixture_int_conversions_methods	ran	exit 0		d87371a6a5d9a1cd325e3b61e521841fc73885aada9332cc81d12d1fded71abb
@@ -477,6 +479,7 @@ fixture_list_datac_element	ran	exit 0		60ad35dbabc82cd6b606d05e21259b022c193d703
 fixture_list_element_widths	ran	exit 0		3fe2a0c48e8311f3fa4b855f82694eacf3c58bfacdb6919f2b8e81c728d8ecd7
 fixture_list_field	ran	exit 0		8e644239879d1016f4d783cb8744aea2a55b536d2fe8dbeccd4e464a69c65916
 fixture_list_float_element	ran	exit 0		ff3b668f66beddabcba3bcd6d2d6dbf74eac20f67d832cc1cfebc7b1ed726dd4
+fixture_list_get_negative	ran	exit 1	panic: List.get: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_list_growth_and_rebuild	ran	exit 0		429dace3cd31d7bd86fa204c3e550d515cd3154475e5afe73e3a3ee1e0df880c
 fixture_list_insert_bounds	ran	exit 1	panic: List.insert: index out of bounds	53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3
 fixture_list_insert_open_list	c-refused		error: 'List<unit>' cannot be a 'List' element	
@@ -790,6 +793,7 @@ fixture_stdlib_tz_zones	ran	exit 0		ccf1c207a9c1d707b220673ef9cd93826f049be0fee6
 fixture_str_byte_at_len	ran	exit 1	panic: str.byte: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_str_byte_edges	ran	exit 0		e503d0e65099dd03f45122c37113adb7c506fe9837633f4a06b2ead544525057
 fixture_str_byte_empty	ran	exit 1	panic: str.byte: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_str_byte_negative	ran	exit 1	panic: str.byte: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_str_comparison	c-refused		error: cannot compare 'str' values with '=='	
 fixture_str_core	ran	exit 0		d42839eeefd039a4606165c824ca52575422c6abff37ba18039108af61b787a6
 fixture_str_search_edges	ran	exit 0		749221ee16158437366bfd2f665884fc2c9b2e791ce6e308a51ecc73e332018a
@@ -847,7 +851,7 @@ fixture_tls_ca_dir	excluded		needs command-line arguments from a harness; run wi
 fixture_tls_ca_file	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_concurrent	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_error	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
-fixture_tls_handle_not_an_integer	c-refused		error: cannot assign value of type 'std.tls.TlsHandle' to 'n' declared as 'usize'	
+fixture_tls_handle_not_an_integer	c-refused		error: cannot assign value of type 'std.tls.TlsHandle' to 'n' declared as 'int'	
 fixture_tls_handle_not_forged	c-refused		error: function 'forge' declared to return 'std.tls.TlsHandle' but body evaluates to 'i64'	
 fixture_tls_handshake_no_timeout	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_tls_handshake_socket_timeout	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
@@ -999,6 +1003,7 @@ fixture_where_equality_constraint	ran	exit 0		ba7743d238ab04703995856840efbda02f
 fixture_where_projection_bound	ran	exit 0		98b5ced772923a1f8f78944365b46da155cb014cbe8c0a3d68555d76fb8c093e
 fixture_while_accumulator	ran	exit 0		4c82a221b575ce7fe118b2e8cdf0764bf4ef570a3017e80b6d3438af9095f376
 fixture_while_true_break	ran	exit 0		8b6d97d5fc45e93c9837c5fa0691350c95a6023f49ae78de1f90f8980fe250f9
+fixture_with_capacity_negative	ran	exit 1	panic: List.with_capacity: negative count	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_write_through_shared_borrow	c-refused		error: cannot write to 'c'	
 fixture_ws_gate	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
 fixture_ws_try_connect	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	

@@ -49,7 +49,7 @@ fun main() {
     // A static lookup table indexed in a loop, which is the reason a global
     // exists rather than a folded `const`.
     var sum: u8 = 0
-    var j: usize = 0
+    var j: int = 0
     while j < 4 {
         sum = sum + TABLE.get(i = j)
         j = j + 1
