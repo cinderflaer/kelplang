@@ -1,0 +1,10 @@
+// lang-derive-text (issue #292): a field with no text form is refused by name.
+// A `List` has no `Display`, and derive does not write one for it.
+impl "std/fmt"
+
+derive(text)
+datac Bag(val items: List<i32>)
+
+fun main() {
+    print(0)
+}

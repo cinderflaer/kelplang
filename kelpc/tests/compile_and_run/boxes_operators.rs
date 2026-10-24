@@ -560,7 +560,33 @@ pub(crate) fn derive_refuses_what_it_cannot_check() {
     );
     assert_rejected_with(
         "tests/fixtures/derive_refuse_bad_name.kp",
-        "'derive' can derive 'eq' and 'hash', not 'show'",
+        "'derive' can derive 'eq', 'hash' and 'text', not 'show'",
+    );
+}
+
+#[test]
+pub(crate) fn a_datac_and_an_enum_with_derived_text_print_their_constructor_shape() {
+    // lang-derive-text (issue #292): `derive(text)` writes `impl fmt.Display`, so
+    // `to_text`, a template and `print` all give the constructor shape. A unit
+    // variant is its name, a datac with no fields is `Name()`, and a nested value
+    // uses its own text form.
+    assert_compiles_and_runs(
+        "tests/fixtures/derive_text_datac_enum.kp",
+        "Point(3, ab, true)\nBlank()\nCircle(2)\nEmpty\nFrame(Circle(2))\nCircle(7) and Point(3, ab, true)\n",
+    );
+}
+
+#[test]
+pub(crate) fn derive_text_refuses_what_it_cannot_write() {
+    // lang-derive-text (issue #292): a field with no text form is refused by name,
+    // and a file without `impl "std/fmt"` is refused with the import to add.
+    assert_rejected_with(
+        "tests/fixtures/derive_refuse_text_field.kp",
+        "cannot write field 'items' of type 'List<i32>'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/derive_refuse_text_no_fmt.kp",
+        "needs the std/fmt import",
     );
 }
 

@@ -1,0 +1,8 @@
+// lang-derive-text (issue #292): `derive(text)` writes `impl fmt.Display`, so the
+// file must import `std/fmt` first. Without the import it is refused by name.
+derive(text)
+datac Point(val x: i32)
+
+fun main() {
+    print(Point(x = 1).x)
+}

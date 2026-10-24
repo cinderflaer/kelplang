@@ -1,0 +1,31 @@
+// lang-derive-text (issue #292): `derive(text)` writes the `Display` form of a
+// value, the constructor shape with the fields in declaration order. The program
+// prints a datac with a `String` and a `bool`, an empty datac, an enum payload
+// variant and a unit variant, a datac holding an enum (the nested value uses its
+// own text form), and interpolates two values through a template.
+impl "std/fmt"
+
+derive(text)
+datac Point(val x: i32, val name: String, val on: bool)
+
+derive(text)
+datac Blank()
+
+derive(text)
+enum Shape {
+    Circle(val r: i32)
+    Empty
+}
+
+derive(text)
+datac Frame(val s: Shape)
+
+fun main() {
+    val p = Point(x = 3, name = String.from_str(s = "ab"), on = true)
+    print(p.to_text())
+    print(Blank().to_text())
+    print(Shape.Circle(r = 2).to_text())
+    print(Shape.Empty.to_text())
+    print(Frame(s = Shape.Circle(r = 2)).to_text())
+    print("${Shape.Circle(r = 7)} and ${p}")
+}
