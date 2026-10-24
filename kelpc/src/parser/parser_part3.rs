@@ -504,7 +504,65 @@ impl Parser {
         let mut projection_bounds: Vec<ProjectionBound> = Vec::new();
         self.parse_where_clause(&type_params, &mut type_param_bounds, &mut projection_bounds, "function")?;
 
-        let body = if signature {
+        // `extern fun f(...) => T = "sym"` is a binding (issue #294): the
+        // wrapper is a call to the C symbol, and the symbol is declared as a
+        // private `extern fun` beside it (see `pending_externs`).
+        let bound = if extern_ && !signature && self.check(&TokenKind::Eq) && matches!(self.peek2_kind(), TokenKind::StringLit(_)) {
+            self.advance();
+            let sym_tok = self.advance();
+            let symbol = match sym_tok.kind {
+                TokenKind::StringLit(s) => s,
+                _ => unreachable!("checked by peek2_kind"),
+            };
+            if return_type.is_none() {
+                return Err(ParseError {
+                    help: None,
+                    message: "a binding needs a '=> T' return type: the function it declares returns what its C symbol returns".to_string(),
+                    span: start,
+                });
+            }
+            if variadic {
+                return Err(ParseError {
+                    help: None,
+                    message: "a binding cannot be variadic: its wrapper passes each parameter to the C symbol once".to_string(),
+                    span: start,
+                });
+            }
+            if !type_params.is_empty() {
+                return Err(ParseError {
+                    help: None,
+                    message: "a binding cannot take type parameters: a C symbol is not generic".to_string(),
+                    span: start,
+                });
+            }
+            let c_identifier = symbol.chars().next().is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+                && symbol.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+            if !c_identifier {
+                return Err(ParseError {
+                    help: None,
+                    message: format!("'{symbol}' is not a C identifier: a binding names its C symbol with letters, digits and '_' only"),
+                    span: sym_tok.span,
+                });
+            }
+            if symbol == name {
+                return Err(ParseError {
+                    help: None,
+                    message: format!("a binding cannot name its own symbol: '{symbol}' would be the function it declares"),
+                    span: sym_tok.span,
+                });
+            }
+            Some(symbol)
+        } else {
+            None
+        };
+
+        let body = if let Some(symbol) = &bound {
+            let args = params
+                .iter()
+                .map(|p| CallArg { name: None, value: Expr::Ident(p.name.clone(), start) })
+                .collect();
+            FunctionBody::Expr(Expr::Call { callee: symbol.clone(), type_args: Vec::new(), args, span: start })
+        } else if signature {
             // A trait method with no body is a signature; one written with `=`
             // or `{ ... }` is a default method (A-12 slice 3).
             if self.check(&TokenKind::Eq) {
@@ -563,7 +621,7 @@ impl Parser {
                 .or_else(|| params.last().map(|p| p.ty.span))
                 .unwrap_or(start),
         };
-        Ok(FunctionDecl {
+        let decl = FunctionDecl {
             name,
             is_pub,
             type_params,
@@ -572,7 +630,7 @@ impl Parser {
             receiver_bounds: Vec::new(),
             const_params,
             trait_impl: None,
-            extern_,
+            extern_: extern_ && bound.is_none(),
             unsafe_,
             must_use: false,
             variadic,
@@ -587,7 +645,18 @@ impl Parser {
             section,
             align,
             span: start.to(end),
-        })
+        };
+        if let Some(symbol) = bound {
+            // The C symbol: the same signature with the symbol as its name, no
+            // body, private, and never documented (an extern is not an item).
+            let mut ext = decl.clone();
+            ext.name = symbol;
+            ext.is_pub = false;
+            ext.extern_ = true;
+            ext.body = FunctionBody::Extern;
+            self.pending_externs.push(ext);
+        }
+        Ok(decl)
     }
 
     pub(crate) fn parse_type(&mut self) -> PResult<TypeExpr> {

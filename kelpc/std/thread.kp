@@ -109,7 +109,6 @@ datac ThreadErr(
    importing a namespace named for the wall clock it never reads. */
 
 extern fun sleep_ms_raw(ms: u64)
-extern fun current_id_raw() => u64
 
 /// Blocks the calling thread for `ms` milliseconds. It takes no capability.
 fun sleep_ms(ms: u64) {
@@ -122,4 +121,4 @@ fun sleep_ms(ms: u64) {
 /// worker did I spawn" a detached, unjoined handle's worker still has an id,
 /// and nothing in v1 hands out sequential pool slots. Backed by `pthread_self`,
 /// which is one instruction and needs no syscall.
-fun current_id() => u64 = current_id_raw()
+extern fun current_id() => u64 = "current_id_raw"

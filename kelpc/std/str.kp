@@ -25,25 +25,21 @@ const CASE_LOWER_DATA: str = "00000041000000610000004200000062000000430000006300
    The bounds checks live in the compiler-supplied bodies (see `externs.rs`)
    rather than here, so there is exactly one of each and no call site can
    forget it. */
-extern fun byte_len_raw(s: &str) => int
-extern fun byte_at_raw(s: &str, i: int) => u8
-extern fun slice_from_raw(s: &str, from: int) => &str
-extern fun byte_ptr_raw(s: &str) => Ptr<u8>
 
 /// Byte length, not character count, see `char_count`, which counts
 /// continuation bytes as parts of the same character.
-fun len(s: &str) => int = byte_len_raw(s)
+extern fun len(s: &str) => int = "byte_len_raw"
 
 /// The byte at `i`.
 /// Panics: if `i` is out of bounds.
-fun byte(s: &str, i: int) => u8 = byte_at_raw(s, i)
+extern fun byte(s: &str, i: int) => u8 = "byte_at_raw"
 
 /// The address of the first byte of `s`, which is the NUL-terminated literal
 /// itself. Reading through the pointer needs `unsafe`, like any other `Ptr`;
 /// taking it does not. This is what a driver that has to hand text to a device
 /// walks with `len`/`byte`, and the one `str` operation whose whole body is the
 /// identity.
-fun ptr(s: &str) => Ptr<u8> = byte_ptr_raw(s)
+extern fun ptr(s: &str) => Ptr<u8> = "byte_ptr_raw"
 
 /// Whether `s` has no bytes.
 fun is_empty(s: &str) => bool = len(s) == 0
@@ -51,7 +47,7 @@ fun is_empty(s: &str) => bool = len(s) == 0
 /// The tail of `s` starting at byte `from`, a view, not a copy, which is
 /// what `&str` return elision makes possible: the result borrows `s`.
 /// Panics: if `from` is past the end.
-fun substring(s: &str, from: int) => &str = slice_from_raw(s, from)
+extern fun substring(s: &str, from: int) => &str = "slice_from_raw"
 
 /// How many characters a `&str` has: bytes that do not continue a UTF-8
 /// sequence.
@@ -670,10 +666,9 @@ fun from_i64(n: i64) => String {
 
 // `x` with `decimals` digits after the point, via one `snprintf("%.*f")`.
 // `decimals` is not clamped: it is what the caller asked for.
-extern fun from_f64_raw(x: f64, decimals: i32) => String
 
 /// `x` written with `decimals` digits after the point.
-fun from_f64(x: f64, decimals: i32) => String = from_f64_raw(x, decimals)
+extern fun from_f64(x: f64, decimals: i32) => String = "from_f64_raw"
 
 /// Why a parse failed (MK5-S6-M1). `Invalid` covers everything the C
 /// conversion refused, including a value that does not fit the type: the

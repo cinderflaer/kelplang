@@ -27,10 +27,8 @@ fun uint(n: u64) => String = str.from_u64(n)
 /// `x` in decimal with exactly `decimals` digits after the point.
 fun float(x: f64, decimals: i32) => String = str.from_f64(x, decimals)
 
-extern fun hex_raw(n: u64) => String
-
 /// The hexadecimal text of `n`. Lowercase, no `0x` prefix.
-fun hex(n: u64) => String = hex_raw(n)
+extern fun hex(n: u64) => String = "hex_raw"
 
 extern fun bytes_raw(b: &Bytes) => String
 

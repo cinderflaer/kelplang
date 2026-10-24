@@ -1,0 +1,13 @@
+// Issue #294: std functions that only forward to a C symbol are bindings
+// (`extern fun f(...) => T = "sym"`). Callers see the same names, arguments
+// and results as the wrappers they replaced.
+impl "std/math"
+impl "std/str"
+
+fun main() {
+    print(math.floor(x = 2.75) == 2.0)
+    print(str.len("héllo"))
+    print(str.substring("hello", 2))
+    print(str.byte("abc", 1))
+    print(math.is_nan(x = 0.0))
+}

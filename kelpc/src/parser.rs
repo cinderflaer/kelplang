@@ -34,6 +34,11 @@ pub struct Parser {
     /// (issue #287), and taken by `parse_function_inner`, which then does not
     /// expect the keyword.
     pub(crate) bare_top_fn: bool,
+    /// The private `extern fun` that a binding (`extern fun f(...) => T = "sym"`,
+    /// issue #294) declares alongside its wrapper. Filled by
+    /// `parse_function_inner` and drained by the top-level item loop, which
+    /// pushes it just before the wrapper.
+    pub(crate) pending_externs: Vec<FunctionDecl>,
 }
 
 /// How deep source text may nest (parenthesized or prefix-chained expressions,
@@ -273,6 +278,10 @@ mod tests;
 #[cfg(test)]
 #[path = "parser/tests_b.rs"]
 mod tests_b;
+
+#[cfg(test)]
+#[path = "parser/tests_binding.rs"]
+mod tests_binding;
 
 mod parser_tail;
 pub(crate) use parser_tail::*;

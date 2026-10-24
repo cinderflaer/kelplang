@@ -28,13 +28,8 @@ impl "std/option"
    a caller see a link as a link and read its target, and `walk`/`remove_all`
    stop at one rather than descending through it (MISSING-cK4hT). */
 
-extern fun read_raw(path: &str) => Bytes
 extern fun write_raw(path: &str, data: Bytes)
 extern fun write_text_raw(path: &str, text: String)
-extern fun exists_raw(path: &str) => bool
-extern fun is_file_raw(path: &str) => bool
-extern fun is_dir_raw(path: &str) => bool
-extern fun size_raw(path: &str) => u64
 extern fun remove_raw(path: &str)
 extern fun rename_raw(from: &str, to: &str)
 extern fun mkdir_raw(path: &str)
@@ -46,16 +41,12 @@ extern fun open_raw(path: &str, mode: &str) => i32
 extern fun copy_raw(from: &str, to: &str)
 extern fun symlink_raw(target: &str, link: &str)
 extern fun touch_raw(path: &str)
-extern fun temp_path_raw(prefix: &str) => String
 extern fun mtime_raw(path: &str) => i64
 extern fun mode_raw(path: &str) => u32
 extern fun set_mode_raw(path: &str, mode: u32)
 // `stat` once, into out-parameters: an `extern` returns one value and a
 // `datac`-returning body would have to name the generated C struct.
 extern fun metadata_raw(path: &str, size: mut u64, mtime: mut i64, mode: mut u32, is_dir: mut bool, is_file: mut bool)
-extern fun is_symlink_raw(path: &str) => bool
-extern fun read_link_raw(path: &str) => String
-extern fun cwd_raw() => String
 
 // The fallible twins of `read_raw`/`open_raw`. Neither panics: the failure is
 // written through `err` (0 on success) and the return value is whatever shape
@@ -97,7 +88,7 @@ datac Metadata(
 
 /// The whole file, as owned bytes.
 /// Panics: if the file cannot be read.
-fun read(path: &str) => Bytes = read_raw(path)
+extern fun read(path: &str) => Bytes = "read_raw"
 
 /// The whole file, as owned bytes, or the reason it cannot be read: the
 /// fallible twin of `read` for a path the caller did not author, a scanner, an
@@ -175,30 +166,30 @@ must_use fun try_write_text(path: &str, text: String) => option.Option<io.IoErr>
 /// for a different one. Turning a relative argument into a path the capability
 /// check will accept is `path.absolute(fs.cwd(), arg)`.
 /// Panics: if the kernel cannot report it.
-fun cwd() => String = cwd_raw()
+extern fun cwd() => String = "cwd_raw"
 
 /// Whether `path` exists.
-fun exists(path: &str) => bool = exists_raw(path)
+extern fun exists(path: &str) => bool = "exists_raw"
 /// Whether `path` is a regular file.
-fun is_file(path: &str) => bool = is_file_raw(path)
+extern fun is_file(path: &str) => bool = "is_file_raw"
 /// Whether `path` is a directory.
-fun is_dir(path: &str) => bool = is_dir_raw(path)
+extern fun is_dir(path: &str) => bool = "is_dir_raw"
 
 /// Whether `path` is itself a symlink. `is_file`/`is_dir` follow a link and
 /// answer for what it points at; this is `lstat`, so it answers for the link,
 /// and a broken link is `true` here and `false` for both of the others. The
 /// path is normalized and symlink-resolved for the capability check like every
 /// other `fs` path, so a link out of the grant is denied rather than reported.
-fun is_symlink(path: &str) => bool = is_symlink_raw(path)
+extern fun is_symlink(path: &str) => bool = "is_symlink_raw"
 
 /// The text `path` points at, exactly as it was stored: a relative target stays
 /// relative (it is relative to the link's own directory), and a broken link
 /// still has one.
 /// Panics: if `path` is not a symlink, or cannot be read.
-fun read_link(path: &str) => String = read_link_raw(path)
+extern fun read_link(path: &str) => String = "read_link_raw"
 
 /// Panics: if the file does not exist.
-fun size(path: &str) => u64 = size_raw(path)
+extern fun size(path: &str) => u64 = "size_raw"
 
 /// Panics: if the file cannot be removed.
 fun remove(path: &str) {
@@ -531,7 +522,7 @@ fun read_lines(path: &str) => List<String> {
 /// just named.
 ///
 /// Panics: if the file cannot be created.
-fun temp_path(prefix: &str) => String = temp_path_raw(prefix)
+extern fun temp_path(prefix: &str) => String = "temp_path_raw"
 
 /// The whole of `Metadata` from one `stat`, so a walk that measures every entry
 /// pays one syscall per entry rather than the five this used to charge.

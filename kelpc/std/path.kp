@@ -13,13 +13,12 @@ fun is_absolute(s: &str) => bool = str.len(s) > 0 && str.byte(s, 0) == 47
 // which is the plan's requirement, the security-relevant normalization must
 // exist once, not twice.
 // Panics: if the path is not absolute, or escapes its own root via `..`.
-extern fun normalize_raw(s: &str) => String
 
 /// `s` normalized lexically: `//` collapses, `.` is dropped and `..` pops a
 /// segment. The path must be absolute and must not climb above `/`, which is
 /// what the capability checker requires of every path it sees.
 /// Panics: if the path is not absolute, or escapes its own root via `..`.
-fun normalize(s: &str) => String = normalize_raw(s)
+extern fun normalize(s: &str) => String = "normalize_raw"
 
 /// `p` as an absolute, normalized path: `p` alone when it is already absolute,
 /// otherwise `base` with `p` appended, in both cases run through `normalize` so

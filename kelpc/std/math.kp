@@ -17,55 +17,38 @@ const E: f64 = 2.718281828459045
 /// The full turn in radians, `2 * PI`.
 const TAU: f64 = 6.283185307179586
 
-extern fun sqrt_raw(x: f64) => f64
-extern fun pow_raw(base: f64, exp: f64) => f64
-extern fun floor_raw(x: f64) => f64
-extern fun ceil_raw(x: f64) => f64
-extern fun round_raw(x: f64) => f64
-extern fun trunc_raw(x: f64) => f64
-extern fun exp_raw(x: f64) => f64
-extern fun ln_raw(x: f64) => f64
-extern fun log2_raw(x: f64) => f64
-extern fun log10_raw(x: f64) => f64
-extern fun sin_raw(x: f64) => f64
-extern fun cos_raw(x: f64) => f64
-extern fun tan_raw(x: f64) => f64
-extern fun atan2_raw(y: f64, x: f64) => f64
-extern fun is_nan_raw(x: f64) => bool
-extern fun is_finite_raw(x: f64) => bool
-
 /// The square root of `x`.
-fun sqrt(x: f64) => f64 = sqrt_raw(x)
+extern fun sqrt(x: f64) => f64 = "sqrt_raw"
 /// `base` raised to `exp`.
-fun pow(base: f64, exp: f64) => f64 = pow_raw(base, exp)
+extern fun pow(base: f64, exp: f64) => f64 = "pow_raw"
 /// The largest whole number not above `x`.
-fun floor(x: f64) => f64 = floor_raw(x)
+extern fun floor(x: f64) => f64 = "floor_raw"
 /// The smallest whole number not below `x`.
-fun ceil(x: f64) => f64 = ceil_raw(x)
+extern fun ceil(x: f64) => f64 = "ceil_raw"
 /// `x` rounded to the nearest whole number, halves away from zero.
-fun round(x: f64) => f64 = round_raw(x)
+extern fun round(x: f64) => f64 = "round_raw"
 /// `x` with its fractional part removed.
-fun trunc(x: f64) => f64 = trunc_raw(x)
+extern fun trunc(x: f64) => f64 = "trunc_raw"
 /// `E` raised to `x`.
-fun exp(x: f64) => f64 = exp_raw(x)
+extern fun exp(x: f64) => f64 = "exp_raw"
 /// The natural logarithm of `x`.
-fun ln(x: f64) => f64 = ln_raw(x)
+extern fun ln(x: f64) => f64 = "ln_raw"
 /// The base-2 logarithm of `x`.
-fun log2(x: f64) => f64 = log2_raw(x)
+extern fun log2(x: f64) => f64 = "log2_raw"
 /// The base-10 logarithm of `x`.
-fun log10(x: f64) => f64 = log10_raw(x)
+extern fun log10(x: f64) => f64 = "log10_raw"
 /// The sine of `x` radians.
-fun sin(x: f64) => f64 = sin_raw(x)
+extern fun sin(x: f64) => f64 = "sin_raw"
 /// The cosine of `x` radians.
-fun cos(x: f64) => f64 = cos_raw(x)
+extern fun cos(x: f64) => f64 = "cos_raw"
 /// The tangent of `x` radians.
-fun tan(x: f64) => f64 = tan_raw(x)
+extern fun tan(x: f64) => f64 = "tan_raw"
 /// The angle in radians of the point (`x`, `y`).
-fun atan2(y: f64, x: f64) => f64 = atan2_raw(y, x)
+extern fun atan2(y: f64, x: f64) => f64 = "atan2_raw"
 /// Whether `x` is not a number.
-fun is_nan(x: f64) => bool = is_nan_raw(x)
+extern fun is_nan(x: f64) => bool = "is_nan_raw"
 /// Whether `x` is neither infinite nor not a number.
-fun is_finite(x: f64) => bool = is_finite_raw(x)
+extern fun is_finite(x: f64) => bool = "is_finite_raw"
 
 /// `sign` is f64-only: an integer `sign` would return an integer, which is a
 /// different function, and nothing needs it yet.

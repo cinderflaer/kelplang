@@ -36,7 +36,6 @@ extern fun listen_raw(port: u16) => i32
 extern fun listen_on_raw(host: &str, port: u16) => i32
 extern fun accept_raw(fd: i32) => i32
 extern fun accept_try_raw(fd: i32, reason: mut String) => i32
-extern fun mono_ms_raw() => i64
 extern fun close_raw(fd: i32)
 extern fun shutdown_write_raw(fd: i32)
 extern fun shutdown_write_try_raw(fd: i32) => bool
@@ -207,7 +206,7 @@ fun try_accept(l: Listener) => result.Result<Socket, NetErr> {
 /// sits in `net` rather than `time` so that a module holding `net` can keep a
 /// deadline without also being handed the `time` capability; it reads nothing
 /// but elapsed time.
-fun mono_ms() => i64 = mono_ms_raw()
+extern fun mono_ms() => i64 = "mono_ms_raw"
 
 /// Panics: if the descriptor cannot be closed.
 fun close(s: Socket) {

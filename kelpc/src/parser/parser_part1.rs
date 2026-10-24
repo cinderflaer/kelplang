@@ -14,6 +14,7 @@ impl Parser {
             depth: 0,
             datac_owner: None,
             bare_top_fn: false,
+            pending_externs: Vec::new(),
         }
     }
 
@@ -509,6 +510,7 @@ impl Parser {
                         });
                     }
                 }
+                functions.append(&mut self.pending_externs);
                 functions.push(f);
             }
             self.skip_newlines();

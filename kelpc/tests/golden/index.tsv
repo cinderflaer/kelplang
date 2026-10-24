@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1243 ran=607 c_refused=589 hosted_refused=9 excluded=38
+# counts candidates=1244 ran=608 c_refused=589 hosted_refused=9 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -792,6 +792,7 @@ fixture_static_assign_immutable	c-refused		error: cannot assign to 'static X'
 fixture_static_heap_type	c-refused		error: 'String' cannot be a static's type	
 fixture_static_mut_outside_unsafe	c-refused		error: 'static mut C' is an unsafe operation	
 fixture_static_not_constant	c-refused		error: the initializer is not constant	
+fixture_std_binding_forwards	ran	exit 0		e58cbcae93323856b01ca7768ead8bb1fc7059fd2818b2ccba388e1b19342079
 fixture_std_str_order	ran	exit 0		c5bc6b5c0e3f169a8da243d86e911c5de7f41d5c9359a0d732ec7fee9c7c88d0
 fixture_stdlib_build	ran	exit 0		b9b5b10be9279b5ab0b99d62eddd1fc7db1eeb52a2ac7d415c2fff2bc648f1e8
 fixture_stdlib_closure_callbacks	ran	exit 0		2819b289b977764e35898fb89662537aaa19be96e6e8849bde5ee9606f0d56b4

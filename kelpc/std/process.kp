@@ -29,16 +29,13 @@ impl "std/str"
 // child, three path pre-checks and the saved `argv` globals; everything a
 // caller sees is ordinary Kelp.
 
-extern fun arg_count_raw() => int
 extern fun arg_at_raw(i: int) => String
 extern fun spawn_raw(dir: &str, program: &str, args: List<String>, pid: mut i32, stdin_fd: mut i32, stdout_fd: mut i32, stderr_fd: mut i32)
 extern fun spawn_inherit_raw(dir: &str, program: &str, args: List<String>, pid: mut i32)
 extern fun reap_raw(pid: i32, block: bool, signal: mut i32) => i32
 extern fun kill_raw(pid: i32, signal: i32)
 extern fun exit_raw(code: i32)
-extern fun getpid_raw() => i64
 extern fun exists_raw(path: &str) => bool
-extern fun executable_raw(path: &str) => bool
 extern fun is_dir_raw(path: &str) => bool
 
 /// A running (or finished) child. Its three streams are ordinary `File`s, so
@@ -127,7 +124,7 @@ fun args() => List<String> {
 }
 
 /// The number of entries in `args()`, `argv[0]` included.
-fun arg_count() => int = arg_count_raw()
+extern fun arg_count() => int = "arg_count_raw"
 
 /// Starts `program` with `args` (not including the program itself), with the
 /// child's working directory set to `dir`, and three fresh pipes. An empty
@@ -257,7 +254,7 @@ fun run_inherit(program: &str, args: List<String>) => RunResult = run_inherit_in
 ///
 /// Because it takes a path, naming a program here is checked against the grant
 /// like every other resource argument.
-fun executable(program: &str) => bool = executable_raw(program)
+extern fun executable(program: &str) => bool = "executable_raw"
 
 /// As `run_in`, with the reason a program could not be started as a value
 /// instead of a panic. The three pre-checks run before the fork, so an `Err`
@@ -336,4 +333,4 @@ fun exit(code: i32) {
 }
 
 /// This process's id.
-fun getpid() => i64 = getpid_raw()
+extern fun getpid() => i64 = "getpid_raw"
