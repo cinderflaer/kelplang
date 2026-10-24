@@ -4,6 +4,6 @@ backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: 'closure() => i32' cannot be a 'List' element yet — a closure owns the environment its captures were moved into, and a container's elements are held inline; put it in a 'Box' or a one-field 'datac' instead
+error: 'closure fun() => i32' cannot be a 'List' element yet — a closure owns the environment its captures were moved into, and a container's elements are held inline; put it in a 'Box' or a one-field 'datac' instead
   --> <root>/kelpc/tests/fixtures/closure_element.kp:6:18
 run-status: not run

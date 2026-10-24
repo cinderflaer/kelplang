@@ -144,7 +144,7 @@ pub enum Ty {
     Fn { params: Vec<Ty>, ret: Box<Ty> },
     /// A function value that carries an environment (A-4 phase E): what a
     /// `fun` literal whose body names a binding from the enclosing scope
-    /// becomes. Written `closure(T) => U` - the same shape as a function
+    /// becomes. Written `closure fun(T) => U` - the same shape as a function
     /// type, under the `closure` keyword, because it is called the same way.
     ///
     /// The representation differs from `Ty::Fn` in exactly the ways that
@@ -587,7 +587,7 @@ impl Ty {
                 // The closure type reads exactly as the function type does,
                 // one keyword apart, because the two are called identically
                 // and differ only in what the value owns.
-                let mut s = format!("closure({})", join_types(params));
+                let mut s = format!("closure fun({})", join_types(params));
                 if **ret != Ty::Unit {
                     s.push_str(&format!(" => {}", ret.display()));
                 }

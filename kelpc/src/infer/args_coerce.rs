@@ -690,7 +690,7 @@ pub(crate) fn coerce_box_to_dyn(
 /// The one sentence that explains why a plain function value and a closure are
 /// different types, when one is passed where the other is expected (A-4 phase
 /// E). The two are the same shape of value and are called identically, so a
-/// bare `expected 'closure(i32) => i32', found 'fun(i32) => i32'` would leave
+/// bare `expected 'closure fun(i32) => i32', found 'fun(i32) => i32'` would leave
 /// the reader to guess which half is missing. The expected side is looked
 /// through a borrow, because a parameter of a closure type is one.
 pub(crate) fn closure_kind_mismatch(expected: &Ty, actual: &Ty) -> Option<String> {
@@ -703,7 +703,7 @@ pub(crate) fn closure_kind_mismatch(expected: &Ty, actual: &Ty) -> Option<String
             "this is a plain function value, not a closure: its body captured nothing, so it carries no environment - a `fun` literal becomes a closure when it names a binding from the enclosing scope, and a declared `fun` is always a plain function value".to_string(),
         ),
         (Ty::Fn { .. }, Ty::Closure { .. }) => Some(
-            "this is a closure: its body captured a binding from the enclosing scope, so it carries an environment a plain function value has no room for - write the expected type as 'closure(...)' (the same parameter list and '=> '), or pass a declared function instead".to_string(),
+            "this is a closure: its body captured a binding from the enclosing scope, so it carries an environment a plain function value has no room for - write the expected type as 'closure fun(...)' (the same parameter list and '=> '), or pass a declared function instead".to_string(),
         ),
         (Ty::Fn { .. } | Ty::Closure { .. }, Ty::ScopedFn { .. }) => Some(
             "this is a scoped function value: it may only be passed to another 'scoped fun(...)' parameter, because it may not outlive the call it was written in - a plain function or closure parameter could store it or return it".to_string(),

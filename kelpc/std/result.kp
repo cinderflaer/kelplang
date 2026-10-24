@@ -9,7 +9,7 @@
 
    The combinators take a callback (A-4) and read the payload through a
    *borrow*, so a callback never takes ownership: `map`'s is
-   `closure(&T) => U`. It is a *closure* (A-4 phase E), so it may capture a
+   `closure fun(&T) => U`. It is a *closure* (A-4 phase E), so it may capture a
    binding from the frame that passes it; a plain function value is widened
    into one at the call through a generated shim, so passing a declared `fun`
    still allocates nothing. The arm that has to *rebuild* the other side of the
@@ -91,14 +91,14 @@ fun expect_err<T, E>(r: &Result<T, E>, message: &str) => E {
 /// Transform the success payload through `f`. The result is taken with `move`:
 /// the failure arm hands back the `E` it was given, which is a partial move out
 /// of the owned result, so an owned error type works.
-fun map<T, U, E>(r: move Result<T, E>, f: closure(&T) => U) => Result<U, E> = when r {
+fun map<T, U, E>(r: move Result<T, E>, f: closure fun(&T) => U) => Result<U, E> = when r {
     Ok(v) -> Result.Ok(value = f(v))
     Err(e) -> Result.Err(error = e)
 }
 
 /// Transform the failure payload through `f`. The result is taken with `move`,
 /// for the mirror-image reason: the success arm hands back the `T` it was given.
-fun map_err<T, E, F>(r: move Result<T, E>, f: closure(&E) => F) => Result<T, F> = when r {
+fun map_err<T, E, F>(r: move Result<T, E>, f: closure fun(&E) => F) => Result<T, F> = when r {
     Ok(v) -> Result.Ok(value = v)
     Err(e) -> Result.Err(error = f(e))
 }
@@ -106,21 +106,21 @@ fun map_err<T, E, F>(r: move Result<T, E>, f: closure(&E) => F) => Result<T, F> 
 /// Chain a second fallible step: `f` returns a `Result` itself, which is what
 /// makes a sequence of fallible steps readable without nesting `if let`.
 /// `E` must be `Copy`, since the failure arm rebuilds `Err`.
-fun and_then<T, U, E>(r: &Result<T, E>, f: closure(&T) => Result<U, E>) => Result<U, E> = when r {
+fun and_then<T, U, E>(r: &Result<T, E>, f: closure fun(&T) => Result<U, E>) => Result<U, E> = when r {
     Ok(v) -> f(v)
     Err(e) -> Result.Err(error = e)
 }
 
 /// The result, or `f(e)` when it failed. `T` must be `Copy`, since the success
 /// arm rebuilds `Ok`.
-fun or_else<T, E, F>(r: &Result<T, E>, f: closure(&E) => Result<T, F>) => Result<T, F> = when r {
+fun or_else<T, E, F>(r: &Result<T, E>, f: closure fun(&E) => Result<T, F>) => Result<T, F> = when r {
     Ok(v) -> Result.Ok(value = v)
     Err(e) -> f(e)
 }
 
 /// Run `f` over the success payload, if there is one, and discard the result.
 /// Works for any `T`.
-fun each<T, E>(r: &Result<T, E>, f: closure(&T)) {
+fun each<T, E>(r: &Result<T, E>, f: closure fun(&T)) {
     when r {
         Ok(v) -> f(v)
         Err(_) -> {}
@@ -140,12 +140,12 @@ fun Result<T, E>.is_ok() => bool = is_ok(self)
 fun Result<T, E>.is_err() => bool = is_err(self)
 
 /// `r.and_then(f)`: see `and_then`.
-fun Result<T, E>.and_then<U>(f: closure(&T) => Result<U, E>) => Result<U, E> = and_then(self, f)
+fun Result<T, E>.and_then<U>(f: closure fun(&T) => Result<U, E>) => Result<U, E> = and_then(self, f)
 
 /// `r.or_else(f)`: see `or_else`.
-fun Result<T, E>.or_else<F>(f: closure(&E) => Result<T, F>) => Result<T, F> = or_else(self, f)
+fun Result<T, E>.or_else<F>(f: closure fun(&E) => Result<T, F>) => Result<T, F> = or_else(self, f)
 
 /// `r.each(f)`: see `each`.
-fun Result<T, E>.each(f: closure(&T)) {
+fun Result<T, E>.each(f: closure fun(&T)) {
     each(self, f)
 }

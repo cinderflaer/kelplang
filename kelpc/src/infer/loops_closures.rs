@@ -584,7 +584,7 @@ pub(crate) fn check_fn_literal_pass(
     let infer_ret = ctx.infer_scoped_ret && infer_params && scoped;
     // The function signature the *expected* type names, looked through a
     // borrow because an owned function-typed parameter arrives as
-    // `&closure(...)`. A block literal takes both its parameter types and its
+    // `&closure fun(...)`. A block literal takes both its parameter types and its
     // return from it; a written `fun` literal ignores it for the signature
     // and only uses it to learn whether it is scoped.
     let expected_sig = expected

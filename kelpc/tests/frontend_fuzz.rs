@@ -237,7 +237,7 @@ fn mutate_once(rng: &mut Rng, text: &str) -> Vec<u8> {
                 ("List<", ">"),
                 ("if x ", ""),
                 ("fun f() { ", "}"),
-                ("closure() { ", "}"),
+                ("closure fun() { ", "}"),
                 ("val a = ", ""),
                 ("when x { 1 => ", "}"),
                 ("[", ""),

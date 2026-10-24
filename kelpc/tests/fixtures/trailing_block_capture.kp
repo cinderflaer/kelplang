@@ -1,6 +1,6 @@
 // A trailing block that names a binding from the enclosing scope is a
-// capturing literal, so the callback parameter is a `closure()`.
-fun twice(f: closure()) {
+// capturing literal, so the callback parameter is a `closure fun()`.
+fun twice(f: closure fun()) {
     f()
     f()
 }

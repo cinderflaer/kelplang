@@ -9,7 +9,7 @@ fn join_types(types: &[Ty]) -> String {
 }
 
 /// The mangled signature fragment a closure instantiation is named by:
-/// `i32__i32` is `closure(i32) => i32`. Parameters first, in order, then the
+/// `i32__i32` is `closure fun(i32) => i32`. Parameters first, in order, then the
 /// return - the same order `ty_mangle`'s function-type arm uses, under a
 /// different prefix.
 pub fn closure_mangle(params: &[Ty], ret: &Ty) -> String {
@@ -32,7 +32,7 @@ pub fn closure_parts(ty: &Ty) -> Option<(&[Ty], &Ty)> {
 }
 
 /// The `Ty::Closure` spelling of a closure-shaped signature, so the body emitted
-/// for a `scoped fun(...)` block shares the key a thread's `closure(...)` entry
+/// for a `scoped fun(...)` block shares the key a thread's `closure fun(...)` entry
 /// uses (B-5).
 pub fn closure_shape(ty: &Ty) -> Ty {
     match ty {
@@ -482,7 +482,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         // `mut T`, and `&T` is spelled `refT` here. What that spelling could
         // *not* survive is a module-qualified inner type: `&json.Item` came
         // out `refjson.Item`, a name with a `.` in it, so the closure typedef
-        // for `closure(&Item)` declared inside the `json` module itself was
+        // for `closure fun(&Item)` declared inside the `json` module itself was
         // `kelp_Closure__refjson.Item__unit` - not a C identifier at all, and
         // every generated use of it failed to compile. That is the shape a
         // library hits when it offers a callback over its own type, which is

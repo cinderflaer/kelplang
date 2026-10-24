@@ -7,7 +7,7 @@
 //! - a trampoline for each user `extern fun`, one whose module allowlisted its
 //!   native symbol in `coral.toml`. The program's IR calls the trampoline with
 //!   Kelp's own shapes, and the trampoline calls the native symbol;
-//! - the native-callback glue for a `move closure(...)` parameter of a user
+//! - the native-callback glue for a `move closure fun(...)` parameter of a user
 //!   `extern fun`: a thunk the native side calls as its function pointer, and a
 //!   destructor it calls as its `destroy_notify`;
 //! - each `(module, domain)` grant's allowlist array, which `kelp-rt`'s

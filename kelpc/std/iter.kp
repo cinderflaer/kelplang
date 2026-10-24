@@ -181,7 +181,7 @@ pub datac MapIter<I, T, U>(
     /// The wrapped iterator.
     var inner: I,
     /// The function applied to each item.
-    val f: closure(&T) => U,
+    val f: closure fun(&T) => U,
 )
 
 /// Yields the next item of the wrapped iterator, passed through `f`.
@@ -195,7 +195,7 @@ fun mut MapIter<I, T, U>.next() => option.Option<U> {
 
 /* Each item through `f`. */
 /// The items of `it`, each passed through `f`.
-pub fun map<I: Iterator, U>(it: move I, f: move closure(&I::Item) => U) => MapIter<I, I::Item, U> {
+pub fun map<I: Iterator, U>(it: move I, f: move closure fun(&I::Item) => U) => MapIter<I, I::Item, U> {
     return MapIter(inner = it, f = f)
 }
 
@@ -204,7 +204,7 @@ pub datac FilterIter<I, T>(
     /// The wrapped iterator.
     var inner: I,
     /// The test an item must pass to be yielded.
-    val pred: closure(&T) => bool,
+    val pred: closure fun(&T) => bool,
 )
 
 /// Yields the next item of the wrapped iterator for which `pred` holds.
@@ -226,7 +226,7 @@ fun mut FilterIter<I, T>.next() => option.Option<T> {
 
 /* The items for which `pred` holds. */
 /// The items of `it` for which `pred` holds.
-pub fun filter<I: Iterator>(it: move I, pred: move closure(&I::Item) => bool) => FilterIter<I, I::Item> {
+pub fun filter<I: Iterator>(it: move I, pred: move closure fun(&I::Item) => bool) => FilterIter<I, I::Item> {
     return FilterIter(inner = it, pred = pred)
 }
 
@@ -370,7 +370,7 @@ pub fun chain<A: Iterator, B: Iterator>(a: move A, b: move B) => ChainIter<A, B,
 
 /* Whether `pred` holds for some item; stops at the first that does. */
 /// Whether `pred` holds for some item. Stops at the first item for which it does.
-pub fun any<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => bool {
+pub fun any<I: Iterator>(it: move I, pred: closure fun(&I::Item) => bool) => bool {
     var cursor = it
     for x in cursor {
         if pred(x) {
@@ -382,7 +382,7 @@ pub fun any<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => bool {
 
 /* Whether `pred` holds for every item; stops at the first that does not. */
 /// Whether `pred` holds for every item. Stops at the first item for which it does not.
-pub fun all<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => bool {
+pub fun all<I: Iterator>(it: move I, pred: closure fun(&I::Item) => bool) => bool {
     var cursor = it
     for x in cursor {
         if !pred(x) {
@@ -394,7 +394,7 @@ pub fun all<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => bool {
 
 /* The first item for which `pred` holds. */
 /// The first item for which `pred` holds, or `None` when none does.
-pub fun find<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => option.Option<I::Item> {
+pub fun find<I: Iterator>(it: move I, pred: closure fun(&I::Item) => bool) => option.Option<I::Item> {
     var cursor = it
     for x in cursor {
         if pred(x) {
@@ -420,7 +420,7 @@ pub fun last<I: Iterator>(it: move I) => option.Option<I::Item> {
 /// Folds the items with `f`, starting from `init`, in order.
 ///
 /// `f(acc, &item)` returns the next accumulator.
-pub fun fold<I: Iterator, A>(it: move I, init: move A, f: closure(&A, &I::Item) => A) => A {
+pub fun fold<I: Iterator, A>(it: move I, init: move A, f: closure fun(&A, &I::Item) => A) => A {
     var cursor = it
     var acc = init
     for x in cursor {

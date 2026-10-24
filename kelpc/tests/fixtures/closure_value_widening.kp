@@ -24,7 +24,7 @@ fun pick(which: bool) => fun(i32) => i32 {
     return dec
 }
 
-fun apply(f: closure(i32) => i32, x: i32) => i32 = f(x)
+fun apply(f: closure fun(i32) => i32, x: i32) => i32 = f(x)
 
 fun main() {
     // A known function: the shim, and nothing on the heap.

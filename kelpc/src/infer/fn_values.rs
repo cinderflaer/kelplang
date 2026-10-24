@@ -185,7 +185,7 @@ pub(crate) fn indirect_callee(
     ctx: &mut Ctx,
 ) -> Result<Option<(tir::Expr, Ty)>> {
     // A parameter of a closure type is a *borrow* of one (the parameter rule
-    // borrows an owned type), so the callee's type may be `&closure(..)` -
+    // borrows an owned type), so the callee's type may be `&closure fun(..)` -
     // codegen dereferences it. A `fun` is `Copy`, so it is never borrowed.
     let callable = |ty: &Ty| -> Option<Ty> {
         match ty {
@@ -218,7 +218,7 @@ pub(crate) fn indirect_callee(
         // registered here, which is why this takes `&mut Ctx`.
         if let Some(ty) = ctx.note_capture(name, span) {
             // A scoped literal captures an owned closure by shared borrow, so
-            // a callable capture may arrive as `&closure(...)` as well.
+            // a callable capture may arrive as `&closure fun(...)` as well.
             let callable = matches!(ty, Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. })
                 || matches!(&ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. }));
             if callable {

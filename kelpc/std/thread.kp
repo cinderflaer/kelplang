@@ -3,7 +3,7 @@
    lowered the two on both backends.
 
        fun fence(order: Ordering)
-       fun spawn<t, r>(entry: closure(move t) => r, arg: move t) => Thread<r>
+       fun spawn<t, r>(entry: closure fun(move t) => r, arg: move t) => Thread<r>
        fun join<t>(handle: move Thread<t>) => Result<t, ThreadErr>
 
    `spawn` and `join` are *checker* builtins: the compiler builds their

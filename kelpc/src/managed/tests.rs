@@ -436,7 +436,7 @@ fn the_crossing_table_lifts_channel_records_and_keeps_the_rest_refused() {
         ("std.pool.Pool", Ty::Struct("std.pool.Pool".into())),
         ("List<Sender<i64>>", list(sender())),
         ("Missing", Ty::Struct("Missing".into())),
-        ("closure() => i64", Ty::Closure { params: vec![], ret: Box::new(Ty::I64) }),
+        ("closure fun() => i64", Ty::Closure { params: vec![], ret: Box::new(Ty::I64) }),
     ];
     for (label, ty) in refused {
         assert_ne!(

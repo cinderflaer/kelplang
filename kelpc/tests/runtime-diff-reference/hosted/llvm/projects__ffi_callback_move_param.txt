@@ -3,6 +3,6 @@ backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: the callback closure type 'closure(move i32)' takes 'move i32' by ownership or an exclusive borrow, but a native callback thunk forwards every argument by value: write the closure parameter as a scalar, 'bool', 'str', an opaque handle or 'unit'
+error: the callback closure type 'closure fun(move i32)' takes 'move i32' by ownership or an exclusive borrow, but a native callback thunk forwards every argument by value: write the closure parameter as a scalar, 'bool', 'str', an opaque handle or 'unit'
   --> <root>/kelpc/tests/projects/ffi_callback_move_param/src/helper.kp:4:40
 run-status: not run

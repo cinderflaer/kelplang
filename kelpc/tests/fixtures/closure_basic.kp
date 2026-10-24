@@ -1,7 +1,7 @@
 // A-4 phase E: captures. A `fun` literal that names a binding from the
 // enclosing scope becomes a *closure*, a function value plus the heap
 // environment those captures were moved into, and its type is written
-// `closure(T) => U`, the function type one keyword apart.
+// `closure fun(T) => U`, the function type one keyword apart.
 //
 // A `Copy` capture is copied into the environment (the binding stays usable);
 // an owned one is *moved* in, and the environment owns it from then on. The
@@ -11,18 +11,18 @@
 // once, through the environment's generated drop.
 impl "std/str"
 
-datac Holder(val cb: closure(i32) => i32)
+datac Holder(val cb: closure fun(i32) => i32)
 
 // An owned capture that is itself a `datac` with an owned field: the
 // environment's drop goes through the generated `datac` drop, not just the
 // builtin ones.
 datac Point(val x: i32, val label: String)
 
-fun apply(f: closure(i32) => i32, x: i32) => i32 = f(x)
+fun apply(f: closure fun(i32) => i32, x: i32) => i32 = f(x)
 
-fun own(f: move closure(i32) => i32, x: i32) => i32 = f(x)
+fun own(f: move closure fun(i32) => i32, x: i32) => i32 = f(x)
 
-fun make(prefix: move String) => closure(i32) => i32 {
+fun make(prefix: move String) => closure fun(i32) => i32 {
     return fun(x: i32) => i32 = x + prefix.len().to_i32()
 }
 
@@ -50,11 +50,11 @@ fun main() {
     print(f(10))
 
     // A closure in a `datac` field, and one in a `Box`, the optional-callback
-    // shape, since `List<closure(...)>` is refused (a list's elements are
+    // shape, since `List<closure fun(...)>` is refused (a list's elements are
     // inline).
     val h = Holder(cb = fun(x: i32) => i32 = x + k)
     print(h.cb(5))
-    val boxed: Box<closure(i32) => i32> = Box.of(fun(x: i32) => i32 = x * 2)
+    val boxed: Box<closure fun(i32) => i32> = Box.of(fun(x: i32) => i32 = x * 2)
     val bf = boxed.get()
     print(bf(21))
 
@@ -72,7 +72,7 @@ fun main() {
 
     // Ownership moving *out* of a `Box`: `take` hands the closure over, and
     // the box it came from is empty and holds nothing to free.
-    var slot: Box<closure(i32) => i32> = Box.empty()
+    var slot: Box<closure fun(i32) => i32> = Box.empty()
     slot.set(fun(x: i32) => i32 = x + k)
     val taken = slot.take()
     print(taken(1))

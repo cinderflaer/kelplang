@@ -486,7 +486,7 @@ pub enum ExprKind {
     /// refuses.
     Capture { index: usize },
     /// A plain function value used where a closure is expected (A-4 phase E):
-    /// the widening that makes `val f: closure(i32) => i32 = double` and
+    /// the widening that makes `val f: closure fun(i32) => i32 = double` and
     /// `Holder(cb = fun(x: i32) => i32 = x)` mean what they read as. A `fun`
     /// value is a bare code pointer with no environment, so the value is
     /// wrapped in a one-field environment holding the pointer, plus a thunk

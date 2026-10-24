@@ -349,7 +349,7 @@ impl<'a> Gen<'a> {
         }
         for (pname, pty) in &f.params {
             let llvm_pty = llvm_type(ctx, &self.structs, &self.containers, pty)?;
-            // A `move closure(...)` parameter of a user extern is the
+            // A `move closure fun(...)` parameter of a user extern is the
             // native-callback shape (gap 4). A closure is a three-pointer fat
             // pointer, 24 bytes, which `rt_arg_value` already passes through a
             // stack slot; the per-program object's trampoline takes that

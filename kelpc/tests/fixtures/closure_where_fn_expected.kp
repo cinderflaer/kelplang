@@ -1,6 +1,6 @@
 // A-4 phase E: a closure cannot be passed where a plain function value is
 // expected, the closure carries an environment a `fun` type has no room for,
-// so the parameter's type has to say `closure(...)`.
+// so the parameter's type has to say `closure fun(...)`.
 fun apply(f: fun(i32) => i32, x: i32) => i32 = f(x)
 
 fun main() {

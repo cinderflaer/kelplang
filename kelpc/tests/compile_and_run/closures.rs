@@ -322,7 +322,7 @@ pub(crate) fn a_combinator_needing_a_copy_payload_says_so() {
 
 // ---------------------------------------------------------------------------
 // A-4 phase E: captures, a `fun` literal that names a binding from the
-// enclosing scope becomes a closure (`closure(T) => U`), which owns the heap
+// enclosing scope becomes a closure (`closure fun(T) => U`), which owns the heap
 // environment its captures were moved into.
 // ---------------------------------------------------------------------------
 
@@ -419,7 +419,7 @@ pub(crate) fn a_closure_capture_is_checked() {
 
 #[test]
 pub(crate) fn the_closure_type_and_its_limits_are_checked() {
-    // `&closure(...)` is not a type, a closure is not a container element, the
+    // `&closure fun(...)` is not a type, a closure is not a container element, the
     // widening needs the same signature, a closure cannot go where a plain
     // function value is expected, and the one widening that exists (a `fun`
     // value where a closure is expected) does not blur the ownership rules:
@@ -435,7 +435,7 @@ pub(crate) fn the_closure_type_and_its_limits_are_checked() {
     );
     assert_rejected_with(
         "tests/fixtures/closure_signature_mismatch.kp",
-        "declared as 'closure(i32) => i32'",
+        "declared as 'closure fun(i32) => i32'",
     );
     assert_rejected_with(
         "tests/fixtures/closure_where_fn_expected.kp",

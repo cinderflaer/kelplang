@@ -1,8 +1,8 @@
 // A-4 phase E: a closure owns its environment and a container's elements are
-// held inline, so `List<closure(...)>` is refused; `Box<closure(...)>` is the
+// held inline, so `List<closure fun(...)>` is refused; `Box<closure fun(...)>` is the
 // shape that works.
 fun main() {
     val k = 1
-    val xs: List<closure() => i32> = List.of(fun() => i32 = k)
+    val xs: List<closure fun() => i32> = List.of(fun() => i32 = k)
     print(xs.len())
 }

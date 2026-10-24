@@ -750,7 +750,7 @@ impl Parser {
         // A function type (A-4): `fun(i32, String) => bool`. `fun` is a
         // keyword, so this can never be an ordinary type name. A closure type
         // (A-4 phase E) is the same shape under the `closure` keyword:
-        // `closure(i32) => i32` is a function value that owns an environment.
+        // `closure fun(i32) => i32` is a function value that owns an environment.
         // A fixed-size array type (A-18): `[T; N]`. Its length is a
         // compile-time constant expression (A-19), kept as an expression here
         // and folded by `infer.rs` when the type is resolved. So
@@ -861,8 +861,19 @@ impl Parser {
             self.advance();
             return self.parse_fn_type(start, amp_start, "fun", true);
         }
+        // `closure fun(T) => U` - the closure form of the one function type
+        // spelling (issue #293). The marker goes before `fun`, the way
+        // `scoped` does, and the old `closure(...)` spelling is refused.
         if self.check(&TokenKind::Closure) {
             let start = self.advance().span;
+            if !self.check(&TokenKind::Fun) {
+                return Err(ParseError {
+                    help: Some("write the closure type as 'closure fun(...) => T'".to_string()),
+                    message: "a closure type is written 'closure fun(...)': the 'closure' marker goes before 'fun', which is the one spelling of a function type".to_string(),
+                    span: self.peek().span,
+                });
+            }
+            self.advance();
             return self.parse_fn_type(start, amp_start, "closure", false);
         }
         let (first, first_span) = self.expect_ident()?;

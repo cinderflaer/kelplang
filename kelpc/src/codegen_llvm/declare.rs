@@ -246,7 +246,7 @@ impl<'a> Gen<'a> {
         // The closure machinery (S2E): the per-signature drop, the widening
         // thunk and its destructor, and the shim a known function is widened
         // through. Declared after the container sets because a container whose
-        // element is a closure (`Box<closure(...)>`) calls the element's drop.
+        // element is a closure (`Box<closure fun(...)>`) calls the element's drop.
         self.declare_closure_fns()?;
         // The `&dyn` machinery (A-12 slice 4): one thunk and one read-only
         // table per vtable the program uses. Declared after the closure

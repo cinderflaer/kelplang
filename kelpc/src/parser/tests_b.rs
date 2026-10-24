@@ -281,22 +281,42 @@ fn parses_a_function_type_in_parameter_and_return_position() {
 
 #[test]
 fn parses_a_closure_type_in_parameter_and_return_position() {
-    // A closure type is a function type under the `closure` keyword - the
-    // same parameter list, the same optional `=> T` (A-4 phase E).
-    let p = parse("fun use(f: closure(i32) => i32, g: move closure()) {}");
+    // A closure type is a function type with the `closure` marker in front of
+    // `fun` - the same parameter list, the same optional `=> T` (A-4 phase E,
+    // issue #293).
+    let p = parse("fun use(f: closure fun(i32) => i32, g: move closure fun()) {}");
     let f = &p.functions[0];
 
     let f_param = &f.params[0];
     assert!(f_param.ty.is_closure());
-    assert_eq!(f_param.ty.display(), "closure(i32) => i32");
+    assert_eq!(f_param.ty.display(), "closure fun(i32) => i32");
     assert!(!f_param.mode.moves());
 
     // A bare closure parameter borrows the environment (an owned type's
-    // parameter is a borrow); `move closure(...)` takes it over.
+    // parameter is a borrow); `move closure fun(...)` takes it over.
     let g_param = &f.params[1];
     assert!(g_param.ty.is_closure());
     assert!(g_param.mode.moves());
-    assert_eq!(g_param.ty.display(), "closure()");
+    assert_eq!(g_param.ty.display(), "closure fun()");
+}
+
+#[test]
+fn a_plain_function_type_is_not_a_closure() {
+    // `fun(...)` alone is the function pointer; the marker is what makes the
+    // closure form, so one keyword carries both meanings (issue #293).
+    let p = parse("fun use(f: fun(i32) => i32) {}");
+    let f_param = &p.functions[0].params[0];
+    assert!(f_param.ty.is_fn());
+    assert!(!f_param.ty.is_closure());
+    assert_eq!(f_param.ty.display(), "fun(i32) => i32");
+}
+
+#[test]
+fn the_old_closure_spelling_is_refused_with_the_new_one_named() {
+    // `closure fun(...)` was the old spelling of the closure form. It is refused,
+    // and the message names the one spelling that replaces it (issue #293).
+    let err = parse_err("fun use(f: closure(i32) => i32) {}");
+    assert!(err.message.contains("closure fun("), "message was: {}", err.message);
 }
 
 #[test]

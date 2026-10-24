@@ -129,7 +129,7 @@ pub fn is_box_element(ty: &Ty) -> bool {
     match ty {
         // A closure is an ordinary C struct, and it is emitted before every
         // `Box` instantiation that names one (A-4 phase E), so a box is the
-        // one container that can hold a closure - `Box<closure() => i32>` is
+        // one container that can hold a closure - `Box<closure fun() => i32>` is
         // how an *optional* callback is written (`Box.empty()`).
         Ty::Bytes
         | Ty::String

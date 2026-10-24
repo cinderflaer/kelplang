@@ -77,7 +77,7 @@ pub enum TokenKind {
 
     // keywords
     Fun,
-    /// `closure(i32) => i32` - the type of a `fun` literal that captures
+    /// `closure fun(i32) => i32` - the type of a `fun` literal that captures
     /// (A-4, phase E): a function *value* that carries an environment, so it
     /// is owned (not Copy) and drops that environment. A keyword rather than
     /// a contextual name, for the reason `fun` is one: the spelling is a type

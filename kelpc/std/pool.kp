@@ -4,7 +4,7 @@
    `impl "std/thread"`):
 
        fun pool.new(workers: i32) => Pool
-       fun Pool.spawn(job: move closure())
+       fun Pool.spawn(job: move closure fun())
        fun Pool.join()
        fun Pool.panicked() => i32
 
@@ -52,7 +52,7 @@ datac PoolMeta(
 /// because a closure cannot be a list element.
 datac Job(
     /// The closure to run.
-    val run: closure()
+    val run: closure fun()
 )
 
 /// The state a pool shares with its workers: the counters, the job queue and the
@@ -148,7 +148,7 @@ fun new(workers: i32) => Pool {
 /// Queues `job`. It runs on some worker, in FIFO order.
 ///
 /// Panics: if the pool has been joined.
-fun Pool.spawn(job: move closure()) {
+fun Pool.spawn(job: move closure fun()) {
     val staged: Mutex<List<Job>> = Mutex.new(List.of(Job(run = job)))
     val open = self.shared.meta.lock { s ->
         if s.stop {

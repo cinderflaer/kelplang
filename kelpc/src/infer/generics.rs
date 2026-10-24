@@ -332,7 +332,7 @@ pub(crate) fn bind_type_params(
     // lets `map<T, U>(o: &Option<T>, f: fun(&T) => U)` take both `T` and `U`
     // from its arguments, and it is the only place a function type is bound.
     // A closure type (A-4 phase E) pairs the same way, which is what lets a
-    // callback written as `f: closure(&T) => U` infer `U` from a literal.
+    // callback written as `f: closure fun(&T) => U` infer `U` from a literal.
     if let Some(written_params) = &written.fn_params {
         let implied = match actual {
             Ty::Fn { params, ret }

@@ -3,7 +3,7 @@
 // case that used to mangle into `refitems.Item`, not a C identifier.
 pub datac Item(val n: i64)
 
-pub fun each(items: &List<Item>, f: closure(&Item)) {
+pub fun each(items: &List<Item>, f: closure fun(&Item)) {
     var i: int = 0
     while i < items.len() {
         f(items.get(i))
@@ -11,7 +11,7 @@ pub fun each(items: &List<Item>, f: closure(&Item)) {
     }
 }
 
-pub fun any_big(items: &List<Item>, f: closure(&Item) => bool) => bool {
+pub fun any_big(items: &List<Item>, f: closure fun(&Item) => bool) => bool {
     var i: int = 0
     while i < items.len() {
         if f(items.get(i)) {

@@ -45,12 +45,12 @@ pub(crate) fn display_name(f: &ast::FunctionDecl) -> String {
 
 /// Checks the native-callback parameters of a user `extern fun` (gap 4).
 ///
-/// A `move closure(...)` parameter is the one shape the C backend expands in
+/// A `move closure fun(...)` parameter is the one shape the C backend expands in
 /// place into a `(thunk, env, destroy)` triple, so the closure's own signature
 /// must be one the generated thunk can forward by value: every parameter and
 /// the return are a scalar, `bool`, `str`, an opaque handle or `unit`, no
 /// parameter takes ownership or an exclusive borrow, and the function has at
-/// most one such parameter. A plain `closure(...)` parameter is refused by
+/// most one such parameter. A plain `closure fun(...)` parameter is refused by
 /// name: the native side has to own the closure, or the `destroy` notify has
 /// nothing safe to free.
 pub(crate) fn check_extern_callback_params(f: &ast::FunctionDecl, sig: &FnSig) -> Result<()> {
@@ -118,7 +118,7 @@ pub(crate) fn check_extern_callback_params(f: &ast::FunctionDecl, sig: &FnSig) -
         return Err(TypeError {
             help: None,
             message: format!(
-                "'{}' takes {callbacks} callback closures, but a user 'extern fun' can expand at most one 'move closure(...)' parameter in this pass",
+                "'{}' takes {callbacks} callback closures, but a user 'extern fun' can expand at most one 'move closure fun(...)' parameter in this pass",
                 f.name
             ),
             span: f.span,

@@ -455,7 +455,7 @@ impl TypeExpr {
         }
     }
 
-    /// Whether this is a closure type (`closure(i32) => i32`) - the owned,
+    /// Whether this is a closure type (`closure fun(i32) => i32`) - the owned,
     /// environment-carrying form of a function type (A-4 phase E).
     pub fn is_closure(&self) -> bool {
         self.fn_params.is_some() && self.name == "closure"
@@ -506,7 +506,8 @@ impl TypeExpr {
             // (A-4 phase E).
             let args: Vec<String> = params.iter().map(|p| p.display()).collect();
             let modifier = if self.scoped { "scoped " } else { "" };
-            format!("{}{}({})", modifier, self.name, args.join(", "))
+            let keyword = if self.is_closure() { "closure fun" } else { "fun" };
+            format!("{}{}({})", modifier, keyword, args.join(", "))
         } else if self.args.is_empty() {
             self.name.clone()
         } else {

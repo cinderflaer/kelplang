@@ -17,7 +17,7 @@ impl<'a> Gen<'a> {
         arrays.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
 
         // The closure signature types first (S2E): a container element may be
-        // one (`Box<closure(...)>`), a parameter certainly may, and a later
+        // one (`Box<closure fun(...)>`), a parameter certainly may, and a later
         // closure signature may name an earlier one. The earlier emitter emits these
         // before every container and `datac` for the same reason.
         let mut closures: Vec<Ty> = inst.closures.iter().cloned().collect();

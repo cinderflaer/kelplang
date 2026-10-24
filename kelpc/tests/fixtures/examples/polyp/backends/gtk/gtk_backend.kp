@@ -120,7 +120,7 @@ fun gtk_align(align: i32) => i32 {
 
 // The handler a button, checkbox or entry gets: a closure whose whole environment is the slot id.
 // The native side runs it on the loop's own thread, so `polyp_post` is an ordinary store.
-fun post_handler(id: i32) => closure(gtk.Widget) {
+fun post_handler(id: i32) => closure fun(gtk.Widget) {
     return fun (w: gtk.Widget) {
         queue.polyp_post(id)
     }
@@ -128,21 +128,21 @@ fun post_handler(id: i32) => closure(gtk.Widget) {
 
 // The handler a `g_timeout_add_full` source gets. It posts once and returns `G_SOURCE_REMOVE`, so
 // the source is destroyed after it fires.
-fun timeout_handler(id: i32) => closure() => i32 {
+fun timeout_handler(id: i32) => closure fun() => i32 {
     return fun () => i32 {
         queue.polyp_post(id)
         return 0
     }
 }
 
-fun set_entry_handler(index: i32, new_text: move String) => closure() => i32 {
+fun set_entry_handler(index: i32, new_text: move String) => closure fun() => i32 {
     return fun () => i32 {
         queue.polyp_post_edit(index, new_text.as_str())
         return 0
     }
 }
 
-fun focus_entry_handler(index: i32) => closure() => i32 {
+fun focus_entry_handler(index: i32) => closure fun() => i32 {
     return fun () => i32 {
         queue.polyp_post_focus(index)
         return 0
@@ -151,7 +151,7 @@ fun focus_entry_handler(index: i32) => closure() => i32 {
 
 // TRUE: the default handler would destroy the window, and the loop still owns the unref it does on
 // the way out.
-fun close_handler() => closure(gtk.Window) => i32 {
+fun close_handler() => closure fun(gtk.Window) => i32 {
     return fun (w: gtk.Window) => i32 {
         queue.polyp_post(QUIT_ID)
         return 1

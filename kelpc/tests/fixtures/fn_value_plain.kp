@@ -12,7 +12,7 @@ fun triple(x: i32) => i32 = x * 3
 // A function type as a parameter, and one widened closure parameter by `move`.
 fun apply(f: fun(i32) => i32, x: i32) => i32 = f(x)
 
-fun own(f: move closure(i32) => i32, x: i32) => i32 = f(x)
+fun own(f: move closure fun(i32) => i32, x: i32) => i32 = f(x)
 
 // A function type as a return value: which function it is, the caller cannot
 // tell, so calling it is the backend's indirect call.
@@ -26,7 +26,7 @@ fun pick(which: bool) => fun(i32) => i32 {
 // A function value in a `datac` field, and a closure in one.
 datac Handlers(val on_i32: fun(i32) => i32)
 
-datac Callback(val cb: closure(i32) => i32)
+datac Callback(val cb: closure fun(i32) => i32)
 
 fun call_through(h: Handlers, x: i32) => i32 = h.on_i32(x)
 
@@ -46,7 +46,7 @@ fun main() {
     // A `Box` is the one container a closure may be an element of, and the
     // literal here captured `k`, so the box owns an environment.
     val k: i32 = 5
-    val boxed: Box<closure(i32) => i32> = Box.of(fun(x: i32) => i32 = x * k)
+    val boxed: Box<closure fun(i32) => i32> = Box.of(fun(x: i32) => i32 = x * k)
     val g = boxed.get()
     print(g(4))
 

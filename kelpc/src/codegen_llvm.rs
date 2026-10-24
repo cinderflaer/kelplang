@@ -210,7 +210,7 @@
 //!   callee's text is in the runtime crate or in the program's own object.
 //! - a user `extern fun` has no body in the program: its trampoline is written
 //!   per program as LLVM IR in `<out>.externs.o` (`extern_object.rs`), together
-//!   with the callback glue of its `move closure(...)` parameters and the
+//!   with the callback glue of its `move closure fun(...)` parameters and the
 //!   capability allowlist arrays. It is per program because it names the native
 //!   symbols the program allowlisted, and no fixed object could carry those.
 //!

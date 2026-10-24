@@ -207,7 +207,7 @@ pub(crate) fn an_ffi_extern_fun_with_two_callback_closures_is_rejected() {
     assert_project_rejected(
         "ffi_callback_two",
         &project("ffi_callback_two"),
-        "at most one 'move closure(...)' parameter",
+        "at most one 'move closure fun(...)' parameter",
     );
 }
 

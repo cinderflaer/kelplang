@@ -4,6 +4,6 @@ backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: cannot assign value of type 'fun(f64) => f64' to 'f' declared as 'closure(i32) => i32'
+error: cannot assign value of type 'fun(f64) => f64' to 'f' declared as 'closure fun(i32) => i32'
   --> <root>/kelpc/tests/fixtures/closure_signature_mismatch.kp:7:5
 run-status: not run

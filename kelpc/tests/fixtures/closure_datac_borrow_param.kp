@@ -7,7 +7,7 @@
 // there, so `cc` rejected the program outright.
 datac Item(val n: i64)
 
-fun each(items: &List<Item>, f: closure(&Item)) {
+fun each(items: &List<Item>, f: closure fun(&Item)) {
     var i: int = 0
     while i < items.len() {
         f(items.get(i))

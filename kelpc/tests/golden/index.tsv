@@ -112,13 +112,13 @@ fixture_closure_capture_borrow	c-refused		error: a 'fun' literal cannot capture 
 fixture_closure_capture_by_value	c-refused		error: cannot read a captured value out of the closure's environment by value	
 fixture_closure_capture_receiver	c-refused		error: a 'fun' literal cannot capture 'n'	
 fixture_closure_datac_borrow_param	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
-fixture_closure_element	c-refused		error: 'closure().return	
+fixture_closure_element	c-refused		error: 'closure fun().return	
 fixture_closure_env_wide_ret	ran	exit 0		af8d1f9b519f8f041c8ce4f11d0558665b4e8d5a16ee242c93e4ee3f5e8bd6bf
 fixture_closure_move	ran	exit 0		1a22fcd8212054e30284fea2f9afe59584bd7e92d4901a04387a001f11def2d2
 fixture_closure_nested_owned	c-refused		error: cannot capture 'text' into this literal	
 fixture_closure_signature_mismatch	c-refused		error: cannot assign value of type 'fun(f64).return	
 fixture_closure_two_captures	ran	exit 0		97ad51a8ddef98bf24e5fc6fc0dcef2a4ecaa7b445deab2e6de77d4854df887c
-fixture_closure_type_amp	c-refused		error: '&' cannot be written on the closure type 'closure().return	
+fixture_closure_type_amp	c-refused		error: '&' cannot be written on the closure type 'closure fun().return	
 fixture_closure_use_after_capture	c-refused		error: use of moved value 'text'	
 fixture_closure_use_after_move	c-refused		error: use of moved value 'g'	
 fixture_closure_value_widening	ran	exit 0		819e83d2fdfc263063139970f78ba7372c5daeef13403aad69175ed8dcdf827a
@@ -1061,8 +1061,8 @@ project_ffi_bad_header	c-refused		error: coral.toml value for '[extern."ctype"] 
 project_ffi_bad_header_dotdot	c-refused		error: coral.toml value for '[extern."ctype"] header' must not contain '"', '<', '>', a newline or '..'	
 project_ffi_bad_rename	c-refused		error: coral.toml C symbol for '[extern."sys"] symbols' must be a C identifier, found 'get-pid'	
 project_ffi_bad_symbol	c-refused		error: extern function 'getpid' is not in this module's coral.toml '[extern."sys"]' symbol allowlist — add it there before declaring 'extern fun getpid'	
-project_ffi_callback_move_param	c-refused		error: the callback closure type 'closure(move i32)' takes 'move i32' by ownership or an exclusive borrow, but a native callback thunk forwards every argument by value	
-project_ffi_callback_two	c-refused		error: 'helper.kelp_call_twice' takes 2 callback closures, but a user 'extern fun' can expand at most one 'move closure(...)' parameter in this pass	
+project_ffi_callback_move_param	c-refused		error: the callback closure type 'closure fun(move i32)' takes 'move i32' by ownership or an exclusive borrow, but a native callback thunk forwards every argument by value	
+project_ffi_callback_two	c-refused		error: 'helper.kelp_call_twice' takes 2 callback closures, but a user 'extern fun' can expand at most one 'move closure fun(...)' parameter in this pass	
 project_ffi_denied	c-refused		error: 'sys.getpid' needs the 'process' capability, which module 'util' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(process = ["<pattern>"])`)	
 project_ffi_aggregate	ran	exit 0		0c250dac1c65bcd0332ad28246a632e644c44a58960a50c4f6c621508adc0ac7
 project_ffi_aggregate_datac	ran	exit 0		dc18002067aadd115069c9dad9d5ea1c5e53faf0f794b5fef54cf129730a87b0
@@ -1212,7 +1212,7 @@ fixture_closure_mutex_list	ran	exit 0		9367dd14ee7e57e0b4e916fb72d85d2fa922906a3
 fixture_closure_mutex_poison	ran	exit 0		47b3a169382618425bf0fdc65c8c998f1c82ba6e92cf3108d03a55ad18394fff
 fixture_closure_sender_panic	ran	exit 0		47b3a169382618425bf0fdc65c8c998f1c82ba6e92cf3108d03a55ad18394fff
 fixture_closure_sender_send	ran	exit 0		1f69cdc3bca5b8687df61e771ebe41c94c82f13930823331672d177f79939b2c
-fixture_thread_arg_closure_value	c-refused		error: 'closure() => i64' cannot be a thread's argument in a hosted build: 'closure() => i64' is a resource, and a resource never enters the collected heap, because its drop has to run at scope end. Keep it in a local, a parameter or a field of a stack value, and let it drop there	
+fixture_thread_arg_closure_value	c-refused		error: 'closure fun() => i64' cannot be a thread's argument in a hosted build: 'closure fun() => i64' is a resource, and a resource never enters the collected heap, because its drop has to run at scope end. Keep it in a local, a parameter or a field of a stack value, and let it drop there	
 fixture_block_box_escapes	c-refused		error: block value 'cell' cannot be moved out of block 'request' into 'copy'	
 fixture_block_box_not_bound_by_let	c-refused		error: a block box from 'request.box()?' must be bound by a 'let' in its block	
 fixture_block_box_outside_its_block	c-refused		error: 'a.box()' is valid only inside the block 'a'	

@@ -31,10 +31,6 @@ impl Lead {
                     | TokenKind::RBracket
                     | TokenKind::RBrace
                     | TokenKind::Question
-                    // `closure(&T)` - the keyword is a type constructor, always
-                    // followed by its parenthesized argument list, so it
-                    // attaches like a name.
-                    | TokenKind::Closure
             ),
         }
     }

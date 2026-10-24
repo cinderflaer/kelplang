@@ -1,7 +1,7 @@
-// A-4 phase E: a closure is an owned value, so `&closure(...)` is not a type,
-// a parameter of the closure type already borrows it, and `move closure(...)`
+// A-4 phase E: a closure is an owned value, so `&closure fun(...)` is not a type,
+// a parameter of the closure type already borrows it, and `move closure fun(...)`
 // takes it.
 fun main() {
-    val f: &closure() => i32 = fun() => i32 = 1
+    val f: &closure fun() => i32 = fun() => i32 = 1
     print(1)
 }
