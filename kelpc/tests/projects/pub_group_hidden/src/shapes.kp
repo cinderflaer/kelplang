@@ -1,0 +1,7 @@
+pub {
+    /// The one exported function.
+    fun shown() => i32 = 1
+}
+
+/// Outside the group, so not exported.
+fun hidden() => i32 = 99

@@ -628,6 +628,9 @@ mod fun_optional;
 #[path = "compile_and_run/script_main.rs"]
 mod script_main;
 
+#[path = "compile_and_run/pub_group.rs"]
+mod pub_group;
+
 #[path = "compile_and_run/numeric_names.rs"]
 mod numeric_names;
 

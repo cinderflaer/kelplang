@@ -1,0 +1,33 @@
+// Each item in the group is exported as if `pub` were written in front of it.
+pub {
+    /// The largest size a shape may have.
+    const LIMIT: i32 = 10
+
+    /// A point with two coordinates.
+    datac Point(val x: i32, val y: i32)
+
+    /// A shape with one variant that carries a side length.
+    enum Shape {
+        Square(val side: i32)
+    }
+
+    /// The sum of the coordinates of a point.
+    fun offset(p: Point) => i32 = p.x + p.y
+
+    /// Twice a number.
+    fun twice(n: i32) => i32 = n * 2
+
+    /// The side of a square, or zero for any other shape.
+    fun side_of(s: Shape) => i32 {
+        if let Square(n) = s {
+            return n
+        }
+        0
+    }
+
+    /// The name of the last shape kind this module knows.
+    fun last_name() => &str = "square"
+}
+
+/// Not in the group, so another module cannot reach it.
+fun hidden() => i32 = 99

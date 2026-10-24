@@ -246,7 +246,30 @@ impl Parser {
         // declarations between them. They become the body of `main` at the end.
         let mut script: Vec<Stmt> = Vec::new();
         let mut script_span: Option<Span> = None;
+        // The `pub {` that opened a group (issue #290), while its items are read.
+        // Each item in the group is read as if `pub` were written in front of it.
+        let mut pub_group: Option<Span> = None;
         while !matches!(self.peek_kind(), TokenKind::Eof) {
+            if pub_group.is_some() && self.check(&TokenKind::RBrace) {
+                self.advance();
+                pub_group = None;
+                self.skip_newlines();
+                continue;
+            }
+            if pub_group.is_none() && self.check(&TokenKind::Pub) && matches!(self.peek2_kind(), TokenKind::LBrace) {
+                let open = self.advance().span;
+                self.advance();
+                self.skip_newlines();
+                if self.check(&TokenKind::RBrace) {
+                    return Err(ParseError {
+                        help: None,
+                        message: "a 'pub' group needs at least one declaration between its braces".to_string(),
+                        span: open.to(self.peek().span),
+                    });
+                }
+                pub_group = Some(open);
+                continue;
+            }
             if let Some(req) = self.parse_derive_clause()? {
                 if let Some(earlier) = &pending_derive {
                     return Err(ParseError {
@@ -267,9 +290,30 @@ impl Parser {
             // modified item is otherwise the same declaration.
             let (leading_section, leading_align) = self.parse_section_and_align_clauses()?;
             let leading_repr = self.parse_repr_clause()?;
-            let is_pub = self.check(&TokenKind::Pub);
+            // Inside a group every item is `pub` already, so a `pub` written on
+            // it (before or after its clauses) is refused, and so is a nested group.
+            if pub_group.is_some() && self.check(&TokenKind::Pub) {
+                let at = self.advance().span;
+                let message = if matches!(self.peek_kind(), TokenKind::LBrace) {
+                    "a 'pub' group cannot be nested in another: the outer group already marks each item 'pub'".to_string()
+                } else {
+                    "a 'pub' group already marks each item 'pub', so drop the 'pub' written on this item".to_string()
+                };
+                return Err(ParseError { help: None, message, span: at });
+            }
+            let is_pub = self.check(&TokenKind::Pub) || pub_group.is_some();
             if is_pub {
-                let pub_span = self.advance().span;
+                let pub_span = match pub_group {
+                    Some(open) => open,
+                    None => self.advance().span,
+                };
+                if pub_group.is_some() && self.at_script_statement() {
+                    return Err(ParseError {
+                        help: None,
+                        message: "a 'pub' group holds declarations only, and this line is a statement: move it out of the group".to_string(),
+                        span: self.peek().span,
+                    });
+                }
                 self.check_pub_target(pub_span)?;
             }
             let repr = match (leading_repr, self.parse_repr_clause()?) {
@@ -468,6 +512,13 @@ impl Parser {
                 functions.push(f);
             }
             self.skip_newlines();
+        }
+        if let Some(open) = pub_group {
+            return Err(ParseError {
+                help: Some("add '}' after the last declaration of the group".to_string()),
+                message: "a 'pub' group is not closed before the end of the file".to_string(),
+                span: open,
+            });
         }
         if let Some(req) = pending_derive {
             return Err(ParseError {

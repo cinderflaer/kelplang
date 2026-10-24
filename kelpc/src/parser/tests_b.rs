@@ -927,3 +927,61 @@ fn a_datac_block_refuses_fun_pub_and_a_non_method_line() {
     let e = parse_err("datac Counter(var count: int) {\n    var total: int\n}\nfun main() {}");
     assert!(e.message.contains("declares methods"), "got: {}", e.message);
 }
+
+#[test]
+fn a_pub_group_marks_each_item_as_pub() {
+    let p = parse(
+        "pub {\n    const LIMIT: i32 = 10\n\n    datac Point(val x: i32)\n\n    enum Shape { Empty }\n\n    fun a() => i32 = 1\n\n    fun b() => i32 = 2\n\n    extern fun g() => i32\n}\n\nfun hidden() => i32 = 4\nfun main() {}",
+    );
+    assert!(p.consts[0].is_pub);
+    assert!(p.datacs[0].is_pub);
+    assert!(p.enums[0].is_pub);
+    assert!(p.functions[0].is_pub);
+    assert!(p.functions[1].is_pub);
+    assert!(p.functions[2].is_pub);
+    assert!(p.functions[2].extern_);
+    assert!(!p.functions[3].is_pub);
+}
+
+#[test]
+fn a_pub_group_ends_at_its_closing_brace() {
+    let p = parse("pub {\n    fun a() => i32 = 1\n}\nfun b() => i32 = 2\nfun main() {}");
+    assert!(p.functions[0].is_pub);
+    assert!(!p.functions[1].is_pub);
+}
+
+#[test]
+fn an_empty_pub_group_is_refused() {
+    let e = parse_err("pub {\n}\nfun main() {}");
+    assert!(e.message.contains("needs at least one declaration"), "got: {}", e.message);
+}
+
+#[test]
+fn an_unclosed_pub_group_is_refused() {
+    let e = parse_err("pub {\n    fun a() => i32 = 1\n");
+    assert!(e.message.contains("is not closed"), "got: {}", e.message);
+}
+
+#[test]
+fn pub_inside_a_pub_group_is_refused() {
+    let e = parse_err("pub {\n    pub fun a() => i32 = 1\n}\nfun main() {}");
+    assert!(e.message.contains("already marks each item"), "got: {}", e.message);
+}
+
+#[test]
+fn a_pub_group_inside_a_pub_group_is_refused() {
+    let e = parse_err("pub {\n    pub {\n        fun a() => i32 = 1\n    }\n}\nfun main() {}");
+    assert!(e.message.contains("cannot be nested"), "got: {}", e.message);
+}
+
+#[test]
+fn a_statement_inside_a_pub_group_is_refused() {
+    let e = parse_err("pub {\n    val x = 1\n}\nfun main() {}");
+    assert!(e.message.contains("holds declarations only"), "got: {}", e.message);
+}
+
+#[test]
+fn a_pd_inside_a_pub_group_is_refused_by_name() {
+    let e = parse_err("pub {\n    pd val x = 1\n}\nfun main() {}");
+    assert!(e.message.contains("a 'pd' cannot be 'pub'"), "got: {}", e.message);
+}

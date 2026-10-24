@@ -1,0 +1,12 @@
+// A file that imports a group of exports reaches each item by its alias, as it
+// reaches an item written `pub` on its own line.
+impl "shapes"
+
+fun main() {
+    print(shapes.LIMIT)
+    val p = shapes.Point(x = 3, y = 4)
+    print(shapes.offset(p))
+    print(shapes.twice(shapes.LIMIT))
+    print(shapes.side_of(shapes.Shape.Square(2)))
+    print(shapes.last_name())
+}

@@ -1,0 +1,10 @@
+pub {
+    /// Documented.
+    fun good() => i32 = 1
+
+    fun bad() => i32 = 2
+}
+
+fun main() {
+    print(good())
+}

@@ -442,3 +442,15 @@ fn stdlib_needs_json_and_a_directory() {
     assert!(!no_dir.status.success());
     assert!(stderr(&no_dir).contains("--dir"), "{}", stderr(&no_dir));
 }
+
+#[test]
+fn check_reads_each_item_of_a_pub_group_as_public() {
+    // Issue #290: an item in a `pub { ... }` group is public, so the check wants
+    // its doc comment, and the documented one passes.
+    let file = docs().join("group_undocumented.kp");
+    let r = run(&[file.to_str().unwrap(), "--check"]);
+    assert!(!r.status.success());
+    let err = stderr(&r);
+    assert!(err.contains("group_undocumented.kp:5") && err.contains("`bad`"), "{err}");
+    assert!(!err.contains("`good`"), "{err}");
+}

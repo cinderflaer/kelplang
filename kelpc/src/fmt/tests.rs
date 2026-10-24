@@ -492,3 +492,12 @@ fn the_header_refusal_bullets_are_the_refusal_list_verbatim() {
         "the header's refusal bullets are not the refusal list, in its order"
     );
 }
+
+#[test]
+fn a_pub_group_round_trips() {
+    // Issue #290: a `pub { ... }` group keeps its braces, its indentation and the doc
+    // comment of each item in it.
+    let src = "pub {\n    /// A limit.\n    const LIMIT: i32 = 10\n\n    /// A point.\n    datac Point(val x: i32, val y: i32)\n\n    /// Scales.\n    fun scale(v: f64, k: f64) => f64 = v * k\n}\n\nfun main() {\n    print(LIMIT)\n}\n";
+    let out = format(src).expect("a pub group should format");
+    assert_eq!(out, src);
+}

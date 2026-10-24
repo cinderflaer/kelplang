@@ -66,6 +66,9 @@ pub(super) struct Scanner<'a> {
     /// Whole-line `//!` comments by 0-based line.
     inner: BTreeMap<usize, DocLine>,
     consumed: HashSet<usize>,
+    /// True while the items of a `pub { ... }` group are read (issue #290): each
+    /// item in the group is exported as if `pub` were written on it.
+    pub_group: bool,
     eof: Token,
 }
 
@@ -90,6 +93,7 @@ impl<'a> Scanner<'a> {
             docs: HashMap::new(),
             inner: BTreeMap::new(),
             consumed: HashSet::new(),
+            pub_group: false,
             eof: Token {
                 kind: TokenKind::Eof,
                 span: crate::lexer::Span::new(src.len(), src.len()),
@@ -393,6 +397,17 @@ impl<'a> Scanner<'a> {
             if matches!(self.kind(i), TokenKind::Eof) {
                 break;
             }
+            if self.pub_group {
+                if matches!(self.kind(i), TokenKind::RBrace) {
+                    self.pub_group = false;
+                    i += 1;
+                    continue;
+                }
+            } else if matches!(self.kind(i), TokenKind::Pub) && matches!(self.kind(i + 1), TokenKind::LBrace) {
+                self.pub_group = true;
+                i += 2;
+                continue;
+            }
             i = self.top_level(i, &mut scan, &mut aliases);
         }
         // Everything unconsumed is attached to nothing.
@@ -465,7 +480,7 @@ impl<'a> Scanner<'a> {
     ) -> usize {
         let first = i;
         let mut j = i;
-        let mut is_pub = false;
+        let mut is_pub = self.pub_group;
         let mut unsafe_ = false;
         let mut extern_ = false;
         loop {
