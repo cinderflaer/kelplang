@@ -2,12 +2,9 @@
 //
 // Two things the freestanding subset could not do before this stage:
 //
-// * a `datac` with a `String` field. It has a declared `Pair.eq` for `==`, and
-//   the compiler also emits the derived key equality of every keyable type, so
-//   a `Map<Pair, i32>` resolves through it. That derived body compared the
-//   `String` field with `kelp_map_key_eq`, a `memcmp` in the hosted runtime
-//   object this image does not have; the compiler now emits the same
-//   length-aware byte loop into the module (`emit_freestanding_str_bodies`).
+// * a `datac` with a `String` field. `derive(eq, hash)` writes its `eq` and
+//   `hash`, so `==` and a `Map<Pair, i32>` use them. The `String` field is
+//   compared through `view()`, and the image needs no hosted `memcmp`.
 // * `View.slice`/`View.to_string`. The view accessors were already lowered,
 //   but the two `std/str` and `std/regex` are written on had no freestanding
 //   body and the type itself was refused. The example slices a `str` view and
@@ -79,14 +76,11 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
     return fresh
 }
 
-// A `String` field, so the type is keyable and the compiler derives a hash and
-// an equality for it. The declared `eq` is what `==`/`!=` lower to (H-5), and
-// it compares the two fields without moving either operand.
+// A `String` field, so the type is keyable. `derive(eq, hash)` writes the `eq`
+// and the `hash` field by field: `==`/`!=` lower to the derived `eq` (H-5), and
+// a `Map<Pair, i32>` uses the derived pair.
+derive(eq, hash)
 datac Pair(val name: String, val id: i32)
-
-fun Pair.eq(other: &Pair) => bool {
-    return str.eq(self.name, other.name.as_str()) && self.id == other.id
-}
 
 // A `Bytes` field, whose equality has to be written by hand: `Bytes` is not a
 // `Map` key type, so nothing derives one for it, and the declared `eq` walks
@@ -121,7 +115,7 @@ fun copy(text: str) => String {
     return str.concat(text, "")
 }
 
-// The declared equality, and the derived key pair behind a `Map<Pair, i32>`.
+// The derived equality, and the derived key pair behind a `Map<Pair, i32>`.
 fun equality_lines() {
     val a = Pair(name = copy("kelp"), id = 7)
     val b = Pair(name = copy("kelp"), id = 7)

@@ -65,13 +65,11 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
     return fresh
 }
 
-// A `String` field, so the type is keyable and the compiler derives a hash and
-// an equality for it. The declared `eq` is what `==`/`!=` lower to (H-5).
+// A `String` field, so the type is keyable. `derive(eq, hash)` writes the `eq`
+// and the `hash` field by field: `==`/`!=` lower to the derived `eq` (H-5), and
+// a `Map<Pair, i32>` uses the derived pair.
+derive(eq, hash)
 datac Pair(val name: String, val id: i32)
-
-fun Pair.eq(other: &Pair) => bool {
-    return str.eq(self.name, other.name.as_str()) && self.id == other.id
-}
 
 // A `Bytes` field, whose equality has to be written by hand: `Bytes` is not a
 // `Map` key type, so nothing derives one for it, and the declared `eq` walks
@@ -106,7 +104,7 @@ fun copy(text: str) => String {
     return str.concat(text, "")
 }
 
-// The declared equality, and the derived key pair behind a `Map<Pair, i32>`.
+// The derived equality, and the derived key pair behind a `Map<Pair, i32>`.
 fun equality_lines() {
     val a = Pair(name = copy("kelp"), id = 7)
     val b = Pair(name = copy("kelp"), id = 7)

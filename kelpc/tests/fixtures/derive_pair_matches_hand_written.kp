@@ -1,0 +1,44 @@
+impl "std/str"
+
+// lang-derive-eq (issue #291): a pair written by hand and the same pair with
+// `derive(eq, hash)` give the same `eq` result for every value, and equal values
+// hash equally. Each row prints three lines: the hand-written result, whether the
+// derived result matches it, and whether the derived hashes agree for equal values.
+
+// The hand-written pair, as the kernel examples wrote it before the conversion.
+datac Old(val name: String, val id: i32)
+
+fun Old.eq(other: &Old) => bool {
+    return str.eq(self.name, other.name.as_str()) && self.id == other.id
+}
+
+derive(eq, hash)
+datac New(val name: String, val id: i32)
+
+fun same_old(a: str, ai: i32, b: str, bi: i32) => bool {
+    return Old(name = String.from_str(s = a), id = ai) == Old(name = String.from_str(s = b), id = bi)
+}
+
+fun same_new(a: str, ai: i32, b: str, bi: i32) => bool {
+    return New(name = String.from_str(s = a), id = ai) == New(name = String.from_str(s = b), id = bi)
+}
+
+fun hash_of(a: str, ai: i32) => u64 {
+    return New(name = String.from_str(s = a), id = ai).hash()
+}
+
+fun row(a: str, ai: i32, b: str, bi: i32) {
+    val o = same_old(a, ai, b, bi)
+    val n = same_new(a, ai, b, bi)
+    print(o)
+    print(n == o)
+    print(!n || hash_of(a, ai) == hash_of(b, bi))
+}
+
+fun main() {
+    row("kelp", 1, "kelp", 1)
+    row("kelp", 1, "kelp", 2)
+    row("kelp", 1, "kelv", 1)
+    row("", 0, "", 0)
+    row("kelp", 1, "kelp!", 1)
+}

@@ -520,6 +520,17 @@ pub(crate) fn a_datac_with_derived_eq_and_hash_is_a_map_key() {
 }
 
 #[test]
+pub(crate) fn a_derived_pair_gives_the_hand_written_eq_results() {
+    // lang-derive-eq (issue #291): the derived `eq` agrees with the hand-written
+    // pair it replaces for every row, and equal values hash equally. Expected
+    // rows: equal pairs are `true`, a differing id or name is `false`.
+    assert_compiles_and_runs(
+        "tests/fixtures/derive_pair_matches_hand_written.kp",
+        "true\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\ntrue\n",
+    );
+}
+
+#[test]
 pub(crate) fn an_enum_with_derived_eq_and_hash_is_a_map_key() {
     // lang-derive-eq: the same rule for an `enum`. Two variants with the same
     // payload fields are different keys, and a unit variant is one key.
