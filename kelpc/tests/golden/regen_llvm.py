@@ -139,7 +139,8 @@ def main():
 
     counts = (
         f"# counts candidates={len(all_rows)} ran={count('ran')} "
-        f"c_refused={count('c-refused')} excluded={count('excluded')}"
+        f"c_refused={count('c-refused')} hosted_refused={count('hosted-refused')} "
+        f"excluded={count('excluded')}"
     )
     out = list(header_comment)
     out.append(counts)
