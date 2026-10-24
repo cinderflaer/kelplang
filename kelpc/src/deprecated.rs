@@ -173,7 +173,7 @@ mod tests {
         // writes a spelling a retired entry owned (the scan), and every shipped
         // module parses (the walk below, which is where a refused spelling fails
         // loudly, naming its fix). The next entry adds its own spelling here.
-        const RETIRED: &[&str] = &["with caps(", ").R:", ").R "];
+        const RETIRED: &[&str] = &["with caps(", ").R:", ").R ", ".to_u8(", ".try_to_u8("];
         let mut ids: Vec<&str> = crate::stdlib::shipped().to_vec();
         ids.push(crate::stdlib::RT_MODULE);
         for id in ids {

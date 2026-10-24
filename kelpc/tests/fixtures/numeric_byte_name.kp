@@ -1,0 +1,21 @@
+// The everyday names (issue #279): `to_byte` is the u8 conversion and
+// `try_to_byte` its fallible twin; `to_int` and `to_float` are the native-width
+// conversions and keep their names.
+impl "std/option"
+
+fun main() {
+    val n: int = 200
+    val b: u8 = n.to_byte()
+    print(b.to_int())
+    print(b.to_int() + 1)
+    print(n.to_float() > 199.5)
+    if let Some(v) = n.try_to_byte() {
+        print(v.to_int())
+    }
+    val big: int = 300
+    if let Some(v) = big.try_to_byte() {
+        print(v.to_int())
+    } else {
+        print("none")
+    }
+}

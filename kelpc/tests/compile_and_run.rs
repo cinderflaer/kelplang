@@ -616,6 +616,9 @@ mod const_infer;
 #[path = "compile_and_run/index_int.rs"]
 mod index_int;
 
+#[path = "compile_and_run/numeric_names.rs"]
+mod numeric_names;
+
 #[path = "compile_and_run/collections.rs"]
 mod collections;
 pub(crate) use collections::*;

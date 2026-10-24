@@ -1,0 +1,6 @@
+// `to_byte` narrows like `to_u8` did: a value past 255 panics at the call.
+fun main() {
+    val n: int = 300
+    val b: u8 = n.to_byte()
+    print(b.to_int())
+}

@@ -260,3 +260,39 @@ fn the_return_dot_marker_is_refused_and_says_what_to_write() {
     assert!(text.contains("'.return:' is no longer accepted"), "{text}");
     assert!(text.contains("'=>'"), "{text}");
 }
+
+#[test]
+fn the_byte_spelling_is_clean_and_the_old_u8_one_is_outdated() {
+    // `to_u8` and `try_to_u8` still build (the register keeps them for a cycle)
+    // and each call prints one `outdated:` finding that names `to_byte` and the
+    // removal; `to_byte` is the spelling that prints nothing (issue #279).
+    let dir = scratch("to-u8-outdated");
+    let old = write(
+        &dir,
+        "src/old.kp",
+        "impl \"std/option\"\n\nfun main() {\n    val n: int = 200\n    val b: u8 = n.to_u8()\n    \
+         if let Some(v) = n.try_to_u8() {\n        print(v.to_int() + b.to_int())\n    }\n}\n",
+    );
+    let out = dir.join("old");
+    let result = build(&old, &out, false);
+    assert!(result.status.success(), "{}", stderr(&result));
+    let text = stderr(&result);
+    assert_eq!(text.matches("outdated: ").count(), 2, "{text}");
+    assert!(text.contains("`.to_u8()`"), "{text}");
+    assert!(text.contains("`.try_to_u8()`"), "{text}");
+    assert!(text.contains("to_byte"), "the fix is not named:\n{text}");
+    assert!(text.contains("will be removed in the next development cycle"), "{text}");
+
+    let denied = build(&old, &out, true);
+    assert!(!denied.status.success(), "--deny-outdated must refuse the old spelling");
+
+    let new = write(
+        &dir,
+        "src/new.kp",
+        "impl \"std/option\"\n\nfun main() {\n    val n: int = 200\n    val b: u8 = n.to_byte()\n    \
+         if let Some(v) = n.try_to_byte() {\n        print(v.to_int() + b.to_int())\n    }\n}\n",
+    );
+    let result = build(&new, &out, true);
+    assert!(result.status.success(), "{}", stderr(&result));
+    assert!(stderr(&result).is_empty(), "{}", stderr(&result));
+}
