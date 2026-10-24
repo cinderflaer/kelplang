@@ -1,0 +1,11 @@
+// A datac block declares methods only (issue #285). A field or a value is not
+// one, so it is refused where the block's line starts.
+
+datac Counter(var count: int) {
+    var total: int
+}
+
+fun main() {
+    var c = Counter(count = 0)
+    print(c.count)
+}

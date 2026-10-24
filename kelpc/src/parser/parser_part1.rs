@@ -12,6 +12,7 @@ impl Parser {
             when_temps: 0,
             no_trailing_block: false,
             depth: 0,
+            datac_owner: None,
         }
     }
 
@@ -407,7 +408,7 @@ impl Parser {
                 }
                 pds.push(self.parse_tl_decl()?);
             } else if self.check(&TokenKind::Datac) {
-                let mut d = self.parse_datac_decl(is_pub, repr)?;
+                let (mut d, methods) = self.parse_datac_decl(is_pub, repr)?;
                 d.order = type_order;
                 type_order += 1;
                 if let Some(mut req) = pending_derive.take() {
@@ -415,6 +416,9 @@ impl Parser {
                     derives.push(req);
                 }
                 datacs.push(d);
+                // Methods written in the datac's block (issue #285) are the
+                // methods the same lines after the type would be.
+                functions.extend(methods);
             } else if self.check(&TokenKind::Enum) {
                 let mut e = self.parse_enum_decl(is_pub, repr)?;
                 e.order = type_order;

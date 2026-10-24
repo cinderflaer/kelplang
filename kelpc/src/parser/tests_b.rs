@@ -873,3 +873,57 @@ fn a_bare_field_still_needs_a_name_and_a_type() {
     let e = parse_err("datac P(: i32)\nfun main() {}");
     assert!(e.message.contains("'val' or 'var'"), "got: {}", e.message);
 }
+
+/// #285: a method written inside the datac block is the method the same line
+/// after the type gives: the same name, receiver, mode and parameters.
+#[test]
+fn a_datac_block_method_is_the_method_written_after_the_type() {
+    let inside = parse("datac Counter(val id: int, var count: int) {\n    mut bump() {\n        count += 1\n    }\n}\nfun main() {}");
+    let after = parse("datac Counter(val id: int, var count: int)\n\nfun mut Counter.bump() {\n    count += 1\n}\nfun main() {}");
+    assert_eq!(inside.functions.len(), 2);
+    assert_eq!(after.functions.len(), 2);
+    let (a, b) = (&inside.functions[0], &after.functions[0]);
+    assert_eq!(a.name, "bump");
+    assert_eq!(a.name, b.name);
+    let (ra, rb) = (a.receiver.as_ref().unwrap(), b.receiver.as_ref().unwrap());
+    assert_eq!(ra.type_name, "Counter");
+    assert_eq!(ra.type_name, rb.type_name);
+    assert!(ra.mutable);
+    assert_eq!(ra.mutable, rb.mutable);
+    assert_eq!(a.params.len(), b.params.len());
+    assert!(!a.is_pub);
+}
+
+/// #285: a datac's type parameters are the receiver's type arguments, and a
+/// method may take its own.
+#[test]
+fn a_datac_block_method_takes_the_datac_type_parameters() {
+    let p = parse("datac Pair<A, B>(val first: A, val second: B) {\n    keep<U>(x: U) => U = x\n}\nfun main() {}");
+    let f = &p.functions[0];
+    let r = f.receiver.as_ref().unwrap();
+    assert_eq!(r.type_name, "Pair");
+    assert_eq!(r.type_args, vec!["A".to_string(), "B".to_string()]);
+    assert!(!r.mutable);
+    assert_eq!(f.type_params, vec!["U".to_string()]);
+}
+
+/// #285: an empty block is a datac with no methods, and a datac with no block
+/// parses as before.
+#[test]
+fn an_empty_datac_block_declares_no_methods() {
+    let p = parse("datac Point(val x: int) {\n}\ndatac Other(val y: int)\nfun main() {}");
+    assert_eq!(p.datacs.len(), 2);
+    assert_eq!(p.functions.len(), 1);
+}
+
+/// #285: `fun` and `pub` are refused inside the block, and a field line is
+/// refused where a method should start.
+#[test]
+fn a_datac_block_refuses_fun_pub_and_a_non_method_line() {
+    let e = parse_err("datac Counter(var count: int) {\n    fun bump() {\n    }\n}\nfun main() {}");
+    assert!(e.message.contains("written without 'fun'"), "got: {}", e.message);
+    let e = parse_err("datac Counter(var count: int) {\n    pub bump() {\n    }\n}\nfun main() {}");
+    assert!(e.message.contains("cannot be 'pub'"), "got: {}", e.message);
+    let e = parse_err("datac Counter(var count: int) {\n    var total: int\n}\nfun main() {}");
+    assert!(e.message.contains("declares methods"), "got: {}", e.message);
+}

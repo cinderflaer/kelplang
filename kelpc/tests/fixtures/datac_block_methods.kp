@@ -1,0 +1,39 @@
+// Methods written inside the braces of their datac (issue #285). A method
+// line has no `fun` and no type name: the receiver is the datac it sits in.
+// `mut` marks a method that writes the receiver. Each one means the same as
+// the `fun T.name` line written after the type, and both forms mix.
+
+datac Counter(val id: int, var count: int) {
+    mut bump() {
+        count += 1
+    }
+
+    mut add(n: int) {
+        count += n
+    }
+
+    doubled() => int = count * 2
+}
+
+// The outside form still works next to the block form.
+fun Counter.label() => int = id
+
+datac Pair<A, B>(val first: A, val second: B) {
+    firstOr(fallback: A) => A = first
+
+    keep<U>(x: U) => U {
+        return x
+    }
+}
+
+fun main() {
+    var c = Counter(id = 1, count = 0)
+    c.bump()
+    c.add(5)
+    print(c.count)
+    print(c.doubled())
+    print(c.label())
+    val p = Pair(first = 3, second = 8)
+    print(p.firstOr(9))
+    print(p.keep(4))
+}

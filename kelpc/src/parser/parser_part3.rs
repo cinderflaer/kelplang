@@ -254,6 +254,10 @@ impl Parser {
     }
 
     pub(crate) fn parse_function_inner(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>, align: Option<u32>, signature: bool) -> PResult<FunctionDecl> {
+        // The datac whose block this method is written in, if any (issue #285).
+        // Taken first, so nothing parsed inside this method sees it.
+        let owner = self.datac_owner.take();
+        let in_block = owner.is_some();
         // `extern fun ...` - a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
@@ -263,7 +267,11 @@ impl Parser {
         } else {
             false
         };
-        let start = self.expect(TokenKind::Fun, "'fun'")?.span;
+        let start = if in_block {
+            self.peek().span
+        } else {
+            self.expect(TokenKind::Fun, "'fun'")?.span
+        };
 
         // A receiver-form decl is `fun [mut] Type.name(...)`; a plain one
         // is `fun name(...)`. `mut` here can only ever start a receiver
@@ -285,14 +293,24 @@ impl Parser {
         } else {
             false
         };
-        let (first, first_span) = self.expect_ident()?;
-        // `<T>` may follow either the function's own name (`fun f<T>(...)`) or
-        // the receiver's type name (`fun Pair<A, B>.first()`); which one it is
-        // is settled by whether a `.` comes next (A-2).
-        let name_params = self.parse_type_params()?;
+        // In a datac's block the receiver is that datac, with its parameters,
+        // and no type name is written (issue #285).
+        let (first, first_span, name_params) = match owner {
+            Some(o) => (o.name, o.span, o.params),
+            None => {
+                let (first, first_span) = self.expect_ident()?;
+                // `<T>` may follow either the function's own name (`fun f<T>(...)`) or
+                // the receiver's type name (`fun Pair<A, B>.first()`); which one it is
+                // is settled by whether a `.` comes next (A-2).
+                let name_params = self.parse_type_params()?;
+                (first, first_span, name_params)
+            }
+        };
         let (receiver, name, type_params, type_param_bounds, const_params) =
-            if self.check(&TokenKind::Dot) {
-            self.advance();
+            if in_block || self.check(&TokenKind::Dot) {
+            if !in_block {
+                self.advance();
+            }
             let (method, method_span) = self.expect_ident()?;
             // `fun Pair<A, B>.map_first<C>(...)`: the method's own type
             // parameters, after its name. They are separate from the

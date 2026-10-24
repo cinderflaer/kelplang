@@ -27,6 +27,9 @@ pub struct Parser {
     /// How many nesting constructs (expression, type, block, pattern) the parser
     /// is inside right now; `nest` refuses to go past `MAX_NESTING`.
     pub(crate) depth: usize,
+    /// The datac whose `{ ... }` block the next method belongs to (issue #285),
+    /// set just before that method is parsed and taken by `parse_function_inner`.
+    pub(crate) datac_owner: Option<DatacOwner>,
 }
 
 /// How deep source text may nest (parenthesized or prefix-chained expressions,
@@ -65,12 +68,23 @@ type PResult<T> = Result<T, ParseError>;
 /// One entry of a parameter list `T`, `T: A + B`, or `const N: usize`
 /// (A-2, A-20). The const form is a *value* parameter; every other entry is a
 /// type parameter.
+#[derive(Clone)]
 pub(crate) struct TypeParamParsed {
     pub(crate) name: String,
     pub(crate) bounds: Vec<TypeExpr>,
     /// `Some(ty)` for `const N: ty`, and then `bounds` is empty.
     pub(crate) const_ty: Option<String>,
     pub(crate) span: Span,
+}
+
+/// The datac whose block is being parsed (issue #285). A method written inside
+/// the block has this datac as its receiver: `parse_function` takes it once, at
+/// the start of the method, so no nested declaration sees it.
+#[derive(Clone)]
+pub(crate) struct DatacOwner {
+    pub(crate) name: String,
+    pub(crate) span: Span,
+    pub(crate) params: Vec<TypeParamParsed>,
 }
 
 /// The refusal for a `*` that does not stand alone in a `caps(...)` clause

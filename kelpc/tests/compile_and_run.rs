@@ -616,6 +616,9 @@ mod const_infer;
 #[path = "compile_and_run/index_int.rs"]
 mod index_int;
 
+#[path = "compile_and_run/datac_block_methods.rs"]
+mod datac_block_methods;
+
 #[path = "compile_and_run/numeric_names.rs"]
 mod numeric_names;
 

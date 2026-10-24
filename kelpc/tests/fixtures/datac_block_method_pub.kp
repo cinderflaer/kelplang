@@ -1,0 +1,14 @@
+// A method inside a datac block cannot be `pub` (issue #285): its type's `pub`
+// exports it, as it does for a method written after the type.
+
+datac Counter(var count: int) {
+    pub bump() {
+        count += 1
+    }
+}
+
+fun main() {
+    var c = Counter(count = 0)
+    c.bump()
+    print(c.count)
+}

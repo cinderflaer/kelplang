@@ -1,0 +1,13 @@
+// A method inside a datac block is written without `fun` (issue #285).
+
+datac Counter(var count: int) {
+    fun bump() {
+        count += 1
+    }
+}
+
+fun main() {
+    var c = Counter(count = 0)
+    c.bump()
+    print(c.count)
+}

@@ -369,25 +369,72 @@ impl Parser {
         ))
     }
 
-    pub(crate) fn parse_datac_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<DatacDecl> {
+    /// A `datac` declaration, and the methods written in its `{ ... }` block
+    /// (issue #285). A block line is `[mut] name[<T>](params) [=> T] { body }`
+    /// with no `fun` and no type name: the receiver is this datac, with its type
+    /// parameters, so each method is the one the `fun T.name` line after the
+    /// type would be. The block is optional and may be empty.
+    pub(crate) fn parse_datac_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<(DatacDecl, Vec<FunctionDecl>)> {
         let start = self.expect(TokenKind::Datac, "'datac'")?.span;
-        let (name, _) = self.expect_ident()?;
-        let (type_params, const_params) =
-            Parser::no_type_param_bounds(self.parse_type_params()?)?;
+        let (name, name_span) = self.expect_ident()?;
+        let params = self.parse_type_params()?;
+        let (type_params, const_params) = Parser::no_type_param_bounds(params.clone())?;
         self.expect(TokenKind::LParen, "'('")?;
         let fields = self.parse_field_list()?;
         let end = self.expect(TokenKind::RParen, "')'")?.span;
-        Ok(DatacDecl {
-            name,
-            is_pub,
-            type_params,
-            const_params,
-            fields,
-            repr,
-            order: 0,
-            module: String::new(),
-            span: start.to(end),
-        })
+        let mut methods = Vec::new();
+        if self.check(&TokenKind::LBrace) {
+            self.advance();
+            self.skip_newlines();
+            while !self.check(&TokenKind::RBrace) {
+                if self.check(&TokenKind::Fun) {
+                    return Err(ParseError {
+                        help: None,
+                        message: "a method inside a 'datac' block is written without 'fun' and without the type name: write 'name(...) { ... }', or 'mut name(...) { ... }' for a method that writes the receiver (the block's datac is the receiver)".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                if self.check(&TokenKind::Pub) {
+                    return Err(ParseError {
+                        help: None,
+                        message: "a method inside a 'datac' block cannot be 'pub': a method is exported by its type's 'pub', so write 'pub' on the 'datac' line".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                let is_method = self.check(&TokenKind::Mut)
+                    || (matches!(self.peek_kind(), TokenKind::Ident(_))
+                        && matches!(self.peek2_kind(), TokenKind::LParen | TokenKind::Lt));
+                if !is_method {
+                    return Err(ParseError {
+                        help: None,
+                        message: "a 'datac' block declares methods ('name(...) { ... }' or 'mut name(...) { ... }'), and this line is neither: the fields are written in the parentheses after the name".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                self.datac_owner = Some(DatacOwner {
+                    name: name.clone(),
+                    span: name_span,
+                    params: params.clone(),
+                });
+                methods.push(self.parse_function(false, false, false, None, None, false)?);
+                self.skip_newlines();
+            }
+            self.advance();
+        }
+        Ok((
+            DatacDecl {
+                name,
+                is_pub,
+                type_params,
+                const_params,
+                fields,
+                repr,
+                order: 0,
+                module: String::new(),
+                span: start.to(end),
+            },
+            methods,
+        ))
     }
 
     /// `derive(eq, hash)` (lang-derive-eq): the names of a derive clause, or
