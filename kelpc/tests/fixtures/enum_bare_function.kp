@@ -1,0 +1,19 @@
+// #281: a function of the same name keeps the bare name, so a variant of
+// that name is written with its enum.
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun Circle(x: i32) => i32 = x + 1
+
+fun area(s: &Shape) => f64 = when s {
+    Circle(r) -> r
+    Empty -> 0.0
+}
+
+fun main() {
+    print(Circle(1))
+    val s = Shape.Circle(r = 2.0)
+    print(area(s))
+}

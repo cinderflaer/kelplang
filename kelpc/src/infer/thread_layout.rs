@@ -716,6 +716,15 @@ pub(crate) fn check_call(
                             &format!("'{callee}'"),
                         )
                     }
+                    // A variant of a module enum, named without its enum (#281).
+                    // Only a name nothing else owns reaches here: a function,
+                    // a local or a builtin of that name is found first.
+                    None if !bare_variant_owners(callee, ctx).is_empty()
+                        && builtin_sig(callee).is_none()
+                        && !crate::stdlib::is_thread_fn(callee) =>
+                    {
+                        return check_bare_variant(callee, Some(args), span, ctx);
+                    }
                     // A compiler-provided free function (`panic`, `assert`)
                     // lives in the same table as the builtin methods, so it is
                     // consulted after the program's own signatures - a user

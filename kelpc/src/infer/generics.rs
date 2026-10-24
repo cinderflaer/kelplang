@@ -85,6 +85,76 @@ pub(crate) fn enum_path(expr: &ast::Expr, ctx: &Ctx) -> Option<String> {
     ctx.is_enum(&qualified).then_some(qualified)
 }
 
+/// The concrete `enum`s declared in the calling module that declare a variant
+/// named `name`, by their short names, sorted (#281). A bare variant name is
+/// looked up only here: an imported enum keeps its qualifier. The prelude
+/// names keep their meaning, so they never belong to this set.
+pub(crate) fn bare_variant_owners(name: &str, ctx: &Ctx) -> Vec<String> {
+    if matches!(name, "None" | "Some" | "Ok" | "Err") {
+        return Vec::new();
+    }
+    let mut owners: Vec<String> = ctx
+        .enums
+        .iter()
+        .filter_map(|(key, def)| {
+            let short = key.strip_prefix(ctx.prefix.as_str())?;
+            (!short.contains('.') && def.variant(name).is_some()).then(|| short.to_string())
+        })
+        .collect();
+    owners.sort();
+    owners
+}
+
+/// `Circle(r = 1.0)` or `Empty` with no qualifier (#281): the variant of the one
+/// module enum that declares it. Two or more owners is a clash, and the message
+/// names the qualifier to write. A payload-carrying variant named without its
+/// arguments gets the refusal `Shape.Circle` gets.
+pub(crate) fn check_bare_variant(
+    name: &str,
+    args: Option<&[ast::CallArg]>,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let owners = bare_variant_owners(name, ctx);
+    match owners.as_slice() {
+        [] => Err(TypeError {
+            help: None,
+            message: format!("undefined variable '{name}'"),
+            span,
+        }),
+        [one] => {
+            let ename = ctx.qualify_own(one);
+            let edef = ctx.enum_def(&ename).expect("bare_variant_owners only returns known enums");
+            let (_, vdef) = edef.variant(name).expect("the owner declares the variant");
+            if args.is_none() && !vdef.fields.is_empty() {
+                let fields: Vec<String> = vdef.fields.iter().map(|f| f.name.clone()).collect();
+                return Err(TypeError {
+                    help: None,
+                    message: format!(
+                        "variant '{one}.{name}' carries payload ({}) - construct it as '{one}.{name}({})'",
+                        fields.join(", "),
+                        fields.join(" = ..., ")
+                    ),
+                    span,
+                });
+            }
+            check_enum_construction(&ename, name, args.unwrap_or(&[]), span, ctx)
+        }
+        many => {
+            let written: Vec<String> = many.iter().map(|o| format!("'{o}.{name}'")).collect();
+            let (last, rest) = written.split_last().expect("at least two owners");
+            Err(TypeError {
+                help: None,
+                message: format!(
+                    "'{name}' is a variant of more than one enum in this module, so it must be written with its enum: {} or {last}",
+                    rest.join(", ")
+                ),
+                span,
+            })
+        }
+    }
+}
+
 /// The generic-template counterpart of `enum_path` (A-2): the qualified name of
 /// the template `expr` names, when it names one. `Option.Some(v = 1)` and
 /// `Option.None` both arrive here, because a generic enum has no concrete

@@ -197,6 +197,11 @@ pub(crate) fn check_ident_expr(name: &String, span: &Span, ctx: &mut Ctx, expect
             }
         }
     }
+    // A payload-less variant of a module enum, named without its enum (#281).
+    // Locals, passdowns and constants were all looked up above, so they win.
+    if !bare_variant_owners(name, ctx).is_empty() {
+        return check_bare_variant(name, None, *span, ctx);
+    }
     Err(TypeError {
         help: crate::foreign::hint(name).or_else(|| {
             (ctx.foreign_pds.get(name).is_none() && ctx.init_state.is_none())

@@ -1,0 +1,11 @@
+// #281: Some, None, Ok and Err are never read as a module enum's variant, even
+// when one declares that name. A bare `Some(...)` is not rewritten to `Opt.Some`.
+enum Opt {
+    Some(val v: i32)
+    Nothing
+}
+
+fun main() {
+    val c = Some(v = 3)
+    print(0)
+}

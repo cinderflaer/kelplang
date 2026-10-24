@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1214 ran=595 c_refused=572 hosted_refused=9 excluded=38
+# counts candidates=1218 ran=597 c_refused=574 hosted_refused=9 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -213,6 +213,10 @@ fixture_elision_not_from_param	c-refused		error: cannot return a borrow of 's'
 fixture_elision_wrong_param	c-refused		error: cannot return a borrow of 'b'	
 fixture_else_if_let	ran	exit 0		fc5283afd0ae712cd1e0bb6f93cb80310d10264d9042890748ed4488415ddf41
 fixture_endian_scalars	ran	exit 0		e840df667cbf84a90207f308f9c9511c83ea5f021f8ea554e6832e173b4cbf2b
+fixture_enum_bare_clash	c-refused		error: 'Circle' is a variant of more than one enum in this module, so it must be written with its enum: 'Drawing.Circle' or 'Shape.Circle'	
+fixture_enum_bare_construct	ran	exit 0		5eca153789a3c1f98d0829b86c84ce243ed05e76fb943ca5d1c8d13540b783fb
+fixture_enum_bare_function	ran	exit 0		ae60c287174c93e685b3c051ee0aa7c1fac9f35813060a8e62b0df9cc1354a40
+fixture_enum_bare_prelude	c-refused		error: call to undefined function 'Some'	
 fixture_enum_bare_variant	c-refused		error: variant 'Shape.Circle' carries payload (r) — construct it as 'Shape.Circle(r)'	
 fixture_enum_basic	ran	exit 0		c97caacaaee927709839a75d52131b2853599bb512607b440c379783880cfb45
 fixture_enum_bind_count	c-refused		error: pattern 'Circle(r, x)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s) (r)	

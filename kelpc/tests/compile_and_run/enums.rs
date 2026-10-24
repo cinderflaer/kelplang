@@ -153,6 +153,34 @@ pub(crate) fn enum_misuse_is_rejected() {
     }
 }
 
+// #281: a variant named without its enum builds that variant when no other
+// enum of the module declares it. The qualified form still works.
+#[test]
+pub(crate) fn a_unique_variant_builds_by_its_bare_name() {
+    assert_compiles_and_runs("tests/fixtures/enum_bare_construct.kp", "12.000000\n0.000000\n3.000000\n");
+}
+
+// #281: a variant name shared by two enums of the module must be qualified.
+#[test]
+pub(crate) fn a_variant_name_shared_by_two_enums_must_be_qualified() {
+    assert_rejected_with(
+        "tests/fixtures/enum_bare_clash.kp",
+        "so it must be written with its enum: 'Drawing.Circle' or 'Shape.Circle'",
+    );
+}
+
+// #281: a function of the same name keeps the bare name.
+#[test]
+pub(crate) fn a_function_of_the_same_name_keeps_the_bare_name() {
+    assert_compiles_and_runs("tests/fixtures/enum_bare_function.kp", "2\n2.000000\n");
+}
+
+// #281: a prelude name is never rewritten to a module enum's variant.
+#[test]
+pub(crate) fn a_prelude_name_is_never_a_bare_variant() {
+    assert_rejected_with("tests/fixtures/enum_bare_prelude.kp", "call to undefined function 'Some'");
+}
+
 // ---------------------------------------------------------------------------
 // MK5-S6-M1: `if let`, a pattern condition, desugared to a single-arm `when`.
 // ---------------------------------------------------------------------------

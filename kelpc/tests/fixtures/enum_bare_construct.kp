@@ -1,0 +1,20 @@
+// #281: a variant of an enum declared in this module is built by its bare
+// name when no other enum in the module declares a variant of that name.
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun area(s: &Shape) => f64 = when s {
+    Circle(r) -> 3.0 * r * r
+    Empty -> 0.0
+}
+
+fun main() {
+    val c = Circle(r = 2.0)
+    val e = Empty
+    val d = Shape.Circle(r = 1.0)
+    print(area(c))
+    print(area(e))
+    print(area(d))
+}

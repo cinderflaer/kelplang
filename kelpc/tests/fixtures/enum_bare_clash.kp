@@ -1,0 +1,16 @@
+// #281: when two enums of this module declare the variant name, the bare
+// form is refused and the qualifier has to be written.
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+enum Drawing {
+    Circle(val size: i32)
+    Blank
+}
+
+fun main() {
+    val c = Circle(r = 2.0)
+    print(0)
+}
