@@ -22,10 +22,13 @@ datac Frame(val s: Shape)
 
 fun main() {
     val p = Point(x = 3, name = String.from_str(s = "ab"), on = true)
+    val c = Shape.Circle(r = 2)
+    val e = Shape.Empty
+    val c7 = Shape.Circle(r = 7)
     print(p.to_text())
     print(Blank().to_text())
-    print(Shape.Circle(r = 2).to_text())
-    print(Shape.Empty.to_text())
-    print(Frame(s = Shape.Circle(r = 2)).to_text())
-    print("${Shape.Circle(r = 7)} and ${p}")
+    print(c.to_text())
+    print(e.to_text())
+    print(Frame(s = c).to_text())
+    print("${c7} and ${p}")
 }
