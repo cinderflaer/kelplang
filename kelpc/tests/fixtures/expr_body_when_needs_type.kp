@@ -1,0 +1,14 @@
+// Gitea #280: a `when` body over several arms keeps its explicit return type.
+enum Shape {
+    Dot
+    Edge(val n: i32)
+}
+
+fun size(s: Shape) = when s {
+    Edge(n) -> n
+    Dot -> 0
+}
+
+fun main() {
+    print(0)
+}

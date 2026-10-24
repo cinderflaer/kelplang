@@ -1,0 +1,7 @@
+// Gitea #280: an inferred body cannot hand back a borrow. A return type is
+// always owned, so a body that is a borrow is refused without an `=> T`.
+fun first(s: &str) = s
+
+fun main() {
+    print(first("x"))
+}

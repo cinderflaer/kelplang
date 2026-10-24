@@ -1,0 +1,9 @@
+// Gitea #280: mutual recursion between inferred bodies has no type to start
+// from, so both functions are refused.
+fun ping(n: i32) = if n <= 0 { 0 } else { pong(n - 1) }
+
+fun pong(n: i32) = if n <= 0 { 0 } else { ping(n - 1) }
+
+fun main() {
+    print(ping(4))
+}

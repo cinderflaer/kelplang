@@ -77,6 +77,9 @@ pub(crate) use passdown_init::*;
 mod function;
 pub(crate) use function::*;
 
+mod expr_return;
+pub(crate) use expr_return::*;
+
 mod loops_closures;
 pub(crate) use loops_closures::*;
 

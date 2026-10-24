@@ -718,3 +718,56 @@ fn result_of_unit_issue_223_spellings_build_match_and_propagate() {
 fn unit_spelled_as_empty_parens_is_still_refused_as_a_tuple_element() {
     assert_rejected_with("tests/fixtures/tuple_unit_type_element.kp", "is 'unit'");
 }
+
+// Gitea #280: an expression body with no written return type infers it. A
+// recursive body keeps its explicit type, and a `when` body or a borrow body
+// is refused without one.
+#[test]
+fn expression_body_infers_its_return_type_issue_280() {
+    assert_compiles_and_runs("tests/fixtures/expr_body_infers_return.kp", "5\n16\n");
+}
+
+#[test]
+fn expression_body_calls_another_inferred_body_issue_280() {
+    assert_compiles_and_runs("tests/fixtures/expr_body_infers_through_callees.kp", "6\n");
+}
+
+#[test]
+fn recursive_expression_body_without_a_type_is_refused_issue_280() {
+    assert_rejected_naming("tests/fixtures/expr_body_recursive_needs_type.kp", &["recursive", "fact", "=> T"], &[]);
+}
+
+#[test]
+fn recursive_expression_body_with_a_type_builds_issue_280() {
+    assert_compiles_and_runs("tests/fixtures/expr_body_recursive_with_type.kp", "120\n");
+}
+
+#[test]
+fn mutually_recursive_expression_bodies_without_a_type_are_refused_issue_280() {
+    assert_rejected_naming("tests/fixtures/expr_body_mutual_recursion_needs_type.kp", &["recursive", "=> T"], &[]);
+}
+
+#[test]
+fn when_expression_body_without_a_type_is_refused_issue_280() {
+    assert_rejected_naming("tests/fixtures/expr_body_when_needs_type.kp", &["several arms", "=> T"], &[]);
+}
+
+#[test]
+fn borrowing_expression_body_without_a_type_is_refused_issue_280() {
+    assert_rejected_naming("tests/fixtures/expr_body_borrow_needs_type.kp", &["returns a borrow", "=> T"], &[]);
+}
+
+#[test]
+fn expression_method_body_infers_and_calls_an_inferred_method_issue_280() {
+    assert_compiles_and_runs("tests/fixtures/expr_body_method_infers.kp", "24\n");
+}
+
+#[test]
+fn recursive_expression_method_without_a_type_is_refused_issue_280() {
+    assert_rejected_naming("tests/fixtures/expr_body_method_recursive_needs_type.kp", &["recursive", "shrink", "=> T"], &[]);
+}
+
+#[test]
+fn public_expression_body_cannot_infer_a_private_type_issue_280() {
+    assert_rejected_naming("tests/fixtures/expr_body_pub_private_type.kp", &["Hidden", "=> T"], &[]);
+}

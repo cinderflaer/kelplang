@@ -36,6 +36,7 @@ use crate::lexer::Span;
 
 mod scan;
 use scan::*;
+pub(crate) use scan::free_in_expr;
 
 const RET_PREFIX: &str = "#defer_ret";
 const TMP_PREFIX: &str = "#defer_tmp";

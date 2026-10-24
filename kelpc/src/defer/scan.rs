@@ -91,7 +91,7 @@ pub(super) fn free_in_stmt(stmt: &Stmt, bound: &HashSet<String>, out: &mut HashS
 /// Every name the expression reads that is not bound inside it. A `fun`
 /// literal contributes its body's free names (its captures are resolved where
 /// the literal is written), with its parameters bound.
-pub(super) fn free_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>) {
+pub(crate) fn free_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>) {
     match expr {
         Expr::Ident(n, _) => {
             if !bound.contains(n) {
@@ -120,7 +120,11 @@ pub(super) fn free_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut HashS
                 free_in_expr(&arg.value, bound, out);
             }
         }
-        Expr::MethodCall { receiver, args, .. } => {
+        Expr::MethodCall { receiver, method, args, .. } => {
+            // A method name is recorded as `.name`, which no local can spell,
+            // so the capture check ignores it while the return-type pass
+            // (Gitea #280) can see which methods a body calls.
+            out.insert(format!(".{method}"));
             free_in_expr(receiver, bound, out);
             for arg in args {
                 free_in_expr(&arg.value, bound, out);

@@ -1,0 +1,7 @@
+// Gitea #280: a recursive expression body keeps its explicit return type. It
+// is refused without one, and the message names the function.
+fun fact(n: i32) = if n <= 1 { 1 } else { n * fact(n - 1) }
+
+fun main() {
+    print(fact(5))
+}

@@ -1,0 +1,9 @@
+// Gitea #280: the inferred return type of a public function is subject to the
+// private-in-public rule, so it cannot name a private type.
+datac Hidden(val x: i32)
+
+pub fun make() = Hidden(x = 1)
+
+fun main() {
+    print(0)
+}

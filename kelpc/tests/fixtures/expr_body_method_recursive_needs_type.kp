@@ -1,0 +1,10 @@
+// Gitea #280: a method that calls itself through its receiver keeps its
+// explicit return type, so an inferred one is refused.
+datac Rect(val w: i32, val h: i32)
+
+fun Rect.shrink(n: i32) = if n <= 0 { self.w } else { self.shrink(n - 1) }
+
+fun main() {
+    val r = Rect(w = 3, h = 4)
+    print(r.shrink(2))
+}

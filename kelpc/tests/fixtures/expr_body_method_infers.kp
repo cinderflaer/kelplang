@@ -1,0 +1,12 @@
+// Gitea #280: a method's expression body infers its return type, and may call
+// another inferred method on the same receiver.
+datac Rect(val w: i32, val h: i32)
+
+fun Rect.area() = self.w * self.h
+
+fun Rect.doubled() = self.area() * 2
+
+fun main() {
+    val r = Rect(w = 3, h = 4)
+    print(r.doubled())
+}

@@ -405,7 +405,10 @@ pub(crate) fn check_function(
     let body = match &f.body {
         ast::FunctionBody::Block(b) => check_block(b, &mut ctx, Some(&sig.ret))?,
         ast::FunctionBody::Expr(e) => {
-            let checked = check_expr(e, &mut ctx, Some(&sig.ret))?;
+            // A body with no `=> T` (Gitea #280) has no expected type: its own
+            // type becomes the return type, worked out by `expr_return.rs`.
+            let expected = if f.return_type.is_none() { None } else { Some(&sig.ret) };
+            let checked = check_expr(e, &mut ctx, expected)?;
             tir::Block {
                 stmts: vec![],
                 tail: Some(Box::new(checked)),

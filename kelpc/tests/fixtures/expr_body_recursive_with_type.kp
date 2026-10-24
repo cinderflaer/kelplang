@@ -1,0 +1,6 @@
+// Gitea #280: the same recursive body builds once it writes `=> i32`.
+fun fact(n: i32) => i32 = if n <= 1 { 1 } else { n * fact(n - 1) }
+
+fun main() {
+    print(fact(5))
+}

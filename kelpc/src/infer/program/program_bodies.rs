@@ -15,7 +15,7 @@ pub(crate) fn finish_program(program: &ast::Program, project: &Project, wiring: 
         enum_order,
         ..
     } = decls;
-    let Signatures { sigs, overloads, decl_keys } = signatures;
+    let Signatures { mut sigs, overloads, decl_keys } = signatures;
     let owned_structs = crate::types::owned_types(
         &structs.values().cloned().collect::<Vec<_>>(),
         &enums.values().cloned().collect::<Vec<_>>(),
@@ -54,6 +54,32 @@ pub(crate) fn finish_program(program: &ast::Program, project: &Project, wiring: 
         &statics,
     )?;
     let wired = scan_all(program, &all_pds, &structs, &decl_keys);
+
+    // Gitea #280: a body with no `=> T` takes its own type as its return type.
+    // The types are worked out callee first, before any caller or any body is
+    // checked, so every signature a body reads is final.
+    infer_expr_bodies(program, &decl_keys, &mut sigs, &|f, key, sigs| {
+        check_function(
+            f,
+            key,
+            &sigs[key],
+            &HashMap::new(),
+            sigs,
+            &structs,
+            &enums,
+            &consts,
+            &const_fns,
+            &owned_structs,
+            &overloads,
+            project,
+            &all_pds,
+            &wired,
+            wiring,
+            &env,
+            &fns,
+            &statics,
+        )
+    })?;
 
     // Kernel stage 4: a freestanding project has no hosted `main`. Its entry
     // point is the `fun` the manifest's `[target] entry` names, in the entry

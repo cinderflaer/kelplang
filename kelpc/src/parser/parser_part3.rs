@@ -507,15 +507,9 @@ impl Parser {
             }
             FunctionBody::Extern
         } else if self.check(&TokenKind::Eq) {
-            let eq_span = self.advance().span;
-            if return_type.is_none() {
-                return Err(ParseError {
-                    help: None,
-                    message: "expression-bodied function requires a '=> T' return type"
-                        .to_string(),
-                    span: eq_span,
-                });
-            }
+            // With no `=> T` the body's own type is the return type (Gitea
+            // #280); the checks that need the body are in `infer/expr_return.rs`.
+            self.advance();
             FunctionBody::Expr(self.parse_expr()?)
         } else if self.check(&TokenKind::LBrace) {
             FunctionBody::Block(self.parse_block()?)

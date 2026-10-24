@@ -1,0 +1,10 @@
+// Gitea #280: an expression body with no written return type takes the type
+// its body has. `add` and `square` are non-recursive, so neither writes `=> T`.
+fun add(a: i32, b: i32) = a + b
+
+fun square(n: i32) = n * n
+
+fun main() {
+    print(add(2, 3))
+    print(square(4))
+}

@@ -630,8 +630,12 @@ fn parses_expression_bodied_function() {
 }
 
 #[test]
-fn expression_body_without_return_type_is_an_error() {
-    parse_err("fun add(a: i32) = a");
+fn expression_body_without_return_type_parses_with_no_written_type() {
+    // Gitea #280: the return type is inferred from the body later, so the
+    // parser keeps the body and leaves the type unwritten.
+    let p = parse("fun add(a: i32) = a");
+    assert!(p.functions[0].return_type.is_none());
+    assert!(matches!(p.functions[0].body, FunctionBody::Expr(_)));
 }
 
 #[test]

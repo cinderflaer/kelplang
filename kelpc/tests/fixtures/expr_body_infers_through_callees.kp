@@ -1,0 +1,9 @@
+// Gitea #280: an inferred body may call another inferred body. The callee's
+// type is worked out first, whichever order the two are written in.
+fun twice(n: i32) = add(n, n)
+
+fun add(a: i32, b: i32) = a + b
+
+fun main() {
+    print(twice(3))
+}
