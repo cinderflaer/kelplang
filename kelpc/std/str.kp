@@ -325,19 +325,19 @@ fun utf8_len(cp: u32) => int {
 fun utf8_put(dst: mut Bytes, at: int, cp: u32) => int {
     val w = utf8_len(cp)
     if w == 1 {
-        dst.set(at, cp.to_u8())
+        dst.set(at, cp.to_byte())
     } elif w == 2 {
-        dst.set(at, (192 + cp / 64).to_u8())
-        dst.set(at + 1, (128 + cp % 64).to_u8())
+        dst.set(at, (192 + cp / 64).to_byte())
+        dst.set(at + 1, (128 + cp % 64).to_byte())
     } elif w == 3 {
-        dst.set(at, (224 + cp / 4096).to_u8())
-        dst.set(at + 1, (128 + (cp / 64) % 64).to_u8())
-        dst.set(at + 2, (128 + cp % 64).to_u8())
+        dst.set(at, (224 + cp / 4096).to_byte())
+        dst.set(at + 1, (128 + (cp / 64) % 64).to_byte())
+        dst.set(at + 2, (128 + cp % 64).to_byte())
     } else {
-        dst.set(at, (240 + cp / 262144).to_u8())
-        dst.set(at + 1, (128 + (cp / 4096) % 64).to_u8())
-        dst.set(at + 2, (128 + (cp / 64) % 64).to_u8())
-        dst.set(at + 3, (128 + cp % 64).to_u8())
+        dst.set(at, (240 + cp / 262144).to_byte())
+        dst.set(at + 1, (128 + (cp / 4096) % 64).to_byte())
+        dst.set(at + 2, (128 + (cp / 64) % 64).to_byte())
+        dst.set(at + 3, (128 + cp % 64).to_byte())
     }
     return w
 }
@@ -591,7 +591,7 @@ fun join(parts: List<String>, sep: &str) => String {
 //
 // Everything below is ordinary Kelp on top of the growable buffer
 // (`String.push`/`push_str`/`with_capacity`) and the integer conversions
-// (`n.to_u8()`), except the three numeric primitives that genuinely need C:
+// (`n.to_byte()`), except the three numeric primitives that genuinely need C:
 // `snprintf` for the float format, and `strtoll`/`strtoull`/`strtod` for
 // parsing. There is no `+` operator for `str` (open item 40): concatenation
 // is the function below.
@@ -607,7 +607,7 @@ fun concat(a: &str, b: &str) => String {
 
 /// Decimal text for an unsigned value. Digits are produced least-significant
 /// first into a 20-byte scratch array on the stack and pushed back out in
-/// reverse: `%`/`/` on `u64` and one checked `to_u8` per digit is the whole
+/// reverse: `%`/`/` on `u64` and one checked `to_byte` per digit is the whole
 /// algorithm, and the only allocation is the result.
 fun from_u64(n: u64) => String {
     if n == 0 {
@@ -617,7 +617,7 @@ fun from_u64(n: u64) => String {
     var count: int = 0
     var v = n
     while v > 0 {
-        rev.set(count, (v % 10 + 48).to_u8())
+        rev.set(count, (v % 10 + 48).to_byte())
         count = count + 1
         v = v / 10
     }
@@ -652,7 +652,7 @@ fun from_i64(n: i64) => String {
         if d < 0 {
             d = 0 - d
         }
-        rev.set(count, (d + 48).to_u8())
+        rev.set(count, (d + 48).to_byte())
         count = count + 1
         v = v / 10
     }

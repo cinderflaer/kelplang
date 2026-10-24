@@ -405,6 +405,9 @@ pub(crate) fn check_method_call(
     // below. `check_expr` has no persistent side effects beyond reading
     // `ctx`, so checking the same expression twice here is safe.
     let probe = check_expr(receiver, ctx, None)?;
+    // `n.to_byte()` and `n.try_to_byte()` are the everyday spellings of the
+    // `u8` conversions (issue #279): from here on the call is the builtin's.
+    let method = numeric_alias(&probe.ty, method).unwrap_or(method);
     // A method call on a borrowed trait object (A-12 slice 4) goes through the
     // vtable: the trait's flattened method list gives the slot, the receiver's
     // type gives the mutability, and the trait's own signature gives the
@@ -759,7 +762,7 @@ pub(crate) fn check_method_call(
                     }
                 }
                 (None, _) if probe.ty.is_integer() => format!(
-                    "type '{}' has no method '{method}': an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64, to_f32, swap_bytes, to_be and to_le, wrapping_shl and wrapping_shr, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts",
+                    "type '{}' has no method '{method}': an integer has to_i32, to_i64, to_u32, to_u64, to_byte, to_u16, to_usize, to_isize, to_f64, to_f32, swap_bytes, to_be and to_le, wrapping_shl and wrapping_shr, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts",
                     probe.ty.display()
                 ),
                 // An `enum` and a `datac` miss the same way, and an enum

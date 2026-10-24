@@ -225,12 +225,12 @@ fun base32_encode(data: &Bytes) => String {
         bits = bits + 8
         while bits >= 5 {
             bits = bits - 5
-            out.push(b32_char(((buffer >> bits) & 31).to_u8()))
+            out.push(b32_char(((buffer >> bits) & 31).to_byte()))
         }
         i = i + 1
     }
     if bits > 0 {
-        out.push(b32_char(((buffer << (5 - bits)) & 31).to_u8()))
+        out.push(b32_char(((buffer << (5 - bits)) & 31).to_byte()))
     }
     while out.len() < out_len {
         out.push('=')
@@ -275,7 +275,7 @@ fun base32_decode(text: &str) => result.Result<Bytes, DecodeErr> {
             bits = bits + 5
             if bits >= 8 {
                 bits = bits - 8
-                out.push(((buffer >> bits) & 255).to_u8())
+                out.push(((buffer >> bits) & 255).to_byte())
             }
         }
         i = i + 1
@@ -341,12 +341,12 @@ fun base58_encode(data: &Bytes) => String {
         var j: int = 0
         while j < digits.len() {
             val v = carry + digits.get(j).to_u32() * 256
-            digits.set(j, (v % 58).to_u8())
+            digits.set(j, (v % 58).to_byte())
             carry = v / 58
             j = j + 1
         }
         while carry > 0 {
-            digits.push((carry % 58).to_u8())
+            digits.push((carry % 58).to_byte())
             carry = carry / 58
         }
         i = i + 1
@@ -388,12 +388,12 @@ fun base58_decode(text: &str) => result.Result<Bytes, DecodeErr> {
         var j: int = 0
         while j < acc.len() {
             val x = carry + acc.get(j).to_u32() * 58
-            acc.set(j, (x & 255).to_u8())
+            acc.set(j, (x & 255).to_byte())
             carry = x >> 8
             j = j + 1
         }
         while carry > 0 {
-            acc.push((carry & 255).to_u8())
+            acc.push((carry & 255).to_byte())
             carry = carry >> 8
         }
         i = i + 1
@@ -473,7 +473,7 @@ fun hex_decode(text: &str) => result.Result<Bytes, DecodeErr> {
         if option.is_none(o = hi) || option.is_none(o = lo) {
             return result.Result.Err(error = DecodeErr.Invalid)
         }
-        out.push(((option.unwrap(o = hi) << 4) | option.unwrap(o = lo)).to_u8())
+        out.push(((option.unwrap(o = hi) << 4) | option.unwrap(o = lo)).to_byte())
         i = i + 2
     }
     return result.Result.Ok(value = out)
@@ -628,7 +628,7 @@ fun sha1(data: &Bytes) => Bytes {
     val bits: u64 = data.len().to_u64() * 8
     var i: int = 0
     while i < 8 {
-        msg.push(((bits >> ((7 - i).to_u64() * 8)) & 255).to_u8())
+        msg.push(((bits >> ((7 - i).to_u64() * 8)) & 255).to_byte())
         i = i + 1
     }
 
@@ -711,10 +711,10 @@ fun sha1(data: &Bytes) => Bytes {
 
 /// Appends `v` to `out` as four bytes, most significant first.
 fun push_u32_be(out: mut Bytes, v: u32) {
-    out.push(((v >> 24) & 255).to_u8())
-    out.push(((v >> 16) & 255).to_u8())
-    out.push(((v >> 8) & 255).to_u8())
-    out.push((v & 255).to_u8())
+    out.push(((v >> 24) & 255).to_byte())
+    out.push(((v >> 16) & 255).to_byte())
+    out.push(((v >> 8) & 255).to_byte())
+    out.push((v & 255).to_byte())
 }
 
 /// The `application/x-www-form-urlencoded` encoder: same unreserved set as

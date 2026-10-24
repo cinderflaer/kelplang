@@ -35,12 +35,8 @@
 //! fixtures that were deliberately left on it), delete the entry here, and let
 //! `kelpc/tests/outdated.rs` and the shipped-source test below say what is left.
 
-// The register is empty, so no pass raises a finding yet. The read path stays
-// here for the next entry, and this keeps it from warning until then.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use crate::diag::Diagnostic;
-use crate::lexer::Span;
+use crate::lexer::{Span, Token, TokenKind};
 
 /// The deadline every entry carries, as one sentence so it cannot drift.
 const REMOVAL: &str = "will be removed in the next development cycle";
@@ -59,21 +55,30 @@ pub struct Outdated {
 
 /// Every outdated construct, in the order they were scheduled.
 ///
-/// **Empty since the `.R:` marker was removed with the `=>` return arrow.** Two entries
-/// lived here and both were removed in the cycle that followed `26.09.0`, which
-/// is the deadline each of them carried: `impl "..." as name`, retired once a
-/// module's own name became its namespace (`syntax.md` 13.1), and
-/// `impl "..." with caps(...)`, retired once `impl` alone was understood to
-/// mean "this module declares what it imports", so the keyword stated nothing
-/// the clause did not. Both are now refused by the parser by name, and the grant
-/// the second one introduced is unchanged: `impl "std/fs" caps(fs = ["/var/log/**"])`.
+/// Every outdated construct, in the order they were scheduled.
 ///
-/// The register stays the mechanism for the next deprecation rather than being
-/// deleted with its entries: add an entry here, raise its finding where the
-/// spelling is read, and remove the spelling on the next development cycle. An
-/// entry survives only while the spelling still compiles, and the removal is the
-/// parser's, not this module's.
-pub const REGISTER: &[Outdated] = &[];
+/// The `impl` clauses that were here before were removed in the cycle after
+/// `26.09.0`, on the deadline each carried. The two numeric names below are the
+/// current entries (issue #279): `to_u8` and `try_to_u8` still build, and the
+/// everyday `to_byte` and `try_to_byte` are their spellings.
+///
+/// The register stays the mechanism for the next deprecation: add an entry here,
+/// raise its finding where the spelling is read (`scan_tokens` for a method
+/// name), and remove the spelling on the next development cycle. An entry
+/// survives only while the spelling still compiles, and the removal is the
+/// parser's or the checker's, not this module's.
+pub const REGISTER: &[Outdated] = &[
+    Outdated {
+        id: "numeric-to-u8",
+        what: "`.to_u8()`",
+        instead: "write `.to_byte()`, which converts to the same `u8`",
+    },
+    Outdated {
+        id: "numeric-try-to-u8",
+        what: "`.try_to_u8()`",
+        instead: "write `.try_to_byte()`, which hands back the same `Option<u8>`",
+    },
+];
 
 /// The register entry with this id.
 ///
@@ -88,16 +93,42 @@ pub fn find(id: &str) -> &'static Outdated {
         .unwrap_or_else(|| panic!("'{id}' is not in the register of outdated syntax"))
 }
 
-/// The finding for an entry, at the span that names the construct. A test
-/// exercises the wording on an entry built in the test rather than one registered
-/// here: an empty register has no id to look up, and a test must not add a
-/// permanent deprecation to get one.
+/// The finding for an entry, at the span that names the construct.
 fn finding_for(entry: &Outdated, span: Span, module: &str) -> Diagnostic {
     Diagnostic::new(
         format!("{} is outdated and {REMOVAL}: {}", entry.what, entry.instead),
         span,
         module,
     )
+}
+
+/// The finding for the registered entry `id`, at `span` in `module`.
+pub fn finding(id: &str, span: Span, module: &str) -> Diagnostic {
+    finding_for(find(id), span, module)
+}
+
+/// The outdated method names a token stream uses: each `.to_u8(` and
+/// `.try_to_u8(` call, one finding per call, at the name. It reads the tokens
+/// before parsing, so the parser never needs to know the register, and a
+/// name that is not a method call (`to_u8` on its own, a `fun to_u8`) is left
+/// alone. A user method of the same name is flagged too: the finding matches
+/// the spelling, not the declaration.
+pub fn scan_tokens(tokens: &[Token], module: &str) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    for window in tokens.windows(3) {
+        let [dot, name, open] = window else { continue };
+        if !matches!(dot.kind, TokenKind::Dot) || !matches!(open.kind, TokenKind::LParen) {
+            continue;
+        }
+        let TokenKind::Ident(text) = &name.kind else { continue };
+        let id = match text.as_str() {
+            "to_u8" => "numeric-to-u8",
+            "try_to_u8" => "numeric-try-to-u8",
+            _ => continue,
+        };
+        found.push(finding(id, name.span, module));
+    }
+    found
 }
 
 #[cfg(test)]
@@ -168,11 +199,10 @@ mod tests {
         // A deprecation in the stdlib is the worst kind: every program that
         // imports that module would be warned about a file it cannot edit.
         //
-        // The register is empty, so there is no entry to search for, and the
-        // two things an entry needs are what this keeps: no shipped module
-        // writes a spelling a retired entry owned (the scan), and every shipped
-        // module parses (the walk below, which is where a refused spelling fails
-        // loudly, naming its fix). The next entry adds its own spelling here.
+        // Two things keep the stdlib clean: no shipped module writes a spelling
+        // an entry owns (the scan below), and every shipped module parses (the
+        // walk, which is where a refused spelling fails loudly, naming its fix).
+        // The next entry adds its own spelling to the list.
         const RETIRED: &[&str] = &["with caps(", ").R:", ").R ", ".to_u8(", ".try_to_u8("];
         let mut ids: Vec<&str> = crate::stdlib::shipped().to_vec();
         ids.push(crate::stdlib::RT_MODULE);

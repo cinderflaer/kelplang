@@ -189,6 +189,10 @@ impl Loader<'_> {
             return Ok(());
         }
 
+        // Outdated spellings are read off the file's own tokens, before any
+        // alias expansion, so a finding points at the text the author wrote
+        // (issue #279, `deprecated::scan_tokens`).
+        self.deprecations.extend(crate::deprecated::scan_tokens(&tokens, id));
         let expanded = self.aliases.expand_file(&tokens, id)?;
         let mut program = Parser::new(expanded)
             .parse_program()

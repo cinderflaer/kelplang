@@ -824,16 +824,16 @@ fun Conn.send_frame(opcode: u8, data: &Bytes) {
     out.push(opcode | 128)
     val n = data.len()
     if n <= 125 {
-        out.push(n.to_u8() | 128)
+        out.push(n.to_byte() | 128)
     } elif n <= 65535 {
         out.push(126 | 128)
-        out.push(((n >> 8) & 255).to_u8())
-        out.push((n & 255).to_u8())
+        out.push(((n >> 8) & 255).to_byte())
+        out.push((n & 255).to_byte())
     } else {
         out.push(127 | 128)
         var i: int = 0
         while i < 8 {
-            out.push(((n >> (56 - i * 8)) & 255).to_u8())
+            out.push(((n >> (56 - i * 8)) & 255).to_byte())
             i = i + 1
         }
     }
@@ -945,8 +945,8 @@ fun Conn.close(code: u16, reason: &str) {
         panic("ws.close: a close reason may not exceed 123 bytes, because the code it follows takes two of a control frame's 125")
     }
     var data = Bytes.empty()
-    data.push((code >> 8).to_u8())
-    data.push((code & 255).to_u8())
+    data.push((code >> 8).to_byte())
+    data.push((code & 255).to_byte())
     data.append(reason_bytes)
     self.send_frame(OP_CLOSE, data)
     conn_close(fd, tls_handle)

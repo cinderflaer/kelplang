@@ -701,7 +701,7 @@ fun alpn_wire(protocols: &List<String>) => Bytes {
         if n == 0 || n > 255 {
             out.push(0)
         } else {
-            out.push(n.to_u8())
+            out.push(n.to_byte())
             var k: int = 0
             while k < n {
                 out.push(str.byte(name.as_str(), k))

@@ -207,6 +207,23 @@ pub(crate) fn lower_dyn_call(
     })
 }
 
+/// The builtin an everyday numeric name stands for, on an integer receiver
+/// (issue #279): `to_byte` is `to_u8` and `try_to_byte` is `try_to_u8`. The
+/// two spellings share the builtin's entry, its lowering and its range checks.
+/// Only an integer receiver takes the alias, so a user method of the same name
+/// on a `datac` is left alone.
+pub(crate) fn numeric_alias(receiver: &Ty, method: &str) -> Option<&'static str> {
+    let src = Ty::from_name(builtin_type_name(receiver)?)?;
+    if !src.is_integer() {
+        return None;
+    }
+    match method {
+        "to_byte" => Some("to_u8"),
+        "try_to_byte" => Some("try_to_u8"),
+        _ => None,
+    }
+}
+
 /// The `(source, target)` pair a `try_to_<T>` method call names, or `None`
 /// when the receiver and the method do not spell one (MISSING-RbhdW).
 ///

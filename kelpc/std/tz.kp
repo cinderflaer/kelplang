@@ -488,7 +488,7 @@ fun mut TzParser.ident() => String {
                 self.at = self.at + 1
                 return out
             }
-            out.push(c.to_u8())
+            out.push(c.to_byte())
             self.at = self.at + 1
         }
     }
@@ -501,7 +501,7 @@ fun mut TzParser.ident() => String {
             }
             return out
         }
-        out.push(c.to_u8())
+        out.push(c.to_byte())
         self.at = self.at + 1
     }
 }

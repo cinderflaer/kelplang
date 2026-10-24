@@ -288,13 +288,13 @@ fun mut Parser.new_class() => i32 {
 /// Sets bit `b` in the class whose bitmap starts at byte `base`.
 fun mut Parser.set_bit(base: int, b: int) {
     val at = base + (b >> 3)
-    val m: u8 = 1 << (b & 7).to_u8()
+    val m: u8 = 1 << (b & 7).to_byte()
     classes.set(at, classes.get(at) | m)
 }
 
 /// Whether bit `b` is set in the class whose bitmap starts at byte `base`.
 fun Parser.has_bit(base: int, b: int) => bool {
-    val m: u8 = 1 << (b & 7).to_u8()
+    val m: u8 = 1 << (b & 7).to_byte()
     return classes.get(base + (b >> 3)) & m != 0
 }
 
@@ -305,7 +305,7 @@ fun Parser.has_bit(base: int, b: int) => bool {
 fun mut Parser.add_pred(base: int, kind: u8, negate: bool) {
     var b: int = 0
     while b < 256 {
-        val c = b.to_u8()
+        val c = b.to_byte()
         var p = false
         if kind == 'd' {
             p = c >= '0' && c <= '9'
@@ -530,7 +530,7 @@ fun mut Parser.parse_escape() => i32 {
     if b < 0 {
         return -1
     }
-    return self.byte_node(b.to_u8())
+    return self.byte_node(b.to_byte())
 }
 
 /// Makes the node for the literal byte `b`.
@@ -1250,7 +1250,7 @@ fun mut Regex.run(text: View, start: int, nsl: int, early: bool) => bool {
                         } elif o == OP_ANYALL {
                             ok = true
                         } else {
-                            val bit: u8 = 1 << (c & 7).to_u8()
+                            val bit: u8 = 1 << (c & 7).to_byte()
                             ok = classes.get(ax.get(pc).to_int() * 32 + (c >> 3).to_int()) & bit != 0
                         }
                     }

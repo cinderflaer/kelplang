@@ -3,6 +3,6 @@ backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: type 'u8' has no method 'try_to_u32': an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64, to_f32, swap_bytes, to_be and to_le, wrapping_shl and wrapping_shr, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts
+error: type 'u8' has no method 'try_to_u32': an integer has to_i32, to_i64, to_u32, to_u64, to_byte, to_u16, to_usize, to_isize, to_f64, to_f32, swap_bytes, to_be and to_le, wrapping_shl and wrapping_shr, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts
   --> <root>/kelpc/tests/fixtures/try_to_widening.kp:8:11
 run-status: not run

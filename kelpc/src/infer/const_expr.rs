@@ -420,6 +420,8 @@ impl<'a> ConstEvaluator<'a> {
                     if scope.halted() {
                         return Ok((ConstValue::Unit, Ty::Unit));
                     }
+                    // `to_byte` folds as `to_u8` (issue #279).
+                    let to = numeric_alias(&from, method).and_then(|alias| alias.strip_prefix("to_")).unwrap_or(to);
                     return self.convert(&value, &from, to, method, *span);
                 }
                 Err(self.unsupported(expr.span(), "a method call"))
