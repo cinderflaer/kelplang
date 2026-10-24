@@ -474,6 +474,7 @@ pub(crate) fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option
                 });
             }
             if *mutable {
+                ctx.note_self_write(&sub_t)?;
                 check_target_writable(&sub_t, ctx)?;
             }
             let ty = Ty::Ref { mutable: *mutable, inner: Box::new(sub_t.ty.clone()) };

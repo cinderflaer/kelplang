@@ -353,6 +353,8 @@ impl Parser {
                     type_args,
                     const_params,
                     mutable: receiver_mutable,
+                    inferable: !receiver_mutable && !in_block && !signature && method != crate::types::DROP_METHOD,
+                    in_block,
                     span: first_span,
                 }),
                 method,

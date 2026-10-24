@@ -126,6 +126,9 @@ pub(crate) struct PdWiring {
     pub(crate) modes: std::rc::Rc<HashMap<(String, String), bool>>,
     /// `Some` only in the probe pass (see `PdProbe`).
     pub(crate) probe: Option<std::rc::Rc<std::cell::RefCell<PdProbe>>>,
+    /// `Some` only in the receiver-mode probe (issue #286): the spans of the
+    /// inferable methods whose body writes self.
+    pub(crate) writers: Option<std::rc::Rc<std::cell::RefCell<std::collections::HashSet<crate::lexer::Span>>>>,
 }
 
 impl PdWiring {
@@ -153,6 +156,29 @@ impl Ctx {
         let span = expr.span();
         let i = self.probes.iter().rposition(|(p, s, _)| *p == at && *s == span)?;
         Some(self.probes.swap_remove(i).2)
+    }
+
+    /// Records a write to a place rooted at `self` (issue #286), and refuses it
+    /// when the method is a datac-block method with a shared receiver, so the
+    /// refusal names the `mut` form. In the receiver-mode probe nothing is refused.
+    pub(crate) fn note_self_write(&self, place: &tir::Expr) -> Result<()> {
+        if crate::borrowck::tir_root_ident(place) != Some("self") {
+            return Ok(());
+        }
+        self.self_written.set(true);
+        if self.self_probe {
+            return Ok(());
+        }
+        if let (Some(msg), Some(info)) = (&self.block_note, self.lookup("self")) {
+            if matches!(info.ty, Ty::Ref { mutable: false, .. }) {
+                return Err(TypeError {
+                    help: None,
+                    message: msg.clone(),
+                    span: place.span,
+                });
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn push_scope(&mut self) {

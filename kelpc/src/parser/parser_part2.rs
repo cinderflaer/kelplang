@@ -295,6 +295,11 @@ impl Parser {
                 });
             }
             let mut f = self.parse_function(false, false, false, None, None, false)?;
+            // An `impl` method's receiver mode is the one the trait declares, so it
+            // is written and never inferred (issue #286).
+            if let Some(r) = &mut f.receiver {
+                r.inferable = false;
+            }
             match &f.receiver {
                 Some(r) if r.type_name == "Self" && !r.type_args.is_empty() => {
                     return Err(ParseError {

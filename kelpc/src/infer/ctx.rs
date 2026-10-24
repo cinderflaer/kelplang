@@ -160,6 +160,15 @@ pub(crate) struct Ctx {
     /// Set only in the probe pass: where an exclusive use is recorded and the
     /// call edges are collected (see `PdProbe`).
     pub(crate) pd_probe: Option<std::rc::Rc<std::cell::RefCell<PdProbe>>>,
+    /// Set while the receiver-mode probe checks an inferable method (issue
+    /// #286): its `self` is exclusive in the body, and a write to self is
+    /// recorded in `self_written` rather than refused.
+    pub(crate) self_probe: bool,
+    /// Set when the body writes a place rooted at `self` (issue #286).
+    pub(crate) self_written: std::cell::Cell<bool>,
+    /// For a method inside a datac block (issue #285) whose receiver is written
+    /// shared: the refusal for a write to self, which names the `mut` form.
+    pub(crate) block_note: Option<String>,
     /// True while checking the body of a `fun` literal (A-4). A literal is
     /// its own function, so two diagnostics need to know: a name it does not
     /// bind itself is a *capture*, and a passdown is a hidden argument it

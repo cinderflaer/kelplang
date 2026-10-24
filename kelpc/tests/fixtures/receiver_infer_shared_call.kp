@@ -1,0 +1,18 @@
+// A method that writes its receiver cannot be called through a shared
+// borrow (issue #286). The rule is named at the call.
+
+datac Counter(var count: int)
+
+fun Counter.bump() {
+    count += 1
+}
+
+fun poke(c: &Counter) {
+    c.bump()
+}
+
+fun main() {
+    var c = Counter(count = 0)
+    poke(c)
+    print(c.count)
+}

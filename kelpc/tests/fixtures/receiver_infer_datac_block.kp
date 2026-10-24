@@ -1,0 +1,15 @@
+// Inside a datac block the receiver mode is written, not inferred (issue
+// #286, and the decision recorded on #285): this method writes self and has
+// no `mut`, so it is refused.
+
+datac Counter(var count: int) {
+    bump() {
+        count += 1
+    }
+}
+
+fun main() {
+    var c = Counter(count = 0)
+    c.bump()
+    print(c.count)
+}

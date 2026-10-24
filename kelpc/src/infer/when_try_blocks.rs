@@ -799,6 +799,7 @@ pub(crate) fn pd_place_hidden(expr: &tir::Expr) -> Option<&str> {
 /// Shared by `=` and by an `asm` operand's `out`/`inout` place, so the two
 /// cannot drift.
 pub(crate) fn check_written_place(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
+    ctx.note_self_write(target)?;
     check_target_writable(target, ctx)?;
     // Only the *immediate* field being written needs to be `var`; fields merely
     // read through on the way there do not.

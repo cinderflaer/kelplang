@@ -807,7 +807,16 @@ pub(crate) fn check_method_call(
     }
     let mut checked_args = Vec::with_capacity(sig.params.len());
     ctx.keep_probe(receiver, probe);
-    checked_args.push(check_call_arg("'self'", &sig.params[0].1, receiver, ctx)?);
+    // A shared borrow cannot call a method that writes its receiver (issue #286):
+    // the refusal names the rule, whichever way the mode was written.
+    checked_args.push(check_call_arg("'self'", &sig.params[0].1, receiver, ctx).map_err(|mut e| {
+        if e.message.contains("requires an exclusive borrow") {
+            e.message = format!(
+                "'{owner}.{method}' writes its receiver, so a call needs an exclusive borrow, and a shared borrow cannot make it: a method's receiver is exclusive when its body writes self, or when it is written 'fun mut'"
+            );
+        }
+        e
+    })?);
     ctx.str_arg_site = Some(if key.contains('<') || trait_declares_method(ctx, method) {
         StrArgSite::Refused(format!("method '{owner}.{method}'"))
     } else {

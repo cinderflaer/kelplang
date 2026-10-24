@@ -226,6 +226,15 @@ pub struct Receiver {
     /// Empty for a receiver whose list is all type parameters.
     pub const_params: Vec<ConstParamDecl>,
     pub mutable: bool,
+    /// True for a receiver written without `mut` on a `fun Type.name` line
+    /// outside a datac block and outside an `impl` or trait: its mode is
+    /// decided by the method's body (issue #286), exclusive when the body
+    /// writes self. `false` for every other receiver, whose mode is written.
+    pub inferable: bool,
+    /// True for a method written inside the braces of its datac (issue #285).
+    /// Its mode is written and never inferred, so a block method that writes
+    /// self without `mut` is refused with the `mut` form named (issue #286).
+    pub in_block: bool,
     pub span: Span,
 }
 

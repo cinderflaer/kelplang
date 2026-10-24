@@ -346,6 +346,7 @@ pub(crate) fn check_call_arg_in(
                         span: arg_expr.span(),
                     });
                 }
+                ctx.note_self_write(&checked)?;
                 check_target_writable(&checked, ctx)?;
             }
             let span = checked.span;
@@ -363,6 +364,9 @@ pub(crate) fn check_call_arg_in(
                     message: format!("argument {pname} requires an exclusive borrow, found a shared one"),
                     span: arg_expr.span(),
                 });
+            }
+            if *mutable {
+                ctx.note_self_write(&checked)?;
             }
             Ok(checked)
         }

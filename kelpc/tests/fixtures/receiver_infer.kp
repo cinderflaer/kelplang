@@ -1,0 +1,52 @@
+// A method that writes its receiver needs no `mut` written outside a datac
+// block: the receiver mode is inferred from the body (issue #286). A method
+// that only reads self stays a shared borrow, and so does a caller that
+// holds a shared borrow.
+
+datac Counter(val id: int, var count: int)
+
+// Writes self: inferred exclusive.
+fun Counter.bump() {
+    count += 1
+}
+
+// Writes self only through a method that writes self: inferred exclusive too.
+fun Counter.bump_twice() {
+    self.bump()
+    self.bump()
+}
+
+// Reads self only: stays shared.
+fun Counter.doubled() => int = count * 2
+
+// Calls a shared method on self: stays shared.
+fun Counter.report() {
+    print(self.doubled())
+}
+
+// A shared borrow may call a method that only reads.
+fun read(c: &Counter) => int = c.doubled()
+
+// A builtin exclusive method on a field of self makes the method exclusive.
+datac Bag(var items: List<int>)
+
+fun Bag.add(x: int) {
+    items.push(x)
+}
+
+fun Bag.size() => int = items.len()
+
+fun main() {
+    var b = Bag(items = List.empty())
+    b.add(7)
+    b.add(8)
+    print(b.size())
+
+    var c = Counter(id = 1, count = 0)
+    c.bump()
+    c.bump_twice()
+    print(c.count)
+    print(c.doubled())
+    print(read(c))
+    c.report()
+}

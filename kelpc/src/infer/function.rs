@@ -155,6 +155,24 @@ pub(crate) fn check_function(
     fns: &FuncEnv,
     statics: &HashMap<String, StaticInfo>,
 ) -> Result<tir::Function> {
+    // Issue #286: the receiver-mode probe checks an inferable method with `self`
+    // exclusive, so the writes its body makes are recorded rather than refused
+    // (see `infer_receiver_modes` in `program.rs`). Call sites still see the
+    // shared signature the probe started from.
+    let probing = wiring.writers.is_some()
+        && f.receiver.as_ref().is_some_and(|r| r.inferable)
+        && matches!(f.body, ast::FunctionBody::Block(_) | ast::FunctionBody::Expr(_));
+    let probe_sig;
+    let sig = if probing {
+        let mut s = sig.clone();
+        if let Some((_, Ty::Ref { mutable, .. })) = s.params.first_mut() {
+            *mutable = true;
+        }
+        probe_sig = s;
+        &probe_sig
+    } else {
+        sig
+    };
     // The `...` variadic marker (gap 7) is legal in exactly one place: a
     // *user* `extern fun`, meaning one whose module a `coral.toml`
     // `[extern."<module id>"]` section names. A compiler-shipped `extern
@@ -386,6 +404,12 @@ pub(crate) fn check_function(
     ctx.fn_key = wiring_key;
     ctx.pd_modes = wiring.modes.clone();
     ctx.pd_probe = wiring.probe.clone();
+    ctx.self_probe = probing;
+    ctx.block_note = f
+        .receiver
+        .as_ref()
+        .filter(|r| r.in_block && !r.mutable)
+        .map(|_| format!("'{}' writes its receiver, but a method inside a 'datac' block does not infer its receiver mode: write 'mut {}()' in the block", display_name(f), f.name));
     let mut params = Vec::new();
     // Parameters (and the receiver, if any) are immutable bindings, like
     // `val`; v1 has no syntax to declare a mutable *binding* for one (the
@@ -539,6 +563,11 @@ pub(crate) fn check_function(
         body
     };
 
+    if probing && ctx.self_written.get() {
+        if let Some(writers) = &wiring.writers {
+            writers.borrow_mut().insert(f.span);
+        }
+    }
     Ok(tir::Function {
         name: key.to_string(),
         params: {

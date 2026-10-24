@@ -33,10 +33,13 @@ pub fn check_program(
     // checked, so the private-in-public rule runs here, once.
     check_pub_signatures(program, project)?;
     check_extern_type_names(program)?;
+    let inferred = infer_receiver_modes(program, project)?;
+    let program = inferred.as_ref().unwrap_or(program);
     let probe = std::rc::Rc::new(std::cell::RefCell::new(PdProbe::default()));
     let probe_wiring = PdWiring {
         modes: std::rc::Rc::new(HashMap::new()),
         probe: Some(probe.clone()),
+        writers: None,
     };
     let checked = check_program_pass(program, project, &probe_wiring)?;
     let exclusive_uses = probe.borrow().exclusive_uses.clone();
@@ -47,10 +50,50 @@ pub fn check_program(
     let final_wiring = PdWiring {
         modes: std::rc::Rc::new(close_pd_modes(&exclusive_uses, &edges)),
         probe: None,
+        writers: None,
     };
     Ok(check_program_pass(program, project, &final_wiring)?)
 }
 
+
+/// The receiver modes of the methods written `fun Type.name` without `mut`
+/// (issue #286). Such a method is exclusive exactly when its body writes self,
+/// including through a call to another exclusive method on self. The set is
+/// found by a fixpoint from the empty set: each pass checks every inferable
+/// body with `self` exclusive and records the ones that write, and the set
+/// grows until a pass finds the same writers. Returns the program with those
+/// receivers written `mut`, or `None` when no method is exclusive.
+pub(crate) fn infer_receiver_modes(program: &ast::Program, project: &Project) -> std::result::Result<Option<ast::Program>, Diagnostic> {
+    if !program.functions.iter().any(|f| f.receiver.as_ref().is_some_and(|r| r.inferable)) {
+        return Ok(None);
+    }
+    let mut exclusive: std::collections::HashSet<crate::lexer::Span> = std::collections::HashSet::new();
+    let mut owned: Option<ast::Program> = None;
+    loop {
+        let writers = std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new()));
+        let wiring = PdWiring {
+            modes: std::rc::Rc::new(HashMap::new()),
+            probe: Some(std::rc::Rc::new(std::cell::RefCell::new(PdProbe::default()))),
+            writers: Some(writers.clone()),
+        };
+        let current: &ast::Program = owned.as_ref().unwrap_or(program);
+        check_program_pass(current, project, &wiring)?;
+        let found = writers.borrow().clone();
+        if found == exclusive {
+            return Ok(owned);
+        }
+        let mut next = program.clone();
+        for f in next.functions.iter_mut() {
+            if let Some(r) = f.receiver.as_mut() {
+                if r.inferable && found.contains(&f.span) {
+                    r.mutable = true;
+                }
+            }
+        }
+        exclusive = found;
+        owned = Some(next);
+    }
+}
 
 /// One full body-checking pass, under the passdown borrow modes `wiring`
 /// carries. Called twice at most: once as the probe, and once with the modes
