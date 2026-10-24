@@ -76,8 +76,8 @@ fun current_phase() => usize {
     unsafe { PHASE }
 }
 
-fun resume_pc() => usize {
-    unsafe { RESUME }
+unsafe fun resume_pc() => usize {
+    RESUME
 }
 
 // `0x` then the significant hex digits, so a printed address is one line the

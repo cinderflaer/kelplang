@@ -168,16 +168,14 @@ pub fun install() {
 // constraint vocabulary has no fixed-register form, so the template loads the
 // MSR number and the address's two halves itself and declares the three
 // registers clobbered.
-fun set_gs_base(addr: usize) {
-    unsafe {
-        asm(
-            "mov rcx, 0xC0000101\nmov rax, {0}\nshr rax, 32\nmov rdx, rax\nmov rax, {0}\nwrmsr",
-            in("r") addr,
-            clobber("ax"),
-            clobber("cx"),
-            clobber("dx")
-        )
-    }
+unsafe fun set_gs_base(addr: usize) {
+    asm(
+        "mov rcx, 0xC0000101\nmov rax, {0}\nshr rax, 32\nmov rdx, rax\nmov rax, {0}\nwrmsr",
+        in("r") addr,
+        clobber("ax"),
+        clobber("cx"),
+        clobber("dx")
+    )
 }
 
 // What the boot checks before anything relies on the asm: the gate is one

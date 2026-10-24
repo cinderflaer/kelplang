@@ -7,14 +7,12 @@
 const UART_BASE: usize = 0x10000000
 const LSR_OFFSET: usize = 5
 
-pub fun putc(c: u8) {
-    unsafe {
-        val lsr: Ptr<u8> = Ptr.from_addr(UART_BASE + LSR_OFFSET)
-        // v1 has no bitwise operators, so bit 5 of LSR is `(value / 32) % 2`.
-        while (lsr.read_volatile() / 32) % 2 == 0 {}
-        val thr: Ptr<u8> = Ptr.from_addr(UART_BASE)
-        thr.write_volatile(c)
-    }
+pub unsafe fun putc(c: u8) {
+    val lsr: Ptr<u8> = Ptr.from_addr(UART_BASE + LSR_OFFSET)
+    // v1 has no bitwise operators, so bit 5 of LSR is `(value / 32) % 2`.
+    while (lsr.read_volatile() / 32) % 2 == 0 {}
+    val thr: Ptr<u8> = Ptr.from_addr(UART_BASE)
+    thr.write_volatile(c)
 }
 
 pub fun puts(msg: Ptr<u8>, len: usize) {
