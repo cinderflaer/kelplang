@@ -30,6 +30,10 @@ pub struct Parser {
     /// The datac whose `{ ... }` block the next method belongs to (issue #285),
     /// set just before that method is parsed and taken by `parse_function_inner`.
     pub(crate) datac_owner: Option<DatacOwner>,
+    /// Set just before a top-level function written without `fun` is parsed
+    /// (issue #287), and taken by `parse_function_inner`, which then does not
+    /// expect the keyword.
+    pub(crate) bare_top_fn: bool,
 }
 
 /// How deep source text may nest (parenthesized or prefix-chained expressions,

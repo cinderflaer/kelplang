@@ -1,0 +1,8 @@
+// A top-level function written without `fun` cannot be `pub` (issue #287): the
+// `pub` form keeps `fun`, so `pub fun half(...)` is the spelling.
+
+pub half(n: int) => int = n / 2
+
+fun main() {
+    print(half(4))
+}

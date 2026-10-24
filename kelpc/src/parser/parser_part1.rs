@@ -13,6 +13,7 @@ impl Parser {
             no_trailing_block: false,
             depth: 0,
             datac_owner: None,
+            bare_top_fn: false,
         }
     }
 
@@ -438,6 +439,8 @@ impl Parser {
                 // identifier tokens and the lookahead is what makes them
                 // declaration markers here.
                 let (unsafe_, naked, must_use, interrupt) = self.check_function_markers();
+                // `fun` may be left out of a plain top-level function (issue #287).
+                self.bare_top_fn = !is_pub && self.at_bare_fn_decl();
                 let mut f = self.parse_function(is_pub, unsafe_, naked, section, align, false)?;
                 f.must_use = must_use;
                 f.interrupt = interrupt;
@@ -569,6 +572,29 @@ impl Parser {
     /// than read as a no-op or as something else. A `pd` gets its own message
     /// because it is not a missing feature: a passdown is module-scoped by
     /// design (`kelp wiki page meta/roadmap.md` item 10), so `pub` on one can never be true.
+    /// Whether the cursor is at a top-level function written without `fun`
+    /// (issue #287): a name, or `mut` and a type name, then `Name` or `Type.name`,
+    /// then `(` or `<`. Only a line of that shape is a declaration, so an
+    /// assignment or any other top-level line is never read as one.
+    pub(crate) fn at_bare_fn_decl(&self) -> bool {
+        let kind = |i: usize| self.tokens.get(self.pos + i).map(|t| &t.kind);
+        let has_mut = matches!(kind(0), Some(TokenKind::Mut));
+        let mut i = usize::from(has_mut);
+        if !matches!(kind(i), Some(TokenKind::Ident(_))) {
+            return false;
+        }
+        i += 1;
+        if matches!(kind(i), Some(TokenKind::Dot)) {
+            if !matches!(kind(i + 1), Some(TokenKind::Ident(_))) {
+                return false;
+            }
+            i += 2;
+        } else if has_mut {
+            return false;
+        }
+        matches!(kind(i), Some(TokenKind::LParen) | Some(TokenKind::Lt))
+    }
+
     pub(crate) fn check_pub_target(&self, pub_span: Span) -> PResult<()> {
         match self.peek_kind() {
             TokenKind::Fun
@@ -614,6 +640,24 @@ impl Parser {
                 if n == "align" && matches!(self.peek2_kind(), TokenKind::LParen) =>
             {
                 Ok(())
+            }
+            // `pub half(...)`: a function written without `fun` cannot be `pub`
+            // (issue #287). The refusal writes the spelling that works.
+            TokenKind::Ident(n) if self.at_bare_fn_decl() => {
+                let head = match self.peek2_kind() {
+                    TokenKind::Dot => match self.tokens.get(self.pos + 2).map(|t| &t.kind) {
+                        Some(TokenKind::Ident(m)) => format!("{n}.{m}"),
+                        _ => n.clone(),
+                    },
+                    _ => n.clone(),
+                };
+                Err(ParseError {
+                    help: None,
+                    message: format!(
+                        "a function written without 'fun' cannot be 'pub': write 'pub fun {head}(...)'"
+                    ),
+                    span: pub_span.to(self.peek().span),
+                })
             }
             TokenKind::Pd => Err(ParseError {
                 help: None,

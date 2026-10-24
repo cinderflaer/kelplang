@@ -1,0 +1,9 @@
+// A top-level line that is not a function declaration keeps its refusal (issue
+// #287). `fun` may be left out only before a name and a parameter list, so an
+// assignment at the top level is still refused.
+
+count = 3
+
+fun main() {
+    print(count)
+}

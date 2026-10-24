@@ -258,6 +258,9 @@ impl Parser {
         // Taken first, so nothing parsed inside this method sees it.
         let owner = self.datac_owner.take();
         let in_block = owner.is_some();
+        // A top-level function written without `fun` (issue #287), taken here
+        // so nothing parsed inside this function sees it.
+        let bare = std::mem::take(&mut self.bare_top_fn);
         // `extern fun ...` - a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
@@ -267,7 +270,7 @@ impl Parser {
         } else {
             false
         };
-        let start = if in_block {
+        let start = if in_block || bare {
             self.peek().span
         } else {
             self.expect(TokenKind::Fun, "'fun'")?.span

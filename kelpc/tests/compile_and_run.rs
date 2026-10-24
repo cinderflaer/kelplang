@@ -622,6 +622,9 @@ mod datac_block_methods;
 #[path = "compile_and_run/receiver_mode.rs"]
 mod receiver_mode;
 
+#[path = "compile_and_run/fun_optional.rs"]
+mod fun_optional;
+
 #[path = "compile_and_run/numeric_names.rs"]
 mod numeric_names;
 

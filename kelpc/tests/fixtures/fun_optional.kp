@@ -1,0 +1,38 @@
+// The `fun` keyword may be left out of a top-level function declaration that
+// has no modifier (issue #287): a free function, a method, and a receiver method
+// written `mut`. The written `fun` still works, and the two forms mix in one file.
+
+datac Counter(val id: int, var count: int)
+
+// Writes self, and is written without `fun`: inferred exclusive (#286).
+Counter.inc() {
+    count += 1
+}
+
+// Writes self with the written `mut`, and without `fun`.
+mut Counter.reset() {
+    count = 0
+}
+
+// Reads self, with `fun` still written.
+fun Counter.doubled() => int = count * 2
+
+half(n: int) => int = n / 2
+
+fun twice(n: int) => int = n * 2
+
+// A generic function, written without `fun`.
+keep<t>(x: t) => t = x
+
+main() {
+    var c = Counter(id = 1, count = 0)
+    c.inc()
+    c.inc()
+    print(c.count)
+    print(c.doubled())
+    print(half(9))
+    print(twice(4))
+    c.reset()
+    print(c.count)
+    print(keep(5))
+}
