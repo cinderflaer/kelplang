@@ -333,3 +333,53 @@ fn a_fetched_dependency_is_not_linted_for_its_names() {
         "a dependency's naming was reported:\n{text}"
     );
 }
+
+#[test]
+fn a_borrow_written_on_an_owned_parameter_is_reported_and_the_spellings_that_differ_are_not() {
+    let dir = scratch("redundant_borrow");
+    // Lines 2 to 8 are redundant: each owned type or `str` takes the same
+    // argument without the `&`. Lines 9 to 14 keep it: `&dyn` has no other
+    // spelling, a scalar and an array are passed by value without it, a
+    // generic `T` depends on its instantiation, `eq` must take `&Owner`, and
+    // line 15 names an enum of another module (`str.ParseErr`), not `str`.
+    let file = write(
+        &dir,
+        "redundant_borrow.kp",
+        "datac Point(var x: i32, var y: i32)\n\
+         fun a(p: &Point) {}\n\
+         fun b(s: &String) {}\n\
+         fun c(b: &Bytes) {}\n\
+         fun d(xs: &List<i32>) {}\n\
+         fun e(m: &Map<String, i32>) {}\n\
+         fun f(b: &Box<Point>) {}\n\
+         fun g(s: &str) {}\n\
+         fun h(d: &dyn Shape) {}\n\
+         fun i(n: &i32) {}\n\
+         fun j(a: &[i32; 3]) {}\n\
+         fun k<T>(x: &T) {}\n\
+         datac Pt(var x: i32)\n\
+         fun Pt.eq(other: &Pt) => bool = true\n\
+         fun q(e: &str.ParseErr) {}\n",
+    );
+
+    let out = lint(&file);
+    assert!(out.status.success(), "a redundant '&' is a warning, not a failure");
+    let text = stderr(&out);
+    assert_eq!(
+        text.matches("redundant '&' on a parameter").count(),
+        7,
+        "expected one warning for each of lines 2 to 8, got:\n{text}"
+    );
+    for line in 2..=8 {
+        assert!(
+            text.contains(&format!("{}:{line}:", file.display())),
+            "no redundant-borrow warning on line {line}:\n{text}"
+        );
+    }
+    for line in 9..=15 {
+        assert!(
+            !text.contains(&format!("{}:{line}:", file.display())),
+            "line {line} keeps its '&' and must not be reported:\n{text}"
+        );
+    }
+}

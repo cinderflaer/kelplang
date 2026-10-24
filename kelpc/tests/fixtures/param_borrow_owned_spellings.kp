@@ -1,0 +1,33 @@
+// #283 gate: a parameter of an owned type gives the same results with or
+// without its `&`, for a `datac`, a `String` and a `Bytes`. A plain parameter
+// of an owned type is already a shared borrow, so `s: &T` and `s: T` take the
+// same arguments. The `str` and `&str` pair is in param_borrow_spellings.kp.
+datac Point(var x: i32, var y: i32)
+
+fun sum_plain(p: Point) => i32 = p.x + p.y
+
+fun sum_ref(p: &Point) => i32 = p.x + p.y
+
+fun size_plain(s: String) => int = s.len()
+
+fun size_ref(s: &String) => int = s.len()
+
+fun bytes_plain(b: Bytes) => int = b.len()
+
+fun bytes_ref(b: &Bytes) => int = b.len()
+
+fun main() {
+    val p = Point(x = 3, y = 4)
+    print(sum_plain(p))
+    print(sum_ref(p))
+    print(sum_plain(p))
+
+    val s = String.from_str(s = "kelp")
+    print(size_plain(s))
+    print(size_ref(s))
+    print(s.len())
+
+    val b = Bytes.from_str("abc")
+    print(bytes_plain(b))
+    print(bytes_ref(b))
+}

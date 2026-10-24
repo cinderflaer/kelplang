@@ -17,8 +17,9 @@
 //! - the **naming case** (roadmap item 23, `syntax.md` 19): the project's case,
 //!   `camelCase` (the default) or `snake_case`, read from `coral.toml`'s
 //!   `naming_case`.
-//! - the **redundant borrow** on a `List` or `str` parameter (`&List<T>` and
-//!   `&str` take the same arguments as `List<T>` and `str`): a warning.
+//! - the **redundant borrow** on a parameter of an owned type or `str` (`&String`,
+//!   `&List<T>`, `&Point` for a `datac`, `&str`, ...): a warning. See
+//!   [`redundant_borrow_params_in`].
 //! - the **redundant comparison** (`== true`, and `.len() == 0` where
 //!   `.is_empty()` says it): a warning, never a failure.
 //!
@@ -165,14 +166,33 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
     Ok(all)
 }
 
-/// A `&` on a `List` or `str` parameter of a `fun` header. Such a parameter
-/// already borrows its argument, and `List<T>` and `str` take the same
-/// arguments as `&List<T>` and `&str` (`kelpc/tests/fixtures/param_borrow_spellings.kp`).
-/// Warning only.
+/// A `&` on a parameter whose type already borrows its argument. A plain
+/// parameter of an owned, non-`Copy` type is a shared borrow, so `s: &T` and
+/// `s: T` take the same arguments for `String`, `Bytes`, `List`, `Map`, `Box`,
+/// a `datac` and `str` (`kelpc/tests/fixtures/param_borrow_spellings.kp`).
+/// The `&` is kept where it means something else: `&dyn`, a scalar or a `Copy`
+/// type (passed by value without it), a fixed-size array (by value), a generic
+/// `T` (its `Copy`-ness depends on the instantiation), a `Box<dyn ...>`, and
+/// `fun X.eq(other: &X)`, which the checker requires. A `datac` counts only when
+/// this file declares it, so a type from another file is not reported. Warning
+/// only.
 fn redundant_borrow_params_in(tokens: &[Token]) -> Vec<Finding> {
+    let datacs: std::collections::HashSet<&str> = tokens
+        .windows(2)
+        .filter_map(|pair| match (&pair[0].kind, &pair[1].kind) {
+            (TokenKind::Datac, TokenKind::Ident(name)) => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
     let mut out = Vec::new();
     for (i, token) in tokens.iter().enumerate() {
         if !matches!(token.kind, TokenKind::Fun) {
+            continue;
+        }
+        // `fun X.eq(other: &X)`: the checker requires the borrow here.
+        if matches!(tokens.get(i + 2).map(|t| &t.kind), Some(TokenKind::Dot))
+            && matches!(tokens.get(i + 3).map(|t| &t.kind), Some(TokenKind::Ident(name)) if name == "eq")
+        {
             continue;
         }
         let mut depth = 0usize;
@@ -185,23 +205,60 @@ fn redundant_borrow_params_in(tokens: &[Token]) -> Vec<Finding> {
                 TokenKind::Eq if depth == 0 => break,
                 _ => {}
             }
-            if depth >= 1
-                && matches!(tokens[k].kind, TokenKind::Ident(_))
-                && matches!(tokens.get(k + 1).map(|t| &t.kind), Some(TokenKind::Colon))
-                && matches!(tokens.get(k + 2).map(|t| &t.kind), Some(TokenKind::Amp))
-                && matches!(tokens.get(k + 3).map(|t| &t.kind), Some(TokenKind::Ident(name)) if name == "List" || name == "str")
-            {
-                let amp = &tokens[k + 2];
-                let ty = &tokens[k + 3];
-                out.push(Finding {
-                    span: Span::new(amp.span.start, ty.span.end),
-                    message: "redundant '&' on a parameter: a 'List' or 'str' parameter already borrows its argument, so write it without '&'".to_string(),
-                });
+            if depth >= 1 {
+                if let Some(name) = borrowed_owner_param(tokens, k, &datacs) {
+                    let amp = &tokens[k + 2];
+                    let ty = &tokens[k + 3];
+                    out.push(Finding {
+                        span: Span::new(amp.span.start, ty.span.end),
+                        message: format!(
+                            "redundant '&' on a parameter: a parameter of type '{name}' already borrows its argument, so write it without '&'"
+                        ),
+                    });
+                }
             }
             k += 1;
         }
     }
     out
+}
+
+/// The type name of a `name: &Type` parameter that starts at token `k`, when
+/// the `&` on it is redundant (see [`redundant_borrow_params_in`]).
+fn borrowed_owner_param<'a>(
+    tokens: &'a [Token],
+    k: usize,
+    datacs: &std::collections::HashSet<&str>,
+) -> Option<&'a str> {
+    if !matches!(tokens.get(k)?.kind, TokenKind::Ident(_)) {
+        return None;
+    }
+    if !matches!(tokens.get(k + 1)?.kind, TokenKind::Colon) || !matches!(tokens.get(k + 2)?.kind, TokenKind::Amp) {
+        return None;
+    }
+    // A name followed by `.` is a path into another module (`str.ParseErr` is
+    // an enum from `std/str`), not the builtin or the `datac` of that name.
+    if matches!(tokens.get(k + 4).map(|t| &t.kind), Some(TokenKind::Dot)) {
+        return None;
+    }
+    match &tokens.get(k + 3)?.kind {
+        TokenKind::Ident(name) if owns_by_name(name, datacs) && !is_box_dyn(tokens, k + 3) => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+/// Whether a type named `name` owns memory or is text that a plain parameter
+/// borrows: the builtin owners, `str`, and a `datac` this file declares.
+fn owns_by_name(name: &str, datacs: &std::collections::HashSet<&str>) -> bool {
+    matches!(name, "String" | "Bytes" | "List" | "Map" | "Box" | "str") || datacs.contains(name)
+}
+
+/// Whether the type at `at` is `Box<dyn ...>`, an owned trait object that the
+/// `&` cannot be dropped from.
+fn is_box_dyn(tokens: &[Token], at: usize) -> bool {
+    matches!(&tokens[at].kind, TokenKind::Ident(name) if name == "Box")
+        && matches!(tokens.get(at + 1).map(|t| &t.kind), Some(TokenKind::Lt))
+        && matches!(tokens.get(at + 2).map(|t| &t.kind), Some(TokenKind::Ident(name)) if name == "dyn")
 }
 
 /// The comparisons a plain condition or `.is_empty()` says better. Warnings

@@ -79,6 +79,16 @@ pub(crate) fn a_borrow_parameter_spelled_with_or_without_ampersand_gives_the_sam
     );
 }
 
+/// #283 gate: a `datac`, a `String` and a `Bytes` parameter, written with or
+/// without its `&`, give the same results, so the `&` on those can go.
+#[test]
+pub(crate) fn a_datac_string_or_bytes_parameter_spelled_with_or_without_ampersand_gives_the_same_result() {
+    assert_compiles_and_runs(
+        "tests/fixtures/param_borrow_owned_spellings.kp",
+        "7\n7\n7\n4\n4\n4\n3\n3\n",
+    );
+}
+
 /// `str.less` is the ordering `str` never had, and `str.is_digit` is the digit
 /// predicate that four libraries in the catalogue wrote by hand.
 ///
