@@ -563,7 +563,9 @@ impl Parser {
                 span,
             });
         }
-        functions.extend(crate::derive::expand(&derives, &datacs, &enums, &functions)?);
+        let derived = crate::derive::expand(&derives, &datacs, &enums, &functions, &impls)?;
+        functions.extend(derived.functions);
+        trait_impls.extend(derived.impls);
         Ok(Program {
             script: script_span,
             impls,

@@ -4,12 +4,33 @@
 //! the same parser as the rest of the file, so the declared-pair machinery
 //! (A-12) reaches them unchanged: a `Map` key, `==` and `!=` all use them the
 //! way they use a hand-written pair.
+//!
+//! `derive(text)` (issue #292) writes `impl fmt.Display for T`, whose
+//! `to_text` gives the constructor shape of the value: `Point(3, ab)`, `Empty()`
+//! for a `datac` with no fields, and `Circle(2)` or `Empty` for an `enum`
+//! variant. The file must import `std/fmt` for the trait name.
 
 use std::collections::HashSet;
 
 use crate::ast::*;
 use crate::lexer::{Lexer, Span};
 use crate::parser::{ParseError, Parser};
+
+/// What `expand` makes from the requests: ordinary methods, and the
+/// `impl fmt.Display` blocks that `derive(text)` writes.
+pub struct Derived {
+    pub functions: Vec<FunctionDecl>,
+    pub impls: Vec<TraitImplDecl>,
+}
+
+/// The method a derive name writes: `text` is the `to_text` of `Display`.
+fn method_name(derive_name: &str) -> &str {
+    if derive_name == "text" {
+        "to_text"
+    } else {
+        derive_name
+    }
+}
 
 /// One `derive(...)` line, bound to the `datac` or `enum` written under it.
 #[derive(Debug, Clone)]
@@ -156,6 +177,80 @@ fn hash_text(access: &str, k: usize) -> String {
     )
 }
 
+/// The refusal for a field with no text form, or `None` when the field can be
+/// written in a template. A number, `bool`, `char`, float, `String` and
+/// `Bytes` have one, and so does a type of this file with a `to_text`.
+fn text_refusal(scope: &Scope, owner: &str, field: &str, ty: &TypeExpr) -> Option<String> {
+    let text = type_text(ty);
+    match classify(ty) {
+        Kind::Int | Kind::Bool | Kind::Char | Kind::Float | Kind::Text => None,
+        // A qualified name is another module's type; its `Display` is checked
+        // where the template is made.
+        Kind::User(name) if name.contains('.') => None,
+        Kind::User(name) if scope.has(&name, "to_text") => None,
+        Kind::User(name) if scope.local_types.contains(&name) => Some(format!(
+            "derive(text) on '{owner}' cannot write field '{field}' of type '{name}': '{name}' has no text form of its own. Fix: add derive(text) above '{name}', or write 'impl fmt.Display for {name}' by hand"
+        )),
+        Kind::User(name) => Some(format!(
+            "derive(text) on '{owner}' cannot write field '{field}' of type '{name}': '{name}' is not declared in this file, so derive cannot call its text form. Fix: write 'impl fmt.Display for {owner}' by hand"
+        )),
+        Kind::Other => Some(format!(
+            "derive(text) on '{owner}' cannot write field '{field}' of type '{text}': it has no text form, and derive does not write one for that type. Fix: write 'impl fmt.Display for {owner}' by hand"
+        )),
+    }
+}
+
+/// Checks one field for `derive(text)`, reporting the refusal at the field.
+fn text_check(scope: &Scope, owner: &str, field: &str, ty: &TypeExpr, span: Span) -> Result<(), ParseError> {
+    match text_refusal(scope, owner, field, ty) {
+        Some(message) => Err(ParseError { help: None, message, span }),
+        None => Ok(()),
+    }
+}
+
+/// The Kelp source of `impl fmt.Display for T` for `derive(text)`. A `datac`
+/// reads `Name(a, b)` with its fields in declaration order, and a `datac`
+/// with no fields reads `Name()`. An enum payload variant reads `Variant(a)`,
+/// and a unit variant reads its name. A `String` or `Bytes` field is written
+/// as its bytes, with no quotes, because this is the `Display` form.
+fn text_source(scope: &Scope, name: &str, fields: Option<&[FieldDecl]>, variants: Option<&[VariantDecl]>) -> Result<String, ParseError> {
+    let mut out = format!("impl fmt.Display for {name} {{\nfun Self.to_text() => String {{\n");
+    match (fields, variants) {
+        (Some(fields), _) if fields.is_empty() => {
+            out.push_str(&format!("return String.from_str(s = \"{name}()\")\n"));
+        }
+        (Some(fields), _) => {
+            let mut parts = Vec::new();
+            for f in fields {
+                text_check(scope, name, &f.name, &f.ty, f.span)?;
+                parts.push(format!("${{self.{}}}", f.name));
+            }
+            out.push_str(&format!("return \"{name}({})\"\n", parts.join(", ")));
+        }
+        (_, Some(variants)) => {
+            out.push_str("var out: String = String.from_str(s = \"\")\nwhen self {\n");
+            for v in variants {
+                out.push_str(&format!("{}{} -> {{\n", v.name, binds(v, "a")));
+                if v.fields.is_empty() {
+                    out.push_str(&format!("out = String.from_str(s = \"{}\")\n", v.name));
+                } else {
+                    let mut parts = Vec::new();
+                    for (i, f) in v.fields.iter().enumerate() {
+                        text_check(scope, name, &f.name, &f.ty, f.span)?;
+                        parts.push(format!("${{a{i}}}"));
+                    }
+                    out.push_str(&format!("out = \"{}({})\"\n", v.name, parts.join(", ")));
+                }
+                out.push_str("}\n");
+            }
+            out.push_str("}\nreturn out\n");
+        }
+        _ => {}
+    }
+    out.push_str("}\n}\n");
+    Ok(out)
+}
+
 /// The shape of the type a request is written on.
 enum Target<'a> {
     Datac(&'a DatacDecl),
@@ -274,13 +369,15 @@ fn binds(v: &VariantDecl, prefix: &str) -> String {
 
 /// Expands every request into methods, once the file is parsed. A request
 /// for a method the type already declares by hand is refused, and the message
-/// names the hand-written method.
+/// names the hand-written method. `impls` is the file's own `impl "..."`
+/// imports, which `derive(text)` needs for `fmt.Display`.
 pub fn expand(
     requests: &[DeriveRequest],
     datacs: &[DatacDecl],
     enums: &[EnumDecl],
     functions: &[FunctionDecl],
-) -> Result<Vec<FunctionDecl>, ParseError> {
+    impls: &[ImplDecl],
+) -> Result<Derived, ParseError> {
     let mut methods = HashSet::new();
     for f in functions {
         if let Some(r) = &f.receiver {
@@ -289,7 +386,7 @@ pub fn expand(
     }
     for req in requests {
         for (n, _) in &req.names {
-            methods.insert((req.type_name.clone(), n.clone()));
+            methods.insert((req.type_name.clone(), method_name(n).to_string()));
         }
     }
     let local_types: HashSet<String> = datacs
@@ -298,18 +395,20 @@ pub fn expand(
         .chain(enums.iter().map(|e| e.name.clone()))
         .collect();
     let scope = Scope { methods, local_types };
+    let has_fmt = impls.iter().any(|i| i.path == "std/fmt");
 
-    let mut out = Vec::new();
+    let mut out = Derived { functions: Vec::new(), impls: Vec::new() };
     for req in requests {
         for (n, _) in &req.names {
             let existing = functions.iter().find(|f| {
-                f.name == *n && f.receiver.as_ref().is_some_and(|r| r.type_name == req.type_name)
+                f.name == method_name(n) && f.receiver.as_ref().is_some_and(|r| r.type_name == req.type_name)
             });
             if let Some(f) = existing {
+                let m = method_name(n);
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "derive({n}) on '{t}' would declare 'fun {t}.{n}' a second time, and the hand-written 'fun {t}.{n}' already declares it. Fix: remove derive({n}), or remove the hand-written 'fun {t}.{n}'",
+                        "derive({n}) on '{t}' would declare 'fun {t}.{m}' a second time, and the hand-written 'fun {t}.{m}' already declares it. Fix: remove derive({n}), or remove the hand-written 'fun {t}.{m}'",
                         t = req.type_name
                     ),
                     span: f.span,
@@ -323,6 +422,11 @@ pub fn expand(
         } else {
             continue;
         };
+        let (name, params, fields, variants): (&str, &[String], Option<&[FieldDecl]>, Option<&[VariantDecl]>) =
+            match &target {
+                Target::Datac(d) => (&d.name, &d.type_params, Some(&d.fields), None),
+                Target::Enum(e) => (&e.name, &e.type_params, None, Some(&e.variants)),
+            };
         let const_params = match &target {
             Target::Datac(d) => d.const_params.len(),
             Target::Enum(e) => e.const_params.len(),
@@ -337,7 +441,6 @@ pub fn expand(
                 span: req.span,
             });
         }
-        let src = method_source(&scope, req, &target)?;
         // The generated text is parsed as a file of its own. Every token takes
         // the span of its derive clause, so a diagnostic about generated code
         // points at the line the programmer wrote.
@@ -346,12 +449,41 @@ pub fn expand(
             message: format!("internal error in derive: {message}"),
             span: req.span,
         };
-        let mut tokens = Lexer::new(&src).tokenize().map_err(|e| internal(e.message))?;
-        for t in tokens.iter_mut() {
-            t.span = req.span;
+        let mut sources = Vec::new();
+        if req.names.iter().any(|(n, _)| n == "text") {
+            if !params.is_empty() {
+                return Err(ParseError {
+                    help: None,
+                    message: format!(
+                        "derive(text) on generic '{name}' is not written: a type parameter has no known text form. Fix: write 'impl fmt.Display for {name}' by hand"
+                    ),
+                    span: req.span,
+                });
+            }
+            if !has_fmt {
+                return Err(ParseError {
+                    help: None,
+                    message: format!(
+                        "derive(text) on '{name}' writes 'impl fmt.Display for {name}', which needs the std/fmt import. Fix: add impl \"std/fmt\" at the top of the file"
+                    ),
+                    span: req.span,
+                });
+            }
+            sources.push(text_source(&scope, name, fields, variants)?);
         }
-        let prog = Parser::new(tokens).parse_program().map_err(|e| internal(e.message))?;
-        out.extend(prog.functions);
+        let src = method_source(&scope, req, &target)?;
+        if !src.is_empty() {
+            sources.push(src);
+        }
+        for src in sources {
+            let mut tokens = Lexer::new(&src).tokenize().map_err(|e| internal(e.message))?;
+            for t in tokens.iter_mut() {
+                t.span = req.span;
+            }
+            let prog = Parser::new(tokens).parse_program().map_err(|e| internal(e.message))?;
+            out.functions.extend(prog.functions);
+            out.impls.extend(prog.trait_impls);
+        }
     }
     Ok(out)
 }

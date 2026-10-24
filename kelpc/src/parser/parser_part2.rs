@@ -442,9 +442,9 @@ impl Parser {
         ))
     }
 
-    /// `derive(eq, hash)` (lang-derive-eq): the names of a derive clause, or
-    /// `None` when the next tokens are not one. Only `eq` and `hash` are names;
-    /// any other name is refused by name.
+    /// `derive(eq, hash)` (lang-derive-eq) and `derive(text)` (issue #292): the
+    /// names of a derive clause, or `None` when the next tokens are not one.
+    /// Only `eq`, `hash` and `text` are names; any other name is refused by name.
     pub(crate) fn parse_derive_clause(&mut self) -> PResult<Option<crate::derive::DeriveRequest>> {
         if !matches!(self.peek_kind(), TokenKind::Ident(n) if n == "derive")
             || !matches!(self.peek2_kind(), TokenKind::LParen)
@@ -456,11 +456,11 @@ impl Parser {
         let mut names = Vec::new();
         while !self.check(&TokenKind::RParen) {
             let (name, span) = self.expect_ident()?;
-            if name != "eq" && name != "hash" {
+            if name != "eq" && name != "hash" && name != "text" {
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "'derive' can derive 'eq' and 'hash', not '{name}': a 'datac' or 'enum' gets '==' and a 'Map' key from those two methods"
+                        "'derive' can derive 'eq', 'hash' and 'text', not '{name}': 'eq' and 'hash' give '==' and a 'Map' key, and 'text' gives the 'Display' form of the value"
                     ),
                     span,
                 });
