@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1240 ran=606 c_refused=587 hosted_refused=9 excluded=38
+# counts candidates=1243 ran=607 c_refused=589 hosted_refused=9 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -187,11 +187,14 @@ fixture_defer_value_block	ran	exit 0		6d51b24299994492c2c153297d560ef24a8f5f228d
 fixture_derive_map_key_datac	ran	exit 0		e694259eaa6c406eaeb2a2650624fc0f1c51061894e001f90c23514badfa0a8f
 fixture_derive_map_key_enum	hosted-refused		error: hosted build does not describe an enum inside a collected object; enum map key needs enum descriptors (issue 326)	
 fixture_derive_pair_matches_hand_written	ran	exit 0		432841f654416eb923fd3c2d55214cfc38a7a483bcc5f7d75ce79973ad542f1d
-fixture_derive_refuse_bad_name	c-refused		error: 'derive' can derive 'eq' and 'hash', not 'show'	
+fixture_derive_refuse_bad_name	c-refused		error: 'derive' can derive 'eq', 'hash' and 'text', not 'show'	
 fixture_derive_refuse_field_without_eq	c-refused		error: derive(eq) on 'Outer' cannot compare field 'inner' of type 'Inner'	
 fixture_derive_refuse_float_field	c-refused		error: derive(hash) on 'Sample' cannot hash field 'ratio' of type 'f64'	
 fixture_derive_refuse_generic_field	c-refused		error: derive(eq) on generic 'Wrap' cannot check field 'item' of type 'T'	
 fixture_derive_refuse_hand_written	c-refused		error: derive(eq) on 'Point' would declare 'fun Point.eq' a second time, and the hand-written 'fun Point.eq' already declares it. Fix	
+fixture_derive_refuse_text_field	c-refused		error: derive(text) on 'Bag' cannot write field 'items' of type 'List<i32>'	
+fixture_derive_refuse_text_no_fmt	c-refused		error: derive(text) on 'Point' writes 'impl fmt.Display for Point', which needs the std/fmt import. Fix	
+fixture_derive_text_datac_enum	ran	exit 0		b9a3daa882eb532b1f82a6ea0b5d57e962a7444bd5bc82b27e68651d8ed052b0
 fixture_digit_separator_doubled	c-refused		error: a digit separator '_' takes one at a time	
 fixture_digit_separator_trailing	c-refused		error: a digit separator '_' must come between two digits, not after the last digit	
 fixture_digit_separators	ran	exit 0		5f8a59bc2ddd009af530d74dedc402f98ed28edf786a6e1a7d7eaa125fdd0083

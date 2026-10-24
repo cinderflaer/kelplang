@@ -1,0 +1,6 @@
+Point(3, ab, true)
+Blank()
+Circle(2)
+Empty
+Frame(Circle(2))
+Circle(7) and Point(3, ab, true)
