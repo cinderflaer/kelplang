@@ -1,0 +1,14 @@
+// A declaration may not follow a top-level `let ... else` in a script (issue #288):
+// the statements after the `let` are its rest, and a declaration would end it.
+
+enum Pick {
+    Yes(val value: int)
+    No
+}
+
+maybe() => Pick = Yes(value = 4)
+
+let Yes(n) = maybe() else { return }
+print(n)
+
+twice(x: int) => int = x * 2

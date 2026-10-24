@@ -625,6 +625,9 @@ mod receiver_mode;
 #[path = "compile_and_run/fun_optional.rs"]
 mod fun_optional;
 
+#[path = "compile_and_run/script_main.rs"]
+mod script_main;
+
 #[path = "compile_and_run/numeric_names.rs"]
 mod numeric_names;
 

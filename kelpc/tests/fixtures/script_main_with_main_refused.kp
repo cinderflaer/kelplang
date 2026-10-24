@@ -1,0 +1,8 @@
+// A file with top-level statements and a `fun main` is refused (issue #288): the
+// statements are the file's main, so the file cannot declare a second one.
+
+print("hi")
+
+fun main() {
+    print("bye")
+}

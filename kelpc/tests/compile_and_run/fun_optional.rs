@@ -18,8 +18,12 @@ pub(crate) fn a_pub_function_written_without_fun_is_refused_with_the_fix_named()
     );
 }
 
-/// A top-level line that is not a declaration keeps its refusal.
+/// A top-level line that is not a declaration is a statement of a script (issue
+/// #288), so an assignment beside a `fun main` is refused as a second main.
 #[test]
-pub(crate) fn a_top_level_assignment_is_still_refused() {
-    assert_rejected_with("tests/fixtures/fun_optional_not_decl_refused.kp", "expected 'fun'");
+pub(crate) fn a_top_level_assignment_beside_a_fun_main_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/fun_optional_not_decl_refused.kp",
+        "cannot also declare 'main'",
+    );
 }

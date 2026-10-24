@@ -1,0 +1,30 @@
+// A file of top-level statements with no `fun main` runs them as its main (issue
+// #288). Declarations may come before, between or after the statements.
+
+print("start")
+val n = twice(21)
+print(n)
+greet("Kelp")
+
+var c = Counter(count = 0)
+c.bump()
+c.bump()
+print(c.count)
+
+var i = 0
+while i < 3 {
+    print(i)
+    i += 1
+}
+
+datac Counter(var count: int)
+
+Counter.bump() {
+    count += 1
+}
+
+twice(x: int) => int = x * 2
+
+greet(name: &str) {
+    print("hello, ${name}")
+}

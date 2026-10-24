@@ -1,0 +1,7 @@
+// `?` in a script is refused as it is in `fun main()` (issue #288): the script's
+// main returns unit, so there is nothing for the early return to return to.
+
+impl "std/str"
+
+val n = str.parse_i64("5")?
+print(n)

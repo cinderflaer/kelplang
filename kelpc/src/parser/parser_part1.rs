@@ -242,6 +242,10 @@ impl Parser {
         // type when that type is parsed; the methods are made after the file.
         let mut derives: Vec<crate::derive::DeriveRequest> = Vec::new();
         let mut pending_derive: Option<crate::derive::DeriveRequest> = None;
+        // The statements of a script (issue #288), in source order across the
+        // declarations between them. They become the body of `main` at the end.
+        let mut script: Vec<Stmt> = Vec::new();
+        let mut script_span: Option<Span> = None;
         while !matches!(self.peek_kind(), TokenKind::Eof) {
             if let Some(req) = self.parse_derive_clause()? {
                 if let Some(earlier) = &pending_derive {
@@ -433,6 +437,12 @@ impl Parser {
                 && matches!(self.peek2_kind(), TokenKind::Ident(ref n) if n == "type")
             {
                 extern_types.push(self.parse_extern_type_decl(is_pub)?);
+            } else if self.at_script_statement() {
+                let first = self.peek().span;
+                let stmts = self.parse_script_run(false)?;
+                let span = first.to(self.tokens[self.pos.saturating_sub(1)].span);
+                script_span = Some(script_span.map_or(span, |s| s.to(span)));
+                script.extend(stmts);
             } else {
                 // `unsafe fun ...` / `naked fun ...` (MK9-S2 stage 1, kernel
                 // stage 5). Both are contextual words everywhere, so they are
@@ -466,8 +476,45 @@ impl Parser {
                 span: req.span,
             });
         }
+        if let Some(span) = script_span {
+            // The statements are the file's `main`, so the file cannot also
+            // declare one (issue #288).
+            if let Some(main) = functions.iter().find(|f| f.name == "main" && f.receiver.is_none()) {
+                return Err(ParseError {
+                    help: Some("a file of top-level statements runs them as its main: delete the 'fun main' or move the statements into it".to_string()),
+                    message: "a file with top-level statements cannot also declare 'main'".to_string(),
+                    span: main.span,
+                });
+            }
+            functions.push(FunctionDecl {
+                name: "main".to_string(),
+                is_pub: false,
+                type_params: Vec::new(),
+                type_param_bounds: Vec::new(),
+                projection_bounds: Vec::new(),
+                receiver_bounds: Vec::new(),
+                const_params: Vec::new(),
+                trait_impl: None,
+                extern_: false,
+                unsafe_: false,
+                must_use: false,
+                variadic: false,
+                naked: false,
+                interrupt: false,
+                receiver: None,
+                params: Vec::new(),
+                return_type: None,
+                body: FunctionBody::Block(Block { stmts: script, span }),
+                module: String::new(),
+                body_module: None,
+                section: None,
+                align: None,
+                span,
+            });
+        }
         functions.extend(crate::derive::expand(&derives, &datacs, &enums, &functions)?);
         Ok(Program {
+            script: script_span,
             impls,
             consts,
             statics,
@@ -592,7 +639,153 @@ impl Parser {
         } else if has_mut {
             return false;
         }
-        matches!(kind(i), Some(TokenKind::LParen) | Some(TokenKind::Lt))
+        if has_mut {
+            return matches!(kind(i), Some(TokenKind::LParen) | Some(TokenKind::Lt));
+        }
+        // A line that starts like a call (`print("hi")`, `c.bump()`) is a
+        // declaration only when a body follows the parameter list: the `{`, or
+        // the `=>` of an expression body. Without that it is a statement of a
+        // script (issue #288).
+        let mut open = i;
+        if matches!(kind(i), Some(TokenKind::Lt)) {
+            loop {
+                open += 1;
+                match kind(open) {
+                    Some(TokenKind::LParen) => break,
+                    Some(TokenKind::Newline) | Some(TokenKind::Eof) | None => return false,
+                    _ => {}
+                }
+            }
+        }
+        if !matches!(kind(open), Some(TokenKind::LParen)) {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut k = open;
+        loop {
+            match kind(k) {
+                Some(TokenKind::LParen) => depth += 1,
+                Some(TokenKind::RParen) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Some(TokenKind::Eof) | None => return false,
+                _ => {}
+            }
+            k += 1;
+        }
+        matches!(kind(k + 1), Some(TokenKind::LBrace) | Some(TokenKind::Arrow))
+    }
+
+    /// Whether the cursor is at a top-level line that is a statement of a
+    /// script rather than a declaration (issue #288). A statement starts a line
+    /// and is none of the declaration forms: a `fun` or modifier run, a receiver
+    /// `mut`, a bare function header, a declaration keyword or clause, or two
+    /// names in a row (which keeps its refusal, so `def main()` still names the
+    /// foreign word).
+    pub(crate) fn at_script_statement(&self) -> bool {
+        // A statement starts a line: `extern type Widget {}` is not a script.
+        let line_start = self.pos == 0 || matches!(self.tokens[self.pos - 1].kind, TokenKind::Newline);
+        if !line_start || self.check(&TokenKind::Mut) || self.at_bare_fn_decl() {
+            return false;
+        }
+        let kind = |i: usize| self.tokens.get(self.pos + i).map(|t| &t.kind);
+        // A run of function markers before `fun` (`unsafe naked fun`) is a declaration.
+        let mut i = 0;
+        while matches!(kind(i), Some(TokenKind::Ident(n)) if matches!(n.as_str(), "unsafe" | "naked" | "must_use" | "interrupt")) {
+            i += 1;
+        }
+        if matches!(kind(i), Some(TokenKind::Fun) | Some(TokenKind::Extern)) {
+            return false;
+        }
+        match kind(0) {
+            // The keywords of the declarations, and the clauses that come before one.
+            Some(TokenKind::Pub | TokenKind::Impl | TokenKind::Trait | TokenKind::Const | TokenKind::Static | TokenKind::Pd | TokenKind::Tl | TokenKind::Datac | TokenKind::Enum | TokenKind::Fun) => false,
+            Some(TokenKind::Ident(n)) if matches!(n.as_str(), "derive" | "repr" | "section" | "align") && matches!(kind(1), Some(TokenKind::LParen)) => false,
+            Some(TokenKind::Ident(n)) if n == "percpu" && matches!(kind(1), Some(TokenKind::Static)) => false,
+            // Two names in a row (`def main()`, `struct P`) is never a statement: it keeps
+            // the refusal that names the foreign word. `let` is the one contextual word that
+            // starts a statement before a name (`let Some(n) = ... else`).
+            Some(TokenKind::Ident(n)) if n != "let" && matches!(kind(1), Some(TokenKind::Ident(_))) => false,
+            _ => true,
+        }
+    }
+
+    /// The statements of a script from the cursor up to the next declaration or
+    /// the end of the file (issue #288). A top-level `let ... else` takes the
+    /// rest of the file as its rest (`rest` is true inside it), so a declaration
+    /// after one is refused: the rest would have no end.
+    pub(crate) fn parse_script_run(&mut self, rest: bool) -> PResult<Vec<Stmt>> {
+        let mut stmts = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.check(&TokenKind::Eof) {
+                break;
+            }
+            if !self.at_script_statement() {
+                if rest {
+                    return Err(ParseError {
+                        help: Some("the statements after a top-level 'let ... else' are its rest, so a declaration goes above the 'let'".to_string()),
+                        message: "a declaration cannot follow a 'let ... else' at the top level".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                break;
+            }
+            if self.at_let_else() {
+                let (pattern, init, else_block, span) = self.parse_let_else_head()?;
+                if !self.check(&TokenKind::Eof) {
+                    if !self.check(&TokenKind::Newline) {
+                        return Err(ParseError {
+                            help: self.statement_end_hint(),
+                            message: format!(
+                                "expected a newline after a statement, found {}",
+                                self.peek_kind().describe()
+                            ),
+                            span: self.peek().span,
+                        });
+                    }
+                }
+                let rest_stmts = self.parse_script_run(true)?;
+                let else_span = else_block.span;
+                stmts.push(Stmt::Expr {
+                    expr: Expr::When {
+                        scrutinee: Box::new(init),
+                        arms: vec![
+                            WhenArm {
+                                pattern: Some(pattern),
+                                body: Expr::Block(Block { stmts: rest_stmts, span }),
+                                span,
+                            },
+                            WhenArm {
+                                pattern: None,
+                                body: Expr::Block(else_block),
+                                span: else_span,
+                            },
+                        ],
+                        span,
+                        let_else: true,
+                    },
+                    span,
+                });
+                break;
+            }
+            let stmt = self.parse_stmt()?;
+            stmts.push(stmt);
+            if !self.check(&TokenKind::Newline) && !self.check(&TokenKind::Eof) {
+                return Err(ParseError {
+                    help: self.statement_end_hint(),
+                    message: format!(
+                        "expected a newline after a statement, found {}",
+                        self.peek_kind().describe()
+                    ),
+                    span: self.peek().span,
+                });
+            }
+        }
+        Ok(stmts)
     }
 
     pub(crate) fn check_pub_target(&self, pub_span: Span) -> PResult<()> {

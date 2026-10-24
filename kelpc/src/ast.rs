@@ -32,6 +32,9 @@ pub struct Program {
     /// coherence and the exact-signature match against.
     pub trait_impls: Vec<TraitImplDecl>,
     pub functions: Vec<FunctionDecl>,
+    /// The span of the top-level statements of a script (issue #288), when the
+    /// file has any. Their statements are the body of the `main` in `functions`.
+    pub script: Option<Span>,
 }
 
 mod decls;

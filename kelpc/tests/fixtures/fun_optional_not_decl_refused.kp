@@ -1,6 +1,6 @@
-// A top-level line that is not a function declaration keeps its refusal (issue
-// #287). `fun` may be left out only before a name and a parameter list, so an
-// assignment at the top level is still refused.
+// A top-level line that is not a function declaration is a statement of a
+// script (issues #287 and #288). A file with statements cannot also declare
+// `main`, so this assignment beside `fun main` is refused.
 
 count = 3
 

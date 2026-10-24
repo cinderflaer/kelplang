@@ -210,6 +210,7 @@ pub fn load(
         traits: Vec::new(),
         trait_impls: Vec::new(),
         functions: Vec::new(),
+        script: None,
     };
     // `alias -> the target module's symbol prefix`, per module. Built before
     // the merge loop because an `impl` line's two names are qualified with it

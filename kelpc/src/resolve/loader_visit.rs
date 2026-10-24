@@ -206,6 +206,17 @@ impl Loader<'_> {
         // ordinary code by the time any of them sees the tree
         // (`kelp wiki page language/statics-and-defer.md`).
         crate::defer::lower(&mut program, id)?;
+        // The statements of a script are the program's `main`, so only the entry
+        // file may hold them (issue #288).
+        if let Some(span) = program.script {
+            if id != self.entry {
+                return Err(Diagnostic::new(
+                    "top-level statements run as the program's main, so they are allowed only in the entry file: put them in the entry file, or in a 'fun' in this module".to_string(),
+                    span,
+                    id,
+                ));
+            }
+        }
 
         self.state.insert(id.to_string(), 1);
         self.stack.push(id.to_string());

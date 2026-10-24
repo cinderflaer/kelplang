@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1231 ran=602 c_refused=582 hosted_refused=9 excluded=38
+# counts candidates=1237 ran=604 c_refused=586 hosted_refused=9 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -380,7 +380,7 @@ fixture_fs_set_mode	ran	exit 0		494ba3921243417df1b58d7c1180209b755eade914fda5ab
 fixture_fs_symlink_kind	ran	exit 0		a19d813c8a80931580be266c6e0447dfc430e2cb0d2adf1bfbabf86e0ea332db
 fixture_fs_try_mutators	ran	exit 0		9cecdbb4072c09b29dcdbef16744affcd590071ec57bf8459054b0e729ad4c69
 fixture_fun_optional	ran	exit 0		ecf88aad7185e7e11a55b4010108823bf3808ba337ed985814fa6fad7c955b60
-fixture_fun_optional_not_decl_refused	c-refused		error: expected 'fun', found 'count'	
+fixture_fun_optional_not_decl_refused	c-refused		error: a file with top-level statements cannot also declare 'main'	
 fixture_fun_optional_pub_refused	c-refused		error: a function written without 'fun' cannot be 'pub'	
 fixture_fun_unit_body_if_no_else	c-refused		error: function 'f' declared to return 'i32' but body evaluates to 'unit'; end the block with 'return <value>', since an 'if' with no 'else' gives no value	
 fixture_generic_arity	c-refused		error: 'Pair' takes 2 type argument(s), found 1	
@@ -767,6 +767,11 @@ fixture_scoped_param_not_literal	c-refused		error: argument 'f' has type 'fun(i3
 fixture_scoped_param_returned	c-refused		error: return type mismatch	
 fixture_scoped_param_stored	c-refused		error: this is a scoped function value	
 fixture_scoped_param_to_plain	c-refused		error: this is a scoped function value	
+fixture_script_let_else	ran	exit 0		ab2fafd33682c9e5457b36098c493a9f06572e6bd9b562f2513943b7869560a1
+fixture_script_let_else_then_decl_refused	c-refused		error: a declaration cannot follow a 'let ... else' at the top level	
+fixture_script_main	ran	exit 0		d05e591032ada53564d7532e3ba9b2c3983e63b0df0436a628356c3b5a30786c
+fixture_script_main_with_main_refused	c-refused		error: a file with top-level statements cannot also declare 'main'	
+fixture_script_question_refused	c-refused		error: '?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' - it returns 'unit'	
 fixture_scrutinee_field_of_temporary	ran	exit 0		37b97d45faabc9bf15e4d7cbb6b9985c486ccf470d2f6c9f6f6486bdbd26aa65
 fixture_section_attribute	ran	exit 0		040316eca5e77dbb2212c1efe8b81cb23bc67ce0ac8cb5c9d902d98bd45ddfa1
 fixture_shadowed_local_in_one_block	ran	exit 0		c8ecf2ae6a284e90e056222fc36e0a37346d56ac4c59ab74ab6780873ac2c176
@@ -1154,6 +1159,7 @@ project_percpu_outside_unsafe	c-refused		error: 'static mut SLOT' is an unsafe o
 project_ptr_try_alloc_outside_unsafe	c-refused		error: 'Ptr.try_alloc' is an unsafe operation	
 project_ptrs_try_alloc	ran	exit 0		9503466da05df90f14a0657c4459f85eb68421d29e0fd6d91cea7fb8e14b56f0
 project_sched_task_layout	ran	exit 0		af5e156a5e54529601cb5e2272d5252444b94bde4ff8158865c3909f45df2162
+project_script_in_module	c-refused		error: top-level statements run as the program's main, so they are allowed only in the entry file	
 project_shapes	ran	exit 0		006a65b2de86720a8d9034953970cdffd3aceb34688d44718391df76853373e1
 project_static_atomic_threads	ran	exit 0		83c02ac2d48c863dab2ccf6870455aadfc2cec073b8db269b517c879d76aa6d9
 project_static_datac_array	ran	exit 0		9e88c5ba601792303d0194e1734cfbcae7b014b7faf475a2f8cc2599c8892e3d

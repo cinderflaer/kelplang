@@ -1,0 +1,13 @@
+// A top-level `let ... else` in a script takes the statements after it as its rest
+// (issue #288).
+
+enum Pick {
+    Yes(val value: int)
+    No
+}
+
+maybe() => Pick = Yes(value = 4)
+
+let Yes(n) = maybe() else { return }
+print(n)
+print(n + 1)

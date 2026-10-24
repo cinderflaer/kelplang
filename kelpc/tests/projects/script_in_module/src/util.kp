@@ -1,0 +1,4 @@
+// Statements in a module other than the entry file are refused (issue #288).
+print("not an entry")
+
+fun double(n: int) => int = n * 2
