@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1239 ran=605 c_refused=587 hosted_refused=9 excluded=38
+# counts candidates=1240 ran=606 c_refused=587 hosted_refused=9 excluded=38
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -186,6 +186,7 @@ fixture_defer_use_after_move	c-refused		error: use of moved value 's'
 fixture_defer_value_block	ran	exit 0		6d51b24299994492c2c153297d560ef24a8f5f228d6d6ff5f5c3479c56ec6de9
 fixture_derive_map_key_datac	ran	exit 0		e694259eaa6c406eaeb2a2650624fc0f1c51061894e001f90c23514badfa0a8f
 fixture_derive_map_key_enum	hosted-refused		error: hosted build does not describe an enum inside a collected object; enum map key needs enum descriptors (issue 326)	
+fixture_derive_pair_matches_hand_written	ran	exit 0		432841f654416eb923fd3c2d55214cfc38a7a483bcc5f7d75ce79973ad542f1d
 fixture_derive_refuse_bad_name	c-refused		error: 'derive' can derive 'eq' and 'hash', not 'show'	
 fixture_derive_refuse_field_without_eq	c-refused		error: derive(eq) on 'Outer' cannot compare field 'inner' of type 'Inner'	
 fixture_derive_refuse_float_field	c-refused		error: derive(hash) on 'Sample' cannot hash field 'ratio' of type 'f64'	
