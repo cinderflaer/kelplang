@@ -13,7 +13,7 @@
 // still be insertion order, the removed keys gone, the late key last, and
 // `len()` must agree.
 fun main() {
-    var m: Map<i32, i32> = Map.new()
+    var m: Map<i32, i32> = Map.empty()
     var i: i32 = 0
     while i < 23 {
         m.insert(i, i * 10)

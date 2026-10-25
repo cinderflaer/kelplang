@@ -7,7 +7,7 @@ derive(eq, hash)
 datac Tag(val name: String, val on: bool, val mark: char, val n: i32)
 
 fun main() {
-    var m: Map<Tag, i32> = Map.new()
+    var m: Map<Tag, i32> = Map.empty()
     m.insert(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1), v = 10)
     m.insert(key = Tag(name = String.from_str(s = "alpha"), on = false, mark = 'x', n = 1), v = 20)
     print(m.len())

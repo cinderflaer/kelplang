@@ -6,7 +6,7 @@ impl "std/str"
 datac Name(val text: String, val id: i32)
 
 fun main() {
-    var m: Map<Name, i32> = Map.new()
+    var m: Map<Name, i32> = Map.empty()
     m.insert(key = Name(text = String.from_str(s = "alpha"), id = 1), v = 10)
     m.insert(key = Name(text = String.from_str(s = "beta"), id = 2), v = 20)
     print(m.len())

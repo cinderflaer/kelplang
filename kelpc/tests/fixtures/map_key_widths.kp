@@ -14,35 +14,35 @@
 // deliberately absent: `is_map_key` admits only `String`, the integers and
 // `bool`, because a `char` is a code point rather than an integer.
 fun main() {
-    var one: Map<u8, i64> = Map.new()
+    var one: Map<u8, i64> = Map.empty()
     one.insert(key = 1.to_u8(), v = 1000000007)
     one.insert(key = 255.to_u8(), v = 1000000009)
     print(one.len())
     print(one.get(key = 1.to_u8()))
     print(one.get(key = 255.to_u8()))
 
-    var two: Map<u16, i64> = Map.new()
+    var two: Map<u16, i64> = Map.empty()
     two.insert(key = 1.to_u16(), v = 2000000011)
     two.insert(key = 60000.to_u16(), v = 2000000013)
     print(two.len())
     print(two.get(key = 1.to_u16()))
     print(two.get(key = 60000.to_u16()))
 
-    var eight: Map<i64, i64> = Map.new()
+    var eight: Map<i64, i64> = Map.empty()
     eight.insert(key = 7, v = 3000000017)
     eight.insert(key = 5000000000, v = 3000000019)
     print(eight.len())
     print(eight.get(key = 7))
     print(eight.get(key = 5000000000))
 
-    var flags: Map<bool, i64> = Map.new()
+    var flags: Map<bool, i64> = Map.empty()
     flags.insert(key = false, v = 4000000023)
     flags.insert(key = true, v = 4000000029)
     print(flags.len())
     print(flags.get(key = false))
     print(flags.get(key = true))
 
-    var text: Map<String, i64> = Map.new()
+    var text: Map<String, i64> = Map.empty()
     text.insert(key = "one", v = 5000000031)
     text.insert(key = "a longer key", v = 5000000037)
     print(text.len())

@@ -8,6 +8,6 @@ fun Pair<A, B>.hash() => u64 = 0
 fun Pair<A, B>.eq(other: &Pair<A, B>) => bool = true
 
 fun main() {
-    var m: Map<Pair<i32, i32>, i32> = Map.new()
+    var m: Map<Pair<i32, i32>, i32> = Map.empty()
     m.insert(key = Pair<i32, i32>(first = 1, second = 2), v = 1)
 }

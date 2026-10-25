@@ -58,9 +58,10 @@ pub struct Outdated {
 /// Every outdated construct, in the order they were scheduled.
 ///
 /// The `impl` clauses that were here before were removed in the cycle after
-/// `26.09.0`, on the deadline each carried. The two numeric names below are the
-/// current entries (issue #279): `to_u8` and `try_to_u8` still build, and the
-/// everyday `to_byte` and `try_to_byte` are their spellings.
+/// `26.09.0`, on the deadline each carried. The current entries are `Map.new()`
+/// (issue #302, `Map.empty()` is its spelling) and the two numeric names (issue
+/// #279): `to_u8` and `try_to_u8` still build, and the everyday `to_byte` and
+/// `try_to_byte` are their spellings.
 ///
 /// The register stays the mechanism for the next deprecation: add an entry here,
 /// raise its finding where the spelling is read (`scan_tokens` for a method
@@ -68,6 +69,11 @@ pub struct Outdated {
 /// survives only while the spelling still compiles, and the removal is the
 /// parser's or the checker's, not this module's.
 pub const REGISTER: &[Outdated] = &[
+    Outdated {
+        id: "map-new",
+        what: "`Map.new()`",
+        instead: "write `Map.empty()`, which starts the same empty map",
+    },
     Outdated {
         id: "numeric-to-u8",
         what: "`.to_u8()`",
@@ -107,14 +113,28 @@ pub fn finding(id: &str, span: Span, module: &str) -> Diagnostic {
     finding_for(find(id), span, module)
 }
 
-/// The outdated method names a token stream uses: each `.to_u8(` and
-/// `.try_to_u8(` call, one finding per call, at the name. It reads the tokens
+/// The outdated names a token stream uses: each `Map.new(` call, one finding per
+/// call at the `new`, and each `.to_u8(` and `.try_to_u8(` call, one finding per
+/// call, at the name. It reads the tokens
 /// before parsing, so the parser never needs to know the register, and a
 /// name that is not a method call (`to_u8` on its own, a `fun to_u8`) is left
 /// alone. A user method of the same name is flagged too: the finding matches
 /// the spelling, not the declaration.
 pub fn scan_tokens(tokens: &[Token], module: &str) -> Vec<Diagnostic> {
     let mut found = Vec::new();
+    // `Map.new(`: the owner is the `Map` name, so no other type's `.new(` is read.
+    for window in tokens.windows(4) {
+        let [owner, dot, name, open] = window else { continue };
+        if !matches!(&owner.kind, TokenKind::Ident(text) if text == "Map")
+            || !matches!(dot.kind, TokenKind::Dot)
+            || !matches!(open.kind, TokenKind::LParen)
+        {
+            continue;
+        }
+        if matches!(&name.kind, TokenKind::Ident(text) if text == "new") {
+            found.push(finding("map-new", name.span, module));
+        }
+    }
     for window in tokens.windows(3) {
         let [dot, name, open] = window else { continue };
         if !matches!(dot.kind, TokenKind::Dot) || !matches!(open.kind, TokenKind::LParen) {
@@ -195,6 +215,20 @@ mod tests {
     }
 
     #[test]
+    fn only_the_map_new_call_is_flagged_among_the_constructors() {
+        // `Map.new(` is the one spelling flagged. The other constructors, a
+        // `.new(` on another type, `Map.with_capacity(`, `Map.empty(` and a
+        // bare `Map.new` with no call, are left alone (issue #302).
+        let text = "var a = Map.new()\nvar b = Map.with_capacity(4)\nvar c = Map.empty()\n\
+                    var d = Atomic.new(0)\nx.new(1)\nvar e = Map.new\n";
+        let tokens = Lexer::new(text).tokenize().expect("the sample lexes");
+        let found = scan_tokens(&tokens, "m");
+        assert_eq!(found.len(), 1, "{:?}", found.iter().map(|d| &d.message).collect::<Vec<_>>());
+        assert!(found[0].message.contains("`Map.new()`"), "{}", found[0].message);
+        assert!(found[0].message.contains("write `Map.empty()`"), "{}", found[0].message);
+    }
+
+    #[test]
     fn the_shipped_sources_carry_no_outdated_spelling() {
         // A deprecation in the stdlib is the worst kind: every program that
         // imports that module would be warned about a file it cannot edit.
@@ -203,7 +237,7 @@ mod tests {
         // an entry owns (the scan below), and every shipped module parses (the
         // walk, which is where a refused spelling fails loudly, naming its fix).
         // The next entry adds its own spelling to the list.
-        const RETIRED: &[&str] = &["with caps(", ").R:", ").R ", ".to_u8(", ".try_to_u8("];
+        const RETIRED: &[&str] = &["with caps(", ").R:", ").R ", ".to_u8(", ".try_to_u8(", "Map.new("];
         let mut ids: Vec<&str> = crate::stdlib::shipped().to_vec();
         ids.push(crate::stdlib::RT_MODULE);
         for id in ids {

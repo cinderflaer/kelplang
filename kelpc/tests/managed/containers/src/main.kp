@@ -10,7 +10,7 @@ fun main() {
     print(names.len())
     print(names.get(1).as_str())
 
-    var items: Map<String, Item> = Map.new()
+    var items: Map<String, Item> = Map.empty()
     items.insert("a", Item(name = String.from_str("alpha"), n = 1))
     items.insert("b", Item(name = String.from_str("beta"), n = 2))
     val held = items.get("b")

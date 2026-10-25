@@ -8,7 +8,7 @@ enum Status {
 }
 
 fun main() {
-    var m: Map<i32, Status> = Map.new()
+    var m: Map<i32, Status> = Map.empty()
     m.insert(key = 1, v = Status.Open)
     m.insert(key = 2, v = Status.Closed(code = 404))
     print(m.len())

@@ -20,13 +20,13 @@ fun total(b: Bag) => i64 {
 }
 
 fun main() {
-    var counts: Map<i64> = Map.new()
+    var counts: Map<i64> = Map.empty()
     counts.insert("a", 10)
     counts.insert("b", 20)
     val bag = Bag(counts = counts)
     print(total(bag))
 
-    var pairs: Map<Pair> = Map.new()
+    var pairs: Map<Pair> = Map.empty()
     pairs.insert("first", Pair(a = 1, b = 2))
     pairs.insert("second", Pair(a = 3, b = 4))
     {

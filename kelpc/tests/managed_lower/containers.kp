@@ -10,7 +10,7 @@ fun main() {
     names.push(String.from_str("alpha"))
     print(names.len())
 
-    var items: Map<String, Item> = Map.new()
+    var items: Map<String, Item> = Map.empty()
     items.insert("a", Item(name = String.from_str("alpha"), n = 1))
 
     val b = Box.of(41)

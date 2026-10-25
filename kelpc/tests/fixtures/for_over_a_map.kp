@@ -1,5 +1,5 @@
 fun main() {
-    var m: Map<String, i32> = Map.new()
+    var m: Map<String, i32> = Map.empty()
     m.insert("a", 1)
     m.insert("bb", 2)
     var total: i32 = 0
@@ -11,7 +11,7 @@ fun main() {
     for (_, v) in m {
         print(v * 10)
     }
-    var n: Map<i32, String> = Map.new()
+    var n: Map<i32, String> = Map.empty()
     n.insert(7, String.from_str(s = "seven"))
     for (key, name) in n {
         print(key)

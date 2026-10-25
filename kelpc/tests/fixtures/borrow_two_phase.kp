@@ -2,12 +2,12 @@
 // own arguments are checked, so a tally can read the container it is about to
 // mutate. Each of these was "cannot borrow ...: already borrowed exclusively".
 fun main() {
-    var counts: Map<u64, i64> = Map.new()
+    var counts: Map<u64, i64> = Map.empty()
     counts.insert(key = 1.to_u64(), v = counts.get_or(key = 1.to_u64(), fallback = 0) + 1)
     counts.insert(key = 1.to_u64(), v = counts.get_or(key = 1.to_u64(), fallback = 0) + 1)
     print(counts.get_or(key = 1.to_u64(), fallback = 0))
 
-    var names: Map<String, i64> = Map.new()
+    var names: Map<String, i64> = Map.empty()
     names.insert(key = "a", v = names.get_or(key = "a", fallback = 0) + 1)
     names.insert(key = "a", v = names.get_or(key = "a", fallback = 0) + 1)
     print(names.get_or(key = "a", fallback = 0))

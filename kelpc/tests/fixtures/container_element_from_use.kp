@@ -24,7 +24,7 @@ fun main() {
     }
     print("${xs.len()} ${xs.get(i = 3)}")
 
-    var by_name = Map.new()
+    var by_name = Map.empty()
     by_name.insert("a", 7)
     by_name.insert("b", 8)
     print("${by_name.len()} ${by_name.get(key = "b")}")

@@ -230,7 +230,7 @@ fun main() {
     }
 
     {
-        var m: Map<i64, i32> = Map.new()
+        var m: Map<i64, i32> = Map.empty()
         print(m.len())
         m.insert(16, (-36))
         m.insert(35, 21)
@@ -249,7 +249,7 @@ fun main() {
             print(ks.get(i))
             i += 1
         }
-        var bools: Map<bool, i64> = Map.new()
+        var bools: Map<bool, i64> = Map.empty()
         bools.insert(true, 5)
         bools.insert(false, 7)
         print(bools.get(true))

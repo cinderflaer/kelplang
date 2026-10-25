@@ -14,7 +14,7 @@
 // `k0` must land a fresh entry rather than resurrect the dead one, the
 // failure here is a wrong number or a missing key, not a crash.
 fun main() {
-    var m: Map<i64> = Map.new()
+    var m: Map<i64> = Map.empty()
     m.insert("k0", 1)
     m.insert("k8", 2)
     print(m.len())

@@ -5,7 +5,7 @@
 // so a clear that left a stale index slot behind would answer `has` from a
 // key that no longer exists, or a second insert would find a phantom entry.
 fun main() {
-    var m: Map<i32, i32> = Map.new()
+    var m: Map<i32, i32> = Map.empty()
     var i: i32 = 0
     while i < 10 {
         m.insert(i, i * i)

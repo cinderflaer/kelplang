@@ -5,6 +5,6 @@
 datac Bad(val x: f64, val tag: i32)
 
 fun main() {
-    var m: Map<Bad, i32> = Map.new()
+    var m: Map<Bad, i32> = Map.empty()
     m.insert(key = Bad(x = 1.5, tag = 1), v = 1)
 }

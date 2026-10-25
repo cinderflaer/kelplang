@@ -1,7 +1,7 @@
 // A-6: a container is not a map key. A `List` has no hash and no equality the
 // compiler could derive, so `Map<List<i32>, i32>` is refused.
 fun main() {
-    var m: Map<List<i32>, i32> = Map.new()
+    var m: Map<List<i32>, i32> = Map.empty()
     var xs: List<i32> = List.empty()
     xs.push(v = 1)
     m.insert(key = xs, v = 1)

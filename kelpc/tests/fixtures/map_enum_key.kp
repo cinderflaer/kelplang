@@ -9,7 +9,7 @@ enum Key {
 }
 
 fun main() {
-    var m: Map<Key, i32> = Map.new()
+    var m: Map<Key, i32> = Map.empty()
     m.insert(key = Key.Num(n = 1), v = 10)
     m.insert(key = Key.Text(s = String.from_str(s = "a")), v = 20)
     print(m.len())

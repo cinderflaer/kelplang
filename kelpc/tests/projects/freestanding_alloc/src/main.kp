@@ -58,7 +58,7 @@ section(".text.boot") fun kmain() {
     var xs: List<i32> = List.empty()
     xs.push(1)
 
-    var m: Map<i32, i32> = Map.new()
+    var m: Map<i32, i32> = Map.empty()
     m.insert(1, 2)
 
     var b: Box<i32> = Box.empty()

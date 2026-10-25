@@ -40,7 +40,7 @@ fun main() {
     xs.push("pushed")
     print(xs.get(0).as_str())
 
-    var m: Map<String, String> = Map.new()
+    var m: Map<String, String> = Map.empty()
     m.insert(key = "k", v = "v")
     print(m.get("k").as_str())
 

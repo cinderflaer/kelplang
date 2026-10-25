@@ -5,6 +5,6 @@
 impl "std/atomic"
 
 fun main() {
-    var m: Map<Atomic<i32>> = Map.new()
+    var m: Map<Atomic<i32>> = Map.empty()
     print(m.len())
 }

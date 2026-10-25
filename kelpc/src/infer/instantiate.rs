@@ -767,7 +767,7 @@ pub(crate) fn open_container_use_error(ty: &Ty, receiver: &ast::Expr, span: Span
     let (binding, constructor, decider, example) = match ty {
         Ty::List(_) => ("xs", "List.empty()", "xs.push(v)", "var xs: List<i32> = List.empty()"),
         Ty::Box(_) => ("b", "Box.empty()", "b.set(v)", "var b: Box<i32> = Box.empty()"),
-        _ => ("m", "Map.new()", "m.insert(k, v)", "var m: Map<String, i32> = Map.new()"),
+        _ => ("m", "Map.empty()", "m.insert(k, v)", "var m: Map<String, i32> = Map.empty()"),
     };
     let named = match receiver {
         ast::Expr::Ident(name, _) => format!("'{name}'"),

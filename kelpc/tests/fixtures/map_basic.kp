@@ -5,7 +5,7 @@
 impl "std/str"
 
 fun main() {
-    var m: Map<i64> = Map.new()
+    var m: Map<i64> = Map.empty()
     print(m.len())
     print(m.is_empty())
     m.insert("one", 1)

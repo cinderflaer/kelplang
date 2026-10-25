@@ -1,4 +1,4 @@
-// `Map.with_capacity(n)` is the preallocation `Map.new()` cannot offer: both
+// `Map.with_capacity(n)` is the preallocation `Map.empty()` cannot offer: both
 // buffers are sized up front, so a map that fills n entries never rebuilds its
 // index on the way there. The hint is not a fence, so a map that outgrows it
 // has to grow exactly like any other, and `keys()` order, removals and

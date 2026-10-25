@@ -12,7 +12,7 @@ fun main() {
     print(Half(x = 1) == Half(x = 1))
     print(Half(x = 1) != Half(x = 2))
 
-    var m: Map<Half, i32> = Map.new()
+    var m: Map<Half, i32> = Map.empty()
     m.insert(key = Half(x = 1), v = 10)
     m.insert(key = Half(x = 2), v = 20)
     print(m.len())

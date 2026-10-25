@@ -10,7 +10,7 @@ enum Shape {
 }
 
 fun main() {
-    var m: Map<Shape, i32> = Map.new()
+    var m: Map<Shape, i32> = Map.empty()
     m.insert(key = Shape.Circle(r = 2), v = 1)
     m.insert(key = Shape.Rect(w = 2, tag = String.from_str(s = "a")), v = 2)
     m.insert(key = Shape.Empty, v = 3)

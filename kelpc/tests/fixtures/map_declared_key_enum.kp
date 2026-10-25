@@ -25,7 +25,7 @@ fun Kind.eq(other: &Kind) => bool = when self {
 }
 
 fun main() {
-    var m: Map<Kind, i32> = Map.new()
+    var m: Map<Kind, i32> = Map.empty()
     m.insert(key = Kind.Ratio(r = 1.5), v = 10)
     m.insert(key = Kind.Ratio(r = 2.5), v = 20)
     m.insert(key = Kind.Nothing, v = 30)

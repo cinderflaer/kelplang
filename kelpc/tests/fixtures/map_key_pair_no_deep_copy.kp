@@ -9,6 +9,6 @@ fun WithList.hash() => u64 = self.xs.len().to_u64()
 fun WithList.eq(other: &WithList) => bool = self.xs.len() == other.xs.len()
 
 fun main() {
-    var m: Map<WithList, i32> = Map.new()
+    var m: Map<WithList, i32> = Map.empty()
     m.insert(key = WithList(xs = List.of(v = 1)), v = 1)
 }

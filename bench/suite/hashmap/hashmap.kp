@@ -21,7 +21,7 @@ fun size_arg(default: i64) => i64 {
 
 fun main() {
     val n = size_arg(2000000)
-    var m: Map<u64, u64> = Map.new()
+    var m: Map<u64, u64> = Map.empty()
     var i: i64 = 1
     while i <= n {
         val u = i.to_u64()

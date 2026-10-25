@@ -4,6 +4,6 @@
 impl "std/thread"
 
 fun main() {
-    var m: Map<Thread<i64>> = Map.new()
+    var m: Map<Thread<i64>> = Map.empty()
     print(m.len())
 }

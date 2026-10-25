@@ -704,7 +704,7 @@ impl Gen {
             self.i32_lit(),
         );
         let lines = vec![
-            "var m: Map<i64, i32> = Map.new()".to_string(),
+            "var m: Map<i64, i32> = Map.empty()".to_string(),
             "print(m.len())".to_string(),
             format!("m.insert({k1}, {v1})"),
             format!("m.insert({k2}, {v2})"),
@@ -723,7 +723,7 @@ impl Gen {
             "    print(ks.get(i))".to_string(),
             "    i += 1".to_string(),
             "}".to_string(),
-            "var bools: Map<bool, i64> = Map.new()".to_string(),
+            "var bools: Map<bool, i64> = Map.empty()".to_string(),
             "bools.insert(true, 5)".to_string(),
             "bools.insert(false, 7)".to_string(),
             "print(bools.get(true))".to_string(),

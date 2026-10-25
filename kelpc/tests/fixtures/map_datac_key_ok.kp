@@ -4,7 +4,7 @@
 datac Point(val x: i32, val y: i32)
 
 fun main() {
-    var m: Map<Point, i32> = Map.new()
+    var m: Map<Point, i32> = Map.empty()
     m.insert(key = Point(x = 1, y = 1), v = 10)
     m.insert(key = Point(x = 2, y = 2), v = 20)
     m.insert(key = Point(x = 1, y = 1), v = 99)

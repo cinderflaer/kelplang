@@ -773,7 +773,7 @@ pub(crate) fn a_map_grows_by_rehashing_and_keeps_insertion_order() {
 pub(crate) fn a_map_sized_with_with_capacity_grows_and_behaves_like_a_new_one() {
     // Sixty-four entries of capacity for two hundred inserts crosses both
     // growth thresholds, so the hint has to leave the map in the same state
-    // `Map.new()` would: same insertion order, same tombstones, same lookups.
+    // `Map.empty()` would: same insertion order, same tombstones, same lookups.
     assert_compiles_and_runs(
         "tests/fixtures/map_with_capacity.kp",
         "200\n597\nfalse\n70\n1\n20\n10\nfalse\n30\n200\n0\n199\n99\n",

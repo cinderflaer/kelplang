@@ -1,5 +1,5 @@
-// MK5-S5: `Map.new()` cannot name its value type, so the binding must.
+// MK5-S5: `Map.empty()` cannot name its value type, so the binding must.
 fun main() {
-    val m = Map.new()
+    val m = Map.empty()
     print(m.len())
 }

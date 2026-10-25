@@ -26,7 +26,7 @@ fun main() {
     print(xs.pop().a)
     print(xs.get(0).a)
 
-    var m: Map<i64, V2> = Map.new()
+    var m: Map<i64, V2> = Map.empty()
     m.insert(1, V2(a = 5.5))
     print(m.get(1).a)
 }

@@ -740,7 +740,7 @@ pub(crate) fn check_container_associated(
                 }
                 return Err(TypeError {
                     help: None,
-                    message: "cannot tell what 'Map.new()' holds, write the type on the binding ('var m: Map<String, i32> = Map.new()'); there is no 'Map.of(x)' since a map starts empty".to_string(),
+                    message: "cannot tell what 'Map.empty()' holds, write the type on the binding ('var m: Map<String, i32> = Map.empty()'); there is no 'Map.of(x)' since a map starts empty".to_string(),
                     span,
                 });
             };
@@ -836,7 +836,7 @@ pub(crate) fn check_container_associated(
         }
         "of" if container == "Map" => Err(TypeError {
             help: None,
-            message: "'Map.of' does not exist - a map starts empty; write 'Map.new()' with the value type on the binding, then 'insert(k, v)'".to_string(),
+            message: "'Map.of' does not exist - a map starts empty; write 'Map.empty()' with the value type on the binding, then 'insert(k, v)'".to_string(),
             span,
         }),
         "of" => {
@@ -890,7 +890,7 @@ pub(crate) fn check_container_associated(
                 if container == "List" {
                     "write 'List.of(x)' for a one-element list, 'List.empty()' or 'List.with_capacity(n)' with the element type on the binding, or call a method on a value ('xs.push(x)', 'xs.get(i)', 'xs.len()')"
                 } else if container == "Map" {
-                    "a map starts empty - write 'Map.new()' with the type on the binding ('var m: Map<String, i32> = Map.new()'), then call a method on the value ('m.insert(k, v)', 'm.get(k)', 'm.len()')"
+                    "a map starts empty - write 'Map.empty()' with the type on the binding ('var m: Map<String, i32> = Map.empty()'), then call a method on the value ('m.insert(k, v)', 'm.get(k)', 'm.len()')"
                 } else {
                     "write 'Box.of(x)' for a one-value box, 'Box.empty()' with the element type on the binding, or call a method on a value ('b.get()', 'b.set(v)', 'b.take()', 'b.is_empty()')"
                 }

@@ -2,6 +2,6 @@
 // and an inserted borrow would outlive the value it points at.
 fun main() {
     val n: i32 = 1
-    var m: Map<&i32, i32> = Map.new()
+    var m: Map<&i32, i32> = Map.empty()
     m.insert(key = &n, v = 1)
 }

@@ -22,7 +22,7 @@ fun Sample.eq(other: &Sample) => bool {
 }
 
 fun main() {
-    var m: Map<Sample, i32> = Map.new()
+    var m: Map<Sample, i32> = Map.empty()
     m.insert(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha")), v = 10)
     m.insert(key = Sample(ratio = 2.5, tag = 1, label = String.from_str(s = "alpha")), v = 20)
     print(m.len())

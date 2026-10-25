@@ -5,7 +5,7 @@
 impl "std/str"
 
 fun main() {
-    var m: Map<String> = Map.new()
+    var m: Map<String> = Map.empty()
     m.insert("alpha", String.from_str("one"))
     m.insert("beta", String.from_str("two"))
     print(m.len())

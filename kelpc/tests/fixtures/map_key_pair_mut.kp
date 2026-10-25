@@ -7,6 +7,6 @@ fun mut Key.hash() => u64 = self.x.to_u64()
 fun Key.eq(other: &Key) => bool = self.x == other.x
 
 fun main() {
-    var m: Map<Key, i32> = Map.new()
+    var m: Map<Key, i32> = Map.empty()
     m.insert(key = Key(x = 1), v = 1)
 }

@@ -2,7 +2,7 @@
 // generated per instantiation from the key type the map was declared with, and
 // `Map<V>` written with one argument keeps meaning a `String` key.
 fun main() {
-    var counts: Map<i32, i64> = Map.new()
+    var counts: Map<i32, i64> = Map.empty()
     counts.insert(key = 10, v = 1)
     counts.insert(key = 20, v = 2)
     counts.insert(key = 10, v = 99)          // overwrites, and does not grow
@@ -29,12 +29,12 @@ fun main() {
     print(names.get(key = false).as_str())
 
     // An unsigned key.
-    var sizes: Map<u64, i32> = Map.new()
+    var sizes: Map<u64, i32> = Map.empty()
     sizes.insert(key = 7.to_u64(), v = 70)
     print(sizes.get(key = 7.to_u64()))
 
     // A `char` key (A-6): a code point, hashed and compared as its value.
-    var chars: Map<char, i32> = Map.new()
+    var chars: Map<char, i32> = Map.empty()
     chars.insert(key = 'a', v = 1)
     chars.insert(key = 'b', v = 2)
     chars.insert(key = 'a', v = 9)
@@ -43,7 +43,7 @@ fun main() {
     print(chars.has(key = 'c'))
 
     // The one-argument spelling is still a `String` key.
-    var legacy: Map<i32> = Map.new()
+    var legacy: Map<i32> = Map.empty()
     legacy.insert(key = "a", v = 5)
     legacy.insert(key = "bb", v = 6)
     print(legacy.len())

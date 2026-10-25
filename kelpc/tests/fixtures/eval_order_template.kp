@@ -1,6 +1,6 @@
 // The tutorial's example: the second interpolation sees the removal made by the first.
 fun main() {
-    var m: Map<i32> = Map.new()
+    var m: Map<i32> = Map.empty()
     m.insert("a", 10)
     m.insert("b", 20)
     print("removed ${m.remove("a")}, ${m.len()} left")

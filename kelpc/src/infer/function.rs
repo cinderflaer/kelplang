@@ -753,7 +753,7 @@ pub(crate) fn open_container_declaration_error(ty: &Ty, binding: &OpenBinding) -
         (Some((container, _)), _) => format!(
             "cannot tell what '{container}.empty()' holds, write the element type on the binding ('var xs: {container}<String> = {container}.empty()') or start from '{container}.of(x)'"
         ),
-        (None, Ty::Map(..)) => "cannot tell what 'Map.new()' holds, write the type on the binding ('var m: Map<String, i32> = Map.new()')".to_string(),
+        (None, Ty::Map(..)) => "cannot tell what 'Map.empty()' holds, write the type on the binding ('var m: Map<String, i32> = Map.empty()')".to_string(),
         (None, Ty::List(_)) => "cannot tell what 'List.empty()' holds, write the element type on the binding ('var xs: List<String> = List.empty()') or start from 'List.of(x)'".to_string(),
         (None, _) => "cannot tell what 'Box.empty()' holds, write the element type on the binding ('var b: Box<String> = Box.empty()') or start from 'Box.of(x)'".to_string(),
     };

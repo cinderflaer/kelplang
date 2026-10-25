@@ -296,3 +296,37 @@ fn the_byte_spelling_is_clean_and_the_old_u8_one_is_outdated() {
     assert!(result.status.success(), "{}", stderr(&result));
     assert!(stderr(&result).is_empty(), "{}", stderr(&result));
 }
+
+#[test]
+fn map_new_is_outdated_and_the_empty_constructors_are_clean() {
+    // `Map.new()` still builds this cycle and prints one `outdated:` finding that
+    // names `Map.empty()` and the removal; `--deny-outdated` refuses it. The
+    // empty constructors that stay (`Map.empty()`, `List.empty()`, `String.empty()`)
+    // print nothing, under the flag or without it (issue #302).
+    let dir = scratch("map-new-outdated");
+    let old = write(
+        &dir,
+        "src/old.kp",
+        "fun main() {\n    var counts: Map<String, i64> = Map.new()\n    counts.insert(\"a\", 1)\n    print(counts.len())\n}\n",
+    );
+    let out = dir.join("old");
+    let result = build(&old, &out, false);
+    assert!(result.status.success(), "{}", stderr(&result));
+    let text = stderr(&result);
+    assert_eq!(text.matches("outdated: ").count(), 1, "{text}");
+    assert!(text.contains("`Map.new()`"), "{text}");
+    assert!(text.contains("write `Map.empty()`"), "the fix is not named:\n{text}");
+    assert!(text.contains("will be removed in the next development cycle"), "{text}");
+
+    let denied = build(&old, &out, true);
+    assert!(!denied.status.success(), "--deny-outdated must refuse `Map.new()`");
+
+    let new = write(
+        &dir,
+        "src/new.kp",
+        "fun main() {\n    var counts: Map<String, i64> = Map.empty()\n    var names: List<String> = List.empty()\n    var text: String = String.empty()\n    counts.insert(\"a\", 1)\n    names.push(\"b\")\n    print(counts.len() + names.len() + text.len())\n}\n",
+    );
+    let result = build(&new, &out, true);
+    assert!(result.status.success(), "{}", stderr(&result));
+    assert!(stderr(&result).is_empty(), "{}", stderr(&result));
+}
