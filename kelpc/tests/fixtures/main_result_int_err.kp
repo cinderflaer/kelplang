@@ -1,0 +1,7 @@
+// The error type may be any type with a text form: an `i32` prints as its
+// decimal digits (issue #298).
+impl "std/result"
+
+fun main() => result.Result<unit, i32> {
+    return result.Result.Err(error = 7)
+}

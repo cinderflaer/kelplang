@@ -1,0 +1,8 @@
+// `main` may return `Result<unit, E>` (issue #298). An `Ok` ends the program
+// with status 0 and nothing on stderr.
+impl "std/result"
+
+fun main() => result.Result<unit, String> {
+    print("start")
+    return result.Result.Ok(value = ())
+}

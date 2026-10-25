@@ -1,0 +1,18 @@
+// `?` in a `main` that returns `Result<unit, E>` (issue #298): the first call
+// fails, so the rest of `main` never runs and the error ends the program.
+impl "std/result"
+
+fun parse_step(n: i32) => result.Result<i32, String> {
+    if n > 2 {
+        return result.Result.Err(error = "step ${n} is too large")
+    }
+    return result.Result.Ok(value = n)
+}
+
+fun main() => result.Result<unit, String> {
+    val a = parse_step(1)?
+    print("a = ${a}")
+    val b = parse_step(5)?
+    print("b = ${b}")
+    return result.Result.Ok(value = ())
+}

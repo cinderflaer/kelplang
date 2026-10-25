@@ -1,0 +1,8 @@
+// `main` returns `Err`: the text of the error goes to stderr with a newline,
+// the status is 1, and what `main` printed before it still reaches stdout.
+impl "std/result"
+
+fun main() => result.Result<unit, String> {
+    print("before")
+    return result.Result.Err(error = "boom")
+}

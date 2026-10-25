@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1253 ran=608 c_refused=589 hosted_refused=9 excluded=47
+# counts candidates=1257 ran=612 c_refused=589 hosted_refused=9 excluded=47
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -526,6 +526,10 @@ fixture_literal_operand_typing	ran	exit 0		97e6d75a2288710ef1710f386db1cf5c61bc7
 fixture_loop_and_labels	ran	exit 0		7ec2701c789e7ef0d506c3e74297830782b62e7c80c842212a0a56bb85c37ecf
 fixture_loop_labels_free_owned_locals	ran	exit 0		ef101ff50dcea92a427007e316782d53e8cd72efea3bb7d3328425e3a6313f58
 fixture_loop_value	ran	exit 0		239442c517e3893cc5d642cd3e6475665f9a1890efc82b0b413112d7c570dd15
+fixture_main_result_err	ran	exit 1	boom	9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb
+fixture_main_result_int_err	ran	exit 1	7	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_main_result_ok	ran	exit 0		46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5
+fixture_main_result_question	ran	exit 1	step 5 is too large	cb78bd8a17f7b751fe0d4663366dcbc257204033ef7ddd64b1f2969573b5b2e2
 fixture_map_arity	c-refused		error: 'Map' takes 1 or 2 type arguments ('Map<V>' or 'Map<K, V>'), found 3	
 fixture_map_basic	ran	exit 0		e1f2129076a5ca3b7bcda97bdf448bdee0148fa8b610bf60085d8e2be63064a7
 fixture_map_borrow_key	c-refused		error: '&i32' cannot be a container element	

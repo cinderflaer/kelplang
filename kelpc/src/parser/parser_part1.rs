@@ -566,6 +566,54 @@ impl Parser {
                 span,
             });
         }
+        // `main` may return `Result<unit, E>` (issue #298). The user's function
+        // keeps its body under a hidden name, and a generated `main` reports an
+        // `Err` on stderr and exits with status 1. Written as Kelp source and
+        // parsed, like the `derive` output below.
+        if let Some(idx) = functions.iter().position(|f| f.name == "main" && f.receiver.is_none()) {
+            let ret = functions[idx].return_type.clone();
+            if let Some(rt) = ret.filter(|rt| rt.name == "Result" || rt.name.ends_with(".Result")) {
+                let ok_is_unit = rt.args.len() == 2 && rt.args[0].name == "unit" && rt.args[0].tuple.is_none();
+                if !ok_is_unit {
+                    return Err(ParseError {
+                        help: Some("write 'fun main() => result.Result<unit, E>' for a main that can fail, or leave the return type off".to_string()),
+                        message: "'main' may return unit or Result<unit, E>: its success type must be 'unit'".to_string(),
+                        span: rt.span,
+                    });
+                }
+                if let Some(clash) = functions.iter().find(|f| f.name == MAIN_RESULT_NAME && f.receiver.is_none()) {
+                    return Err(ParseError {
+                        help: Some(format!("rename the function: '{MAIN_RESULT_NAME}' is the name the compiler gives the body of a 'main' that returns Result")),
+                        message: format!("'{MAIN_RESULT_NAME}' is reserved while 'main' returns Result<unit, E>"),
+                        span: clash.span,
+                    });
+                }
+                let span = rt.span;
+                functions[idx].name = MAIN_RESULT_NAME.to_string();
+                let wrapper = format!(
+                    "fun main() {{\n    val outcome = {MAIN_RESULT_NAME}()\n    when outcome {{\n        Ok(_) -> {{}}\n        Err(e) -> {{\n            val text = \"${{e}}\"\n            io.eprint(text)\n            process.exit(1)\n        }}\n    }}\n}}\n"
+                );
+                let mut tokens = crate::lexer::Lexer::new(&wrapper).tokenize().map_err(|e| ParseError {
+                    help: None,
+                    message: format!("internal error in main: {}", e.message),
+                    span,
+                })?;
+                for t in tokens.iter_mut() {
+                    t.span = span;
+                }
+                let generated = Parser::new(tokens).parse_program().map_err(|e| ParseError {
+                    help: None,
+                    message: format!("internal error in main: {}", e.message),
+                    span,
+                })?;
+                functions.extend(generated.functions);
+                for path in ["std/io", "std/process"] {
+                    if !impls.iter().any(|i: &ImplDecl| i.path == path) {
+                        impls.push(ImplDecl { path: path.to_string(), caps: Vec::new(), caps_all: false, span });
+                    }
+                }
+            }
+        }
         let derived = crate::derive::expand(&derives, &datacs, &enums, &functions, &impls)?;
         functions.extend(derived.functions);
         trait_impls.extend(derived.impls);

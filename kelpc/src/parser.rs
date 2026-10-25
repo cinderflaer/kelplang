@@ -46,6 +46,10 @@ pub struct Parser {
 /// pass walks the tree recursively, so an unbounded depth is a stack overflow
 /// (an abort, not a diagnostic) on a few thousand `(` characters. Written Kelp
 /// stays far below this: the deepest fixture nests under 30.
+/// The name the compiler gives the user's `main` when it returns
+/// `Result<unit, E>` (issue #298). The generated `main` calls it.
+pub const MAIN_RESULT_NAME: &str = "kelp_main_result";
+
 const MAX_NESTING: usize = 200;
 
 /// The hidden element name of a `for` with a destructuring pattern. No source
