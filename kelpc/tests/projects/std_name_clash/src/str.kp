@@ -1,0 +1,3 @@
+pub fun tag() => i64 {
+    return 7
+}

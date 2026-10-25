@@ -171,7 +171,15 @@ pub(crate) fn generic_type_path(expr: &ast::Expr, ctx: &Ctx) -> Option<String> {
     }
     let qualified = match path.split_once('.') {
         Some((alias, item)) => format!("{}{}", ctx.aliases.get(alias)?, item),
-        None => ctx.qualify_own(&path),
+        None => {
+            // A bare `Option` or `Result` names the std type (#300), unless the
+            // file declares a type of that name itself.
+            let own = ctx.qualify_own(&path);
+            let declared_here = ctx.env.generics.contains_key(&own)
+                || ctx.structs.contains_key(&own)
+                || ctx.enums.contains_key(&own);
+            crate::stdlib::bare_default_type(&path, declared_here, &ctx.aliases).unwrap_or(own)
+        }
     };
     ctx.env.generics.contains_key(&qualified).then_some(qualified)
 }

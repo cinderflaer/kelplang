@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1258 ran=613 c_refused=589 hosted_refused=9 excluded=47
+# counts candidates=1261 ran=617 c_refused=588 hosted_refused=9 excluded=47
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -193,7 +193,6 @@ fixture_derive_refuse_float_field	c-refused		error: derive(hash) on 'Sample' can
 fixture_derive_refuse_generic_field	c-refused		error: derive(eq) on generic 'Wrap' cannot check field 'item' of type 'T'	
 fixture_derive_refuse_hand_written	c-refused		error: derive(eq) on 'Point' would declare 'fun Point.eq' a second time, and the hand-written 'fun Point.eq' already declares it. Fix	
 fixture_derive_refuse_text_field	c-refused		error: derive(text) on 'Bag' cannot write field 'items' of type 'List<i32>'	
-fixture_derive_refuse_text_no_fmt	c-refused		error: derive(text) on 'Point' writes 'impl fmt.Display for Point', which needs the std/fmt import. Fix	
 fixture_derive_text_datac_enum	ran	exit 0		b9a3daa882eb532b1f82a6ea0b5d57e962a7444bd5bc82b27e68651d8ed052b0
 fixture_digit_separator_doubled	c-refused		error: a digit separator '_' takes one at a time	
 fixture_digit_separator_trailing	c-refused		error: a digit separator '_' must come between two digits, not after the last digit	
@@ -798,6 +797,7 @@ fixture_static_heap_type	c-refused		error: 'String' cannot be a static's type
 fixture_static_mut_outside_unsafe	c-refused		error: 'static mut C' is an unsafe operation	
 fixture_static_not_constant	c-refused		error: the initializer is not constant	
 fixture_std_binding_forwards	ran	exit 0		e58cbcae93323856b01ca7768ead8bb1fc7059fd2818b2ccba388e1b19342079
+fixture_std_no_impl	ran	exit 0		0eeae97f102fff99b3a5a1997ebb8b15f1b2888c30e4453fb3c5192f2000a782
 fixture_std_str_order	ran	exit 0		c5bc6b5c0e3f169a8da243d86e911c5de7f41d5c9359a0d732ec7fee9c7c88d0
 fixture_stdlib_build	ran	exit 0		b9b5b10be9279b5ab0b99d62eddd1fc7db1eeb52a2ac7d415c2fff2bc648f1e8
 fixture_stdlib_closure_callbacks	ran	exit 0		2819b289b977764e35898fb89662537aaa19be96e6e8849bde5ee9606f0d56b4
@@ -1178,7 +1178,10 @@ project_static_datac_array	ran	exit 0		9e88c5ba601792303d0194e1734cfbcae7b014b7f
 project_static_globals	ran	exit 0		bdfeab7b68e26b2f190fba38c8102a5e4a543cf60b736d0ef1bc93cb29167d7d
 project_static_module	ran	exit 0		fcb9cc30b0f3e4715d032f3a0ce158e4d6bea8c618bda0f5d1f167300a087b8a
 project_static_private	c-refused		error: 'state.HIDDEN' is private	
+project_std_default_names	ran	exit 0		0eeae97f102fff99b3a5a1997ebb8b15f1b2888c30e4453fb3c5192f2000a782
 project_std_internal_entry	c-refused		error: module 'std/internal/main' is below the compiler-reserved std/internal namespace	
+project_std_local_names	ran	exit 0		9aa8443f1642a7356954d64e48468c6b0b664a929a8da195f1abb4965574515e
+project_std_name_clash	ran	exit 0		b50d7cf6ccccd845760d2b7182446eff0da4f62592dcbf7adf39ddc0124b33a5
 project_tidepoolarraytable	c-refused		error: unknown section '[[tidepool]]' in coral.toml; did you mean '[tidepool]'?	
 project_tidepoolduplicate	c-refused		error: 'headroom_pct' appears more than once in coral.toml's [tidepool] section	
 project_tidepoolheadroomrange	c-refused		error: coral.toml's [tidepool] key 'headroom_pct' must be from 0 to 1000, found '1001'	

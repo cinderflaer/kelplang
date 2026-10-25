@@ -1,0 +1,6 @@
+pub fun lengths() => i64 {
+    if let Ok(n) = str.parse_i64(s = "41") {
+        return n + 1
+    }
+    return -1
+}

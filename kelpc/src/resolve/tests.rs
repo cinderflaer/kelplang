@@ -839,3 +839,23 @@ fn other_sections_and_extern_modules_named_tidepool_are_not_refused() {
     let m = manifest("name = \"x\"\n[extern.\"tidepool_helper\"]\ndomain = \"time\"\nlibrary = \"c\"\nsymbols = []\n");
     assert!(m.extern_modules.contains_key("tidepool_helper"));
 }
+
+#[test]
+fn a_file_loads_a_default_std_module_only_when_it_writes_the_name() {
+    // #300: `str`, `fmt`, `math`, `option`, `result`, `convert` and `iter` join a
+    // file only when the file names them: an alias followed by a dot, the bare
+    // `Option` or `Result`, or `derive(... text ...)`. A local that shares a
+    // name does not count as a use.
+    let named = |src: &str| {
+        let tokens = Lexer::new(src).tokenize().expect("the test source lexes");
+        named_default_modules(&tokens)
+    };
+    assert_eq!(named("fun f() => i32 { return str.len(s = \"a\") }"), vec!["std/str"]);
+    assert_eq!(named("fun f(o: Option<i32>) {}"), vec!["std/option"]);
+    assert_eq!(named("fun f(r: Result<i32, i32>) {}"), vec!["std/result"]);
+    assert_eq!(named("fun f() { option.Option.None }"), vec!["std/option"]);
+    assert_eq!(named("derive(text)\ndatac P(val x: i32)"), vec!["std/fmt"]);
+    assert!(named("derive(eq, hash)\ndatac P(val x: i32)").is_empty());
+    assert!(named("fun f() { val str = 1 }").is_empty());
+    assert!(named("fun f() { val math = 1 }").is_empty());
+}

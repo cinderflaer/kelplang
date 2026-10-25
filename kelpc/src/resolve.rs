@@ -430,6 +430,52 @@ pub(crate) fn default_alias(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
+/// The pure std modules a file names (#300), in table order. A file gets one
+/// of them in scope without an `impl` line only when it writes the name: an
+/// alias followed by a dot (`str.len`), the bare `Option` or `Result`, or a
+/// `derive(...)` clause that lists `text`. A local that shares the name does
+/// not count, because a local is never a use of the module. Loading only the
+/// named ones keeps every other program's module set exactly as it was, which
+/// the freestanding build depends on: it refuses a hosted module that is
+/// present in the program.
+pub(crate) fn named_default_modules(tokens: &[Token]) -> Vec<&'static str> {
+    let mut found: HashSet<&'static str> = HashSet::new();
+    for (i, token) in tokens.iter().enumerate() {
+        let TokenKind::Ident(name) = &token.kind else {
+            continue;
+        };
+        let next = tokens.get(i + 1).map(|t| &t.kind);
+        if matches!(next, Some(TokenKind::Dot)) {
+            if let Some(module) = crate::stdlib::DEFAULT_MODULES
+                .iter()
+                .find(|module| default_alias(module) == *name)
+            {
+                found.insert(module);
+            }
+        }
+        if let Some(module) = crate::stdlib::default_type_module(name) {
+            found.insert(module);
+        }
+        if name == "derive" && matches!(next, Some(TokenKind::LParen)) {
+            // `derive(eq, text)`: the clause runs to its closing parenthesis.
+            for inner in &tokens[i + 2..] {
+                match &inner.kind {
+                    TokenKind::RParen => break,
+                    TokenKind::Ident(word) if word == "text" => {
+                        found.insert(crate::stdlib::FMT_MODULE);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    crate::stdlib::DEFAULT_MODULES
+        .iter()
+        .copied()
+        .filter(|module| found.contains(module))
+        .collect()
+}
+
 /// Every `impl "path"` in a raw, unexpanded token stream. The discovery
 /// round walks these instead of a parsed AST, which is what lets it find the
 /// files that define the aliases a file's own body cannot expand without.

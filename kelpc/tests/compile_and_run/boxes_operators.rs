@@ -578,15 +578,12 @@ pub(crate) fn a_datac_and_an_enum_with_derived_text_print_their_constructor_shap
 
 #[test]
 pub(crate) fn derive_text_refuses_what_it_cannot_write() {
-    // lang-derive-text (issue #292): a field with no text form is refused by name,
-    // and a file without `impl "std/fmt"` is refused with the import to add.
+    // lang-derive-text (issue #292): a field with no text form is refused by name.
+    // A file that names its own `fmt` module is refused by name too (#300; see
+    // std_default_names.rs). Without an `impl` line the std/fmt module is in scope.
     assert_rejected_with(
         "tests/fixtures/derive_refuse_text_field.kp",
         "cannot write field 'items' of type 'List<i32>'",
-    );
-    assert_rejected_with(
-        "tests/fixtures/derive_refuse_text_no_fmt.kp",
-        "needs the std/fmt import",
     );
 }
 

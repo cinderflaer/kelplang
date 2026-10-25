@@ -395,7 +395,10 @@ pub fn expand(
         .chain(enums.iter().map(|e| e.name.clone()))
         .collect();
     let scope = Scope { methods, local_types };
-    let has_fmt = impls.iter().any(|i| i.path == "std/fmt");
+    // `fmt` is in scope by name (#300) unless this file's own `impl` names
+    // another module `fmt`, which the Display impl would then reach.
+    let has_fmt = impls.iter().any(|i| i.path == "std/fmt")
+        || !impls.iter().any(|i| i.path.rsplit('/').next() == Some("fmt"));
 
     let mut out = Derived { functions: Vec::new(), impls: Vec::new() };
     for req in requests {
@@ -464,7 +467,7 @@ pub fn expand(
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "derive(text) on '{name}' writes 'impl fmt.Display for {name}', which needs the std/fmt import. Fix: add impl \"std/fmt\" at the top of the file"
+                        "derive(text) on '{name}' writes 'impl fmt.Display for {name}', and this file's 'fmt' is not std/fmt: an impl line in this file names another module 'fmt'. Fix: remove that impl line, or move the derive(text) to a file that does not name one"
                     ),
                     span: req.span,
                 });

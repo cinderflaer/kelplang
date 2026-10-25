@@ -1,0 +1,62 @@
+derive(text)
+datac Point(val x: i32, val y: i32)
+
+datac Meters(val v: i64)
+
+impl convert.From<i64> for Meters {
+    fun from(value: i64) => Meters = Meters(v = value)
+}
+
+enum Bad {
+    Neg(val n: i64)
+}
+
+fun make<X: convert.From<i64>>(v: i64) => X {
+    return X.from(value = v)
+}
+
+fun half(n: i32) => Option<i32> {
+    if n % 2 == 0 {
+        return Option.Some(value = n / 2)
+    }
+    return Option.None
+}
+
+fun prefixed(n: i32) => option.Option<i32> {
+    return option.Option.Some(value = n)
+}
+
+fun parse_or(s: &str) => i64 {
+    if let Ok(n) = str.parse_i64(s = s) {
+        return n
+    }
+    return -1
+}
+
+fun non_negative(n: i64) => Result<i64, Bad> {
+    if n < 0 {
+        return Result.Err(error = Bad.Neg(n = n))
+    }
+    return Result.Ok(value = n)
+}
+
+fun main() {
+    when half(8) {
+        Some(value) -> print(value)
+        None -> print(-1)
+    }
+    print(half(7).is_none())
+    print(prefixed(2).is_some())
+    print(parse_or(s = "41") + 1)
+    print(parse_or(s = "x"))
+    print(prefixed(3).is_some())
+    print(result.is_err(r = non_negative(n = -2)))
+    print(str.to_upper(s = "kelp"))
+    print(fmt.int(n = 5))
+    print(iter.count(it = iter.range(a = 0, b = 4)))
+    print(Point(x = 3, y = 4).to_text())
+    print(make<Meters>(v = 5).v)
+    val four: f32 = 4.0
+    val two: f32 = 2.0
+    print(math.sqrt(x = four) == two)
+}

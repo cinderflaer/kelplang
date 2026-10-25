@@ -1,0 +1,9 @@
+// #300: an explicit impl line that names a module `str` claims the name for this
+// file. The std `str` is still in scope in report.kp, which writes no impl line.
+impl "str"
+impl "report"
+
+fun main() {
+    print(str.tag())
+    print(report.lengths())
+}

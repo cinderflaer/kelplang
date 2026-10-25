@@ -1,0 +1,10 @@
+// #300: this file names a module `fmt` of its own, so derive(text) cannot write
+// its Display impl against std/fmt, and it is refused by name.
+impl "fmt"
+
+derive(text)
+datac Point(val x: i32)
+
+fun main() {
+    print(Point(x = 1).to_text())
+}

@@ -1,0 +1,3 @@
+pub fun unused() => i64 {
+    return 1
+}

@@ -724,6 +724,9 @@ mod eval_order;
 #[path = "compile_and_run/default_args.rs"]
 mod default_args;
 
+#[path = "compile_and_run/std_default_names.rs"]
+mod std_default_names;
+
 // Gitea #223: `()` and `Result<(), E>` are spelled as the issue asks. The
 // success arm is built from `()`, matched, passed through `?`, and the `Err`
 // arm still carries its reason.

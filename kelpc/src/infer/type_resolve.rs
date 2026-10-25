@@ -800,7 +800,16 @@ impl TypeScope<'_> {
                     span,
                 }),
             },
-            None => Ok(format!("{}{}", self.prefix, name)),
+            // A bare `Option` or `Result` is the std type when the file has
+            // that module's default alias and declares no type of the name
+            // itself (#300).
+            None => {
+                let local = format!("{}{}", self.prefix, name);
+                let declared_here = self.env.generics.contains_key(&local)
+                    || self.structs.contains_key(&local)
+                    || self.enums.contains_key(&local);
+                Ok(crate::stdlib::bare_default_type(name, declared_here, self.aliases).unwrap_or(local))
+            }
         }
     }
 

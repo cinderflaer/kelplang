@@ -111,6 +111,53 @@ pub fn key_prefix(module: &str) -> String {
     format!("{}.", module.replace('/', "."))
 }
 
+/// The pure std modules a project module has in scope without an `impl` line
+/// (#300): each one is ungated, so a file that names it needs no authority
+/// the file does not already have. A file that names one of them is given
+/// the module under its own name (`str`), exactly as if it wrote the line,
+/// unless the file's own `impl` names another module with that name.
+/// Capability modules keep their `impl` line, because the grant is the point.
+pub const DEFAULT_MODULES: &[&str] = &[
+    "std/str",
+    "std/fmt",
+    "std/math",
+    "std/option",
+    "std/result",
+    "std/convert",
+    "std/iter",
+];
+
+/// The module that holds `Display`, which `derive(text)` writes its impl
+/// against (`fmt.Display`).
+pub const FMT_MODULE: &str = "std/fmt";
+
+/// The module that declares the bare type name `name` when a project module
+/// writes it without a prefix (#300): `Option` and `Result`. `Some`, `None`,
+/// `Ok` and `Err` are variants and keep their prelude meaning.
+pub fn default_type_module(name: &str) -> Option<&'static str> {
+    match name {
+        "Option" => Some(OPTION_MODULE),
+        "Result" => Some(RESULT_MODULE),
+        _ => None,
+    }
+}
+
+/// The qualified name a bare `name` takes in a module that has the default
+/// alias of the module that declares it (#300), or `None` when the name is
+/// not one of those types, the module declares a type of that name itself
+/// (`declared_here`), or the file reaches that module under another module
+/// with the same alias. The rule is the file's alias table, so an explicit
+/// `impl` that claims the name wins, the same way it does for `option.x`.
+pub fn bare_default_type(name: &str, declared_here: bool, aliases: &std::collections::HashMap<String, String>) -> Option<String> {
+    let module = default_type_module(name)?;
+    if declared_here {
+        return None;
+    }
+    let alias = module.rsplit('/').next()?;
+    let prefix = key_prefix(module);
+    (aliases.get(alias) == Some(&prefix)).then(|| format!("{prefix}{name}"))
+}
+
 /// Source for the stdlib module with `impl` id `id` (`std/mem`), or `None`
 /// when the compiler does not ship it.
 ///

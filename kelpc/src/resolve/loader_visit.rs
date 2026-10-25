@@ -153,6 +153,24 @@ impl Loader<'_> {
         Ok(tokens)
     }
 
+    /// Loads one module an `impl` line (or a default) names, and the runtime
+    /// module a capability import needs.
+    fn visit_import(&mut self, target: &str, at: Span, from: &str, strict: bool) -> Result<(), Diagnostic> {
+        self.visit(target, at, from, strict)?;
+        // MK7 §8: importing a module that holds a capability domain is what
+        // makes generated code call the capability matcher, and
+        // `std/path`'s own `normalize` calls the normalizer; both live in
+        // Kelp (`std/rt`) rather than in C text emitted into the program.
+        // Injecting it at the import that needs it - keyed on the same
+        // conditions as the calls themselves - is what keeps the runtime out
+        // of programs that use neither, and what makes the module the
+        // emitted C calls into always present.
+        if domain_of_with_extern(target, &self.extern_modules).is_some() || target == "std/path" {
+            self.visit(crate::stdlib::RT_MODULE, at, from, strict)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn visit_body(&mut self, id: &str, at: Span, from: &str, strict: bool) -> Result<(), Diagnostic> {
         match self.state.get(id) {
             Some(2) => return Ok(()),
@@ -194,6 +212,14 @@ impl Loader<'_> {
         // (issue #279, `deprecated::scan_tokens`).
         self.deprecations.extend(crate::deprecated::scan_tokens(&tokens, id));
         let expanded = self.aliases.expand_file(&tokens, id)?;
+        // The pure std modules this file names without an `impl` line (#300).
+        // Only a project module gets them: std modules import one another, so
+        // an implicit import inside `std/` would close a cycle.
+        let defaults: Vec<&'static str> = if id.starts_with("std/") {
+            Vec::new()
+        } else {
+            named_default_modules(&expanded)
+        };
         let mut program = Parser::new(expanded)
             .parse_program()
             .map_err(|e| {
@@ -264,18 +290,18 @@ impl Loader<'_> {
             }
             let target = imp.path.clone();
             aliases.insert(alias, target.clone());
-            self.visit(&target, imp.span, id, strict)?;
-            // MK7 §8: importing a module that holds a capability domain is what
-            // makes generated code call the capability matcher, and
-            // `std/path`'s own `normalize` calls the normalizer; both live in
-            // Kelp (`std/rt`) rather than in C text emitted into the program.
-            // Injecting it at the import that needs it - keyed on the same
-            // conditions as the calls themselves - is what keeps the runtime out
-            // of programs that use neither, and what makes the module the
-            // emitted C calls into always present.
-            if domain_of_with_extern(&target, &self.extern_modules).is_some() || target == "std/path" {
-                self.visit(crate::stdlib::RT_MODULE, imp.span, id, strict)?;
+            self.visit_import(&target, imp.span, id, strict)?;
+        }
+        // #300: a default std module the file names and does not claim with its
+        // own `impl` line. The file's explicit line keeps its meaning, so the
+        // default is skipped for a name the file has already claimed.
+        for module in defaults {
+            let alias = default_alias(module);
+            if !seen_aliases.insert(alias.clone()) {
+                continue;
             }
+            aliases.insert(alias, module.to_string());
+            self.visit_import(module, Span::new(0, 0), id, strict)?;
         }
 
         self.stack.pop();

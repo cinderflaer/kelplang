@@ -1,0 +1,13 @@
+// #300: a local binding named like a std module shadows the module, and a datac
+// named `Result` in this file is the file's own type, not std's Result.
+datac Result(val code: i32)
+
+fun outcome() => Result {
+    return Result(code = 3)
+}
+
+fun main() {
+    val str = String.from_str(s = "kelp")
+    print(str.len())
+    print(outcome().code)
+}
