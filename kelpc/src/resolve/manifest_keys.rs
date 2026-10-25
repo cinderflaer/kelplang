@@ -1,16 +1,16 @@
 use super::*;
 
-/// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
-/// section (C-2). Reuses `stdlib::is_domain` and `validate_cap_pattern`, the
-/// same vocabulary an `impl "..." caps(domain = [...])` clause validates its
-/// grants against, so a pattern that would be refused on an `impl` line is
-/// refused here too, for the same reason and with the same wording.
-pub(crate) fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
+/// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]` section
+/// (C-2), or inside a `[caps."<module id>"]` section (#301). Reuses
+/// `stdlib::is_domain` and `validate_cap_pattern`, the same vocabulary an
+/// `impl "..." caps(domain = [...])` clause validates its grants against, so a
+/// pattern that would be refused on an `impl` line is refused here too, for the
+/// same reason and with the same wording. `header` is the section as the
+/// manifest spells it (`[caps]`, `[caps."util"]`), for the messages.
+fn parse_domain_line(line: &str, at: Span, header: &str) -> Result<(String, Vec<String>), Diagnostic> {
     let Some((domain, value)) = line.split_once('=') else {
         return Err(Diagnostic::new(
-            format!(
-                "expected 'domain = [\"pattern\", ...]' in {MANIFEST_NAME}'s [caps] section, found '{line}'"
-            ),
+            format!("expected 'domain = [\"pattern\", ...]' in {MANIFEST_NAME}'s {header} section, found '{line}'"),
             at,
             "",
         ));
@@ -30,7 +30,7 @@ pub(crate) fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> 
     let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
         return Err(Diagnostic::new(
             format!(
-                "{MANIFEST_NAME} value for '[caps] {domain}' must be a bracketed list of double-quoted patterns, found '{value}'"
+                "{MANIFEST_NAME} value for '{header} {domain}' must be a bracketed list of double-quoted patterns, found '{value}'"
             ),
             at,
             "",
@@ -44,7 +44,7 @@ pub(crate) fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> 
             let Some(pattern) = part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) else {
                 return Err(Diagnostic::new(
                     format!(
-                        "{MANIFEST_NAME} pattern for '[caps] {domain}' must be double-quoted, found '{part}'"
+                        "{MANIFEST_NAME} pattern for '{header} {domain}' must be double-quoted, found '{part}'"
                     ),
                     at,
                     "",
@@ -54,15 +54,44 @@ pub(crate) fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> 
         }
     }
     validate_cap_grant(domain, &patterns, at, "")?;
+    Ok((domain.to_string(), patterns))
+}
+
+/// One line inside `coral.toml`'s `[caps]` section (C-2): the entry module's
+/// own grant.
+pub(crate) fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
+    let (domain, patterns) = parse_domain_line(line, at, "[caps]")?;
     let caps = manifest.caps.get_or_insert_with(HashMap::new);
-    if caps.contains_key(domain) {
+    if caps.contains_key(&domain) {
         return Err(Diagnostic::new(
             format!("domain '{domain}' appears more than once in {MANIFEST_NAME}'s [caps] section"),
             at,
             "",
         ));
     }
-    caps.insert(domain.to_string(), patterns);
+    caps.insert(domain, patterns);
+    Ok(())
+}
+
+/// One line inside `coral.toml`'s `[caps."<module id>"]` section (#301): the
+/// grant the manifest gives that module, whichever file imports it.
+pub(crate) fn parse_module_caps_line(
+    manifest: &mut Manifest,
+    module_id: &str,
+    line: &str,
+    at: Span,
+) -> Result<(), Diagnostic> {
+    let header = format!("[caps.\"{module_id}\"]");
+    let (domain, patterns) = parse_domain_line(line, at, &header)?;
+    let caps = manifest.module_caps.entry(module_id.to_string()).or_default();
+    if caps.contains_key(&domain) {
+        return Err(Diagnostic::new(
+            format!("domain '{domain}' appears more than once in {MANIFEST_NAME}'s {header} section"),
+            at,
+            "",
+        ));
+    }
+    caps.insert(domain, patterns);
     Ok(())
 }
 

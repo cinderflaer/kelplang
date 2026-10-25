@@ -78,6 +78,7 @@ pub(crate) fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagno
         http_pool: crate::stdlib::DEFAULT_HTTP_POOL,
         naming_case: None,
         caps: None,
+        module_caps: HashMap::new(),
         extern_modules: HashMap::new(),
         unsafe_modules: Vec::new(),
         target_seen: false,
@@ -120,6 +121,31 @@ pub(crate) fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagno
         // rather than rejecting them.
         if line.starts_with('[') {
             let name = line.trim_start_matches('[').trim_end_matches(']').trim();
+            if let Some(rest) = name.strip_prefix("caps.") {
+                // `[caps."<module id>"]` (#301): the manifest's grant for one
+                // module. A second header for the same module is refused here,
+                // where the header is read, like a repeated `[extern.*]`.
+                let Some(module_id) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+                else {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "{MANIFEST_NAME} section header must be '[caps.\"<module id>\"]', found '[{name}]'"
+                        ),
+                        at,
+                        "",
+                    ));
+                };
+                if manifest.module_caps.contains_key(module_id) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "module '{module_id}' appears more than once in {MANIFEST_NAME}'s '[caps.*]' sections"
+                        ),
+                        at,
+                        "",
+                    ));
+                }
+                manifest.module_caps.insert(module_id.to_string(), HashMap::new());
+            }
             if let Some(rest) = name.strip_prefix("extern.") {
                 let Some(module_id) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
                 else {
@@ -153,6 +179,7 @@ pub(crate) fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagno
             // header names a user module, so its id is not checked.
             let lower = name.to_ascii_lowercase();
             let about_tidepool = !name.starts_with("extern.")
+                && !name.starts_with("caps.")
                 && (name == "gc" || lower.starts_with("tid") || lower.contains("tidepool"));
             let array_of_tables = line.starts_with("[[");
             if about_tidepool && (name != "tidepool" || array_of_tables) {
@@ -172,6 +199,10 @@ pub(crate) fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagno
         if let Some(name) = &section {
             if name == "caps" {
                 parse_caps_line(&mut manifest, line, at)?;
+            } else if let Some(rest) = name.strip_prefix("caps.") {
+                if let Some(module_id) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+                    parse_module_caps_line(&mut manifest, module_id, line, at)?;
+                }
             } else if let Some(rest) = name.strip_prefix("extern.") {
                 if let Some(module_id) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
                     parse_extern_line(&mut manifest, module_id, line, at)?;
@@ -676,6 +707,13 @@ pub(crate) struct Manifest {
     /// then *not* granted to the entry module at all, a resolution error at
     /// any reference to it, the same as an ordinary ungranted module.
     pub(crate) caps: Option<HashMap<String, Vec<String>>>,
+    /// `[caps."<module id>"]` (#301): the grant the manifest gives an imported
+    /// module, domain -> patterns, in the `caps(...)` vocabulary. A module
+    /// listed here holds these patterns whichever file imports it, and an
+    /// `impl` clause that names it may grant only what these patterns cover.
+    /// Empty when the manifest has no such section, which keeps every project
+    /// written before this existed unchanged.
+    pub(crate) module_caps: HashMap<String, HashMap<String, Vec<String>>>,
     /// `[extern."<module id>"]` (MK9-S1-M1, roadmap B-1): every user module
     /// this manifest assigns a domain, native library and symbol allowlist
     /// to. Empty when the manifest has none, which behaves exactly as before

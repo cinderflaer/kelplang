@@ -305,6 +305,32 @@ fn a_ui_pattern_in_the_manifest_caps_section_is_rejected() {
 }
 
 #[test]
+fn a_module_caps_section_parses_to_its_module() {
+    let m = manifest("name = \"x\"\n[caps.\"std/http\"]\nnet = [\"api.example.com:443\"]\n");
+    let grant = m.module_caps.get("std/http").expect("the std/http section");
+    assert_eq!(grant.get("net"), Some(&vec!["api.example.com:443".to_string()]));
+    assert!(m.caps.is_none(), "a module section is not the entry module's [caps]");
+}
+
+#[test]
+fn a_module_caps_section_is_checked_like_the_caps_section() {
+    let err = manifest_err("name = \"x\"\n[caps.\"util\"]\nsockets = [\"*\"]\n");
+    assert!(err.message.contains("'sockets' is not a capability domain"), "{}", err.message);
+    let err = manifest_err("name = \"x\"\n[caps.\"util\"]\nui = [\"wayland-0\"]\n");
+    assert!(err.message.contains("patterns are not enforceable in the 'ui' domain yet"), "{}", err.message);
+    let err = manifest_err("name = \"x\"\n[caps.\"util\"]\nfs = [\"/a\"]\nfs = [\"/b\"]\n");
+    assert!(err.message.contains("appears more than once"), "{}", err.message);
+}
+
+#[test]
+fn a_module_named_twice_in_caps_sections_is_refused() {
+    let err = manifest_err(
+        "name = \"x\"\n[caps.\"util\"]\nnet = [\"*\"]\n[caps.\"util\"]\nnet = [\"*\"]\n",
+    );
+    assert!(err.message.contains("'util' appears more than once"), "{}", err.message);
+}
+
+#[test]
 fn a_pkg_config_key_set_twice_is_rejected() {
     let text = "name = \"x\"\n[extern.\"a\"]\n\
                 domain = \"time\"\n\

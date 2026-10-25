@@ -31,6 +31,7 @@ pub fn load(
         source_version,
         http_pool,
         manifest_caps,
+        manifest_module_caps,
         manifest_extern,
         manifest_unsafe,
         manifest_target,
@@ -92,6 +93,7 @@ pub fn load(
                 manifest.version,
                 manifest.http_pool,
                 manifest.caps,
+                manifest.module_caps,
                 manifest.extern_modules,
                 manifest.unsafe_modules,
                 manifest.target,
@@ -129,6 +131,7 @@ pub fn load(
                         manifest.version,
                         manifest.http_pool,
                         manifest.caps,
+                        manifest.module_caps,
                         manifest.extern_modules,
                         manifest.unsafe_modules,
                         manifest.target,
@@ -154,6 +157,7 @@ pub fn load(
                         None,
                         crate::stdlib::DEFAULT_HTTP_POOL,
                         None,
+                        HashMap::new(),
                         HashMap::new(),
                         Vec::new(),
                         TargetDecl::hosted(),
@@ -568,6 +572,137 @@ pub fn load(
         whole
     });
     caps.insert(entry.clone(), entry_caps);
+    // #301: `coral.toml`'s `[caps."<module id>"]` sections grant an imported
+    // module the patterns the manifest lists, whichever file imports it, so a
+    // bare `impl` line needs no clause. The manifest is the root's own
+    // delegation, so each section is checked first: it names an imported
+    // module that is not the entry module, the module reaches a domain, and
+    // every pattern is one the entry module holds (the no-escalation rule, with
+    // the entry module's `[caps]` as the ceiling). Only then is it folded in.
+    let mut module_grants: Vec<(&String, &HashMap<String, Vec<String>>)> =
+        manifest_module_caps.iter().collect();
+    module_grants.sort_by(|a, b| a.0.cmp(b.0));
+    for (module, grant) in &module_grants {
+        let section = format!("[caps.\"{module}\"]");
+        if **module == entry {
+            return Err(Diagnostic::new(
+                format!(
+                    "coral.toml's '{section}' section names the entry module; the entry module's grant is the '[caps]' section, which it holds itself"
+                ),
+                Span::new(0, 0),
+                entry.clone(),
+            ));
+        }
+        if !loader.modules.iter().any(|m| m.id == **module) {
+            return Err(Diagnostic::new(
+                format!(
+                    "coral.toml's '{section}' section names '{module}', which the program does not import; remove the section or import the module"
+                ),
+                Span::new(0, 0),
+                entry.clone(),
+            ));
+        }
+        if !reaches_a_domain(&loader.modules, module, &loader.extern_modules) {
+            return Err(Diagnostic::new(
+                format!(
+                    "module '{module}' is ungated: it reaches no capability domain, so coral.toml's '{section}' section would grant it nothing; drop the section"
+                ),
+                Span::new(0, 0),
+                entry.clone(),
+            ));
+        }
+        let mut domains: Vec<&String> = grant.keys().collect();
+        domains.sort();
+        for domain in domains {
+            for pattern in &grant[domain] {
+                let held = caps
+                    .get(&entry)
+                    .and_then(|d| d.get(domain))
+                    .map(|patterns| patterns.iter().any(|h| pattern_covered(h, pattern, domain)))
+                    .unwrap_or(false);
+                if !held {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "coral.toml's '{section}' section grants '{domain}' access to '{pattern}', which the entry module does not hold (its '[caps]' section, or the whole resource when there is none); a manifest can delegate less than the entry module has, never more"
+                        ),
+                        Span::new(0, 0),
+                        entry.clone(),
+                    ));
+                }
+            }
+        }
+    }
+    for (module, grant) in &module_grants {
+        let slot_map = caps.entry((*module).clone()).or_default();
+        for (domain, patterns) in grant.iter() {
+            let slot = slot_map.entry(domain.clone()).or_default();
+            for pattern in patterns {
+                if !slot.contains(pattern) {
+                    slot.push(pattern.clone());
+                }
+            }
+        }
+    }
+    // An `impl` clause on a module the manifest names is checked against the
+    // manifest, which is the ceiling for that module: a clause may grant only
+    // what the section covers in that domain, and a domain the section does not
+    // list is refused. The importer's own held set is still checked below.
+    for g in &loader.grants {
+        let Some(ceiling) = manifest_module_caps.get(&g.target) else {
+            continue;
+        };
+        let covered = g.patterns.iter().all(|pattern| {
+            ceiling
+                .get(&g.domain)
+                .map(|held| held.iter().any(|h| pattern_covered(h, pattern, &g.domain)))
+                .unwrap_or(false)
+        });
+        if !covered {
+            let section = format!("[caps.\"{}\"]", g.target);
+            let message = if ceiling.contains_key(&g.domain) {
+                format!(
+                    "'{}' is granted by coral.toml's '{section}' section, which grants '{}' only for {}: the clause on '{}' in module '{}' names {}, outside it; a clause can delegate what the manifest gives, never more",
+                    g.target,
+                    g.domain,
+                    ceiling[&g.domain].join(", "),
+                    g.target,
+                    g.importer,
+                    g.patterns.join(", ")
+                )
+            } else {
+                format!(
+                    "'{}' is granted by coral.toml's '{section}' section, which does not list '{}': the clause on '{}' in module '{}' cannot grant it; add the domain to the section or drop the clause",
+                    g.target, g.domain, g.target, g.importer
+                )
+            };
+            return Err(Diagnostic::new(message, g.span, g.importer.clone()));
+        }
+    }
+    for g in &loader.all_grants {
+        let Some(ceiling) = manifest_module_caps.get(&g.target) else {
+            continue;
+        };
+        for domain in crate::stdlib::DOMAINS {
+            if *domain == "mmio" {
+                continue;
+            }
+            let wildcard = crate::stdlib::whole_resource(domain);
+            let covered = ceiling
+                .get(*domain)
+                .map(|held| held.iter().any(|h| pattern_covered(h, wildcard, domain)))
+                .unwrap_or(false);
+            if !covered {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}' is granted by coral.toml's '[caps.\"{}\"]' section, which does not grant the whole resource of '{}', so `caps(*)` in module '{}' cannot hand it over; name the patterns, or add the domain to the section",
+                        g.target, g.target, domain, g.importer
+                    ),
+                    g.span,
+                    g.importer.clone(),
+                ));
+            }
+        }
+    }
     for g in &loader.grants {
         let slot = caps
             .entry(g.target.clone())
