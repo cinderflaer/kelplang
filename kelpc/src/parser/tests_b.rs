@@ -505,6 +505,73 @@ fn impl_requires_a_string_path() {
 }
 
 #[test]
+fn an_impl_list_is_one_decl_per_path_in_written_order() {
+    let p = parse("impl \"std/str\", \"std/fmt\", \"std/option\"\n\nfun main() {}");
+    let paths: Vec<&str> = p.impls.iter().map(|i| i.path.as_str()).collect();
+    assert_eq!(paths, ["std/str", "std/fmt", "std/option"]);
+    assert!(p.impls.iter().all(|i| i.caps.is_empty() && !i.caps_all));
+}
+
+#[test]
+fn an_impl_list_parses_exactly_like_separate_lines() {
+    let listed = parse("impl \"std/str\", \"std/fmt\"\nimpl \"shapes/circle\"\n\nfun main() {}");
+    let lines = parse("impl \"std/str\"\nimpl \"std/fmt\"\nimpl \"shapes/circle\"\n\nfun main() {}");
+    let key = |p: &Program| -> Vec<(String, usize, bool)> {
+        p.impls.iter().map(|i| (i.path.clone(), i.caps.len(), i.caps_all)).collect()
+    };
+    assert_eq!(key(&listed), key(&lines));
+    assert_eq!(listed.functions.len(), lines.functions.len());
+}
+
+#[test]
+fn a_caps_grant_keeps_its_own_impl_line_beside_a_list() {
+    let p = parse("impl \"std/str\", \"std/fmt\"\nimpl \"std/fs\" caps(fs = [\"/tmp/**\"])\n\nfun main() {}");
+    assert_eq!(p.impls.len(), 3);
+    assert!(p.impls[0].caps.is_empty());
+    assert_eq!(p.impls[2].path, "std/fs");
+    assert_eq!(p.impls[2].caps[0].domain, "fs");
+}
+
+#[test]
+fn a_caps_grant_on_an_impl_list_is_refused() {
+    for source in [
+        "impl \"std/str\", \"std/fmt\" caps(fs = [\"/tmp/**\"])",
+        "impl \"std/str\", \"std/fmt\" caps(*)",
+    ] {
+        let err = parse_err(source);
+        assert!(
+            err.message.contains("takes its own `impl` line"),
+            "{source}: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn a_caps_grant_followed_by_a_comma_is_refused() {
+    let err = parse_err("impl \"std/fs\" caps(fs = [\"/tmp/**\"]), \"std/str\"");
+    assert!(err.message.contains("takes its own `impl` line"), "{}", err.message);
+}
+
+#[test]
+fn an_impl_list_refuses_a_trailing_comma() {
+    parse_err("impl \"std/str\", \"std/fmt\",\n\nfun main() {}");
+    parse_err("impl \"std/str\",\n\nfun main() {}");
+}
+
+#[test]
+fn an_impl_list_refuses_a_non_string_entry() {
+    parse_err("impl \"std/str\", util\n\nfun main() {}");
+    parse_err("impl \"std/str\", , \"std/fmt\"\n\nfun main() {}");
+}
+
+#[test]
+fn an_impl_list_must_come_before_declarations() {
+    let e = parse_err("fun main() {}\nimpl \"std/str\", \"std/fmt\"");
+    assert!(e.message.contains("must come first"), "got: {}", e.message);
+}
+
+#[test]
 fn parses_passdown_declarations() {
     let p = parse("pd val app_name = \"shapes\"\npd var count = 0\npd val label: &str = app_name\n\nfun main() {}");
     assert_eq!(p.pds.len(), 3);

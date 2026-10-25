@@ -421,7 +421,7 @@ impl Parser {
                         span: self.peek().span,
                     });
                 }
-                impls.push(self.parse_impl_decl()?);
+                impls.extend(self.parse_impl_decl()?);
             } else if self.check(&TokenKind::Const) {
                 if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
@@ -1083,22 +1083,27 @@ impl Parser {
     /// `impl "std/fs" caps(fs = ["/var/log/myapp/*"])` (M7).
     /// `with caps(...)` is refused by name, the way `as name` is: both were
     /// deprecated by `26.09.0` and removed in the cycle that followed.
-    pub(crate) fn parse_impl_decl(&mut self) -> PResult<ImplDecl> {
+    ///
+    /// `impl "std/str", "std/fmt"` (#299) is a list of plain paths on one
+    /// line. It yields the same declarations as one line per path, in the
+    /// order written, so it is only spelling. A `caps(...)` grant, and the
+    /// refused `as` and `with` clauses, keep their own line.
+    pub(crate) fn parse_impl_decl(&mut self) -> PResult<Vec<ImplDecl>> {
         let start = self.expect(TokenKind::Impl, "'impl'")?.span;
-        let (path, path_span) = match self.peek_kind().clone() {
-            TokenKind::StringLit(s) => {
-                let span = self.peek().span;
-                self.advance();
-                (s, span)
-            }
-            other => {
-                return Err(ParseError {
-                    help: None,
-                    message: format!("expected a quoted module path after 'impl', found {}", other.describe()),
-                    span: self.peek().span,
-                })
-            }
-        };
+        let (path, path_span) = self.parse_impl_path()?;
+        let mut paths = vec![(path.clone(), path_span)];
+        while self.check(&TokenKind::Comma) {
+            self.advance();
+            paths.push(self.parse_impl_path()?);
+        }
+        let is_list = paths.len() > 1;
+        if is_list && (self.check(&TokenKind::As) || self.at_impl_tail_clause()) {
+            return Err(ParseError {
+                help: None,
+                message: "a `caps(...)` grant takes its own `impl` line: keep the plain paths in the list, and write `impl \"path\" caps(...)` on a line of its own".to_string(),
+                span: self.peek().span,
+            });
+        }
         // `as name` was removed once a module's own name became its namespace
         // (`syntax.md` 13.1). The token is still a keyword, so the old clause is
         // refused here, where the path is in hand, rather than falling through
@@ -1201,11 +1206,55 @@ impl Parser {
         } else {
             Vec::new()
         };
-        Ok(ImplDecl {
-            path,
-            caps,
-            caps_all,
-            span: start.to(path_span),
-        })
+        // A `caps(...)` grant ends its own line: a comma after it is refused
+        // here, where the grant is in hand.
+        if self.check(&TokenKind::Comma) && (has_caps_clause || caps_all) {
+            return Err(ParseError {
+                help: None,
+                message: "a `caps(...)` grant takes its own `impl` line: keep the plain paths in the list, and write `impl \"path\" caps(...)` on a line of its own".to_string(),
+                span: self.peek().span,
+            });
+        }
+        if !is_list {
+            return Ok(vec![ImplDecl {
+                path,
+                caps,
+                caps_all,
+                span: start.to(path_span),
+            }]);
+        }
+        // A list carries no grant (refused above), so each entry is a plain
+        // declaration, in the order written.
+        Ok(paths
+            .into_iter()
+            .map(|(path, span)| ImplDecl {
+                path,
+                caps: Vec::new(),
+                caps_all: false,
+                span: start.to(span),
+            })
+            .collect())
+    }
+
+    /// One quoted module path of an `impl` line, with its span.
+    fn parse_impl_path(&mut self) -> PResult<(String, Span)> {
+        match self.peek_kind().clone() {
+            TokenKind::StringLit(s) => {
+                let span = self.peek().span;
+                self.advance();
+                Ok((s, span))
+            }
+            other => Err(ParseError {
+                help: None,
+                message: format!("expected a quoted module path after 'impl', found {}", other.describe()),
+                span: self.peek().span,
+            }),
+        }
+    }
+
+    /// Whether the cursor sits on a `caps(...)` clause or on the `with` keyword
+    /// the parser refuses by name.
+    fn at_impl_tail_clause(&self) -> bool {
+        matches!(self.peek_kind(), TokenKind::Ident(n) if n == "caps" || n == "with")
     }
 }

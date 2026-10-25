@@ -665,21 +665,36 @@ impl<'a> Scanner<'a> {
     }
 
     pub(super) fn impl_item(&mut self, j: usize, scan: &mut Scan, aliases: &mut BTreeMap<String, String>) -> usize {
-        if let TokenKind::StringLit(path) = self.kind(j + 1).clone() {
+        if let TokenKind::StringLit(_) = self.kind(j + 1).clone() {
             let end = self.skip_to_line_end(j);
-            let text = self.text(j, end);
-            let alias = path.rsplit('/').next().unwrap_or(&path).to_string();
-            if let Some(d) = domain_of_module(&path) {
-                aliases.insert(alias.clone(), d.to_string());
+            let line = self.text(j, end);
+            // `impl "a", "b"` (#299): one import per path. Each entry is listed
+            // as its own `impl "path"` line, and its span runs from the keyword
+            // to that path.
+            let listed = matches!(self.kind(j + 2), TokenKind::Comma);
+            let mut k = j + 1;
+            while let TokenKind::StringLit(path) = self.kind(k).clone() {
+                let alias = path.rsplit('/').next().unwrap_or(&path).to_string();
+                if let Some(d) = domain_of_module(&path) {
+                    aliases.insert(alias.clone(), d.to_string());
+                }
+                let (text, span) = if listed {
+                    (format!("impl \"{path}\""), (self.start(j), self.last_end(j, k + 1)))
+                } else {
+                    (line.clone(), (self.start(j), self.last_end(j, end)))
+                };
+                scan.imports.push(Import {
+                    text,
+                    alias: crate::resolve::default_alias(&path),
+                    path,
+                    line: self.line1(j),
+                    span,
+                });
+                if !matches!(self.kind(k + 1), TokenKind::Comma) {
+                    break;
+                }
+                k += 2;
             }
-            let span = (self.start(j), self.last_end(j, end));
-            scan.imports.push(Import {
-                text,
-                alias: crate::resolve::default_alias(&path),
-                path,
-                line: self.line1(j),
-                span,
-            });
             return end;
         }
         let Some(open) = self.find_open_brace(j + 1) else {

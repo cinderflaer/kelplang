@@ -1,0 +1,25 @@
+// #299: `impl` takes a list of module paths. `impl "std/io", "std/option"` is
+// the same as the two lines `impl "std/io"` and `impl "std/option"`, in the
+// order written. Each module is reached by its own name, `io` and `option`.
+impl "std/io", "std/option"
+
+fun half(n: i32) => option.Option<i32> {
+    if n % 2 == 0 {
+        return option.Option.Some(value = n / 2)
+    }
+    return option.Option.None
+}
+
+fun main() {
+    val even = half(8)
+    val odd = half(7)
+    io.write_str_raw(1, "list\n")
+    when even {
+        Some(value) -> print(value)
+        None -> print(-1)
+    }
+    when odd {
+        Some(value) -> print(value)
+        None -> print(-1)
+    }
+}

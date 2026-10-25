@@ -439,12 +439,21 @@ fn raw_imports(tokens: &[Token]) -> Vec<(String, Span)> {
         if !matches!(token.kind, TokenKind::Impl) {
             continue;
         }
-        if let Some(Token {
+        // `impl "a", "b"` (#299): every path of the list, each one a module.
+        let mut at = i + 1;
+        while let Some(Token {
             kind: TokenKind::StringLit(path),
             span,
-        }) = tokens.get(i + 1)
+        }) = tokens.get(at)
         {
             imports.push((path.clone(), *span));
+            match tokens.get(at + 1) {
+                Some(Token {
+                    kind: TokenKind::Comma,
+                    ..
+                }) => at += 2,
+                _ => break,
+            }
         }
     }
     imports
