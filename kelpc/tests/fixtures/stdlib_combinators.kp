@@ -1,5 +1,5 @@
-// A-4 phase D: `option.map`/`and_then`/`or_else`/`each` and
-// `result.map`/`map_err`/`and_then`/`or_else`/`each`, the helpers
+// A-4 phase D: the `map`/`and_then`/`or_else`/`each` methods of `Option` and
+// `Result`, and the free `result.map`/`map_err`, the helpers
 // MK5-S6-M1 recorded as waiting on function values.
 //
 // Every callback takes a *borrow* of the payload (`fun(&T) => U`), which is
@@ -7,7 +7,7 @@
 // keeps the callback from taking ownership. What a helper *cannot* do is hand
 // the variant it was given back out through a borrow: `result.map` and
 // `map_err` rebuild the other side, so they take the result with `move` (A-11)
-// and work for an owned payload too. `option.map` builds a fresh `Some` and
+// and work for an owned payload too. `Option.map` builds a fresh `Some` and
 // needs no move, and the helpers whose receiver stays a borrow (`and_then`,
 // `or_else`, `each`) are `Copy`-only on the side they rebuild.
 //
@@ -35,26 +35,23 @@ fun main() {
     // result is a fresh owned value. Reading it back out goes through
     // `option.expect`, which takes the option with `move` (A-11).
     val text = option.Option.Some(value = String.from_str("hello"))
-    val len = option.map(o = text, f = fun(s: &String) => int = s.len())
+    val len = text.map(fun(s: &String) => int = s.len())
     print(option.expect(o = len, message = "none"))
 
-    val shout = option.map(o = text, f = fun(s: &String) => String = str.to_upper(s.as_str()))
+    val shout = text.map(fun(s: &String) => String = str.to_upper(s.as_str()))
     if let Some(s) = shout {
         print(s)
     }
 
     // Chaining fallible steps does not nest.
-    print(option.expect(o = option.and_then(o = half(8), f = half), message = "none"))
-    print(option.is_none(o = option.and_then(o = half(9), f = half)))
+    print(option.expect(o = half(8).and_then(half), message = "none"))
+    print(option.is_none(o = half(9).and_then(half)))
 
     // `or_else` needs a `Copy` payload: it rebuilds `Some` from a copy.
     val empty: option.Option<i32> = option.Option.None
-    val seven = option.or_else(
-        o = empty,
-        f = fun() => option.Option<i32> = option.Option.Some(value = 7)
-    )
+    val seven = empty.or_else(fun() => option.Option<i32> = option.Option.Some(value = 7))
     // `each` is the `Unit` case of `map`.
-    option.each(o = seven, f = fun(v: &i32) { print(v) })
+    seven.each(fun(v: &i32) { print(v) })
 
     // `unwrap_or` takes the option with `move` (A-11), so it is the last use
     // of `seven`; `or_else` above stays a borrow, which is why the binding is
@@ -71,12 +68,9 @@ fun main() {
     print(result.expect_err(r = failed, message = "ok"))
 
     // `and_then` chains, `or_else` recovers, `each` observes.
-    val chained = result.and_then(r = parse_positive(4), f = parse_positive)
+    val chained = parse_positive(4).and_then(parse_positive)
     print(result.expect(r = chained, message = "err"))
-    val recovered = result.or_else(
-        r = parse_positive(-1),
-        f = fun(e: &i32) => result.Result<i32, i32> = result.Result.Ok(value = e + 10)
-    )
+    val recovered = parse_positive(-1).or_else(fun(e: &i32) => result.Result<i32, i32> = result.Result.Ok(value = e + 10))
     print(result.expect(r = recovered, message = "err"))
-    result.each(r = chained, f = fun(n: &i32) { print(n) })
+    chained.each(fun(n: &i32) { print(n) })
 }

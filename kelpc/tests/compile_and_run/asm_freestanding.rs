@@ -569,7 +569,7 @@ pub(crate) fn a_std_math_function_outside_the_integer_subset_is_refused() {
 pub(crate) fn a_std_option_callback_without_an_allocator_is_refused() {
     assert_rejected_with(
         "tests/projects/freestanding_std_option_no_alloc",
-        "'std.option.map<i32, i32>' is unavailable in a freestanding build",
+        "'std.option.Option#map<i32, i32>' is unavailable in a freestanding build",
     );
     assert_rejected_with(
         "tests/projects/freestanding_std_option_no_alloc",

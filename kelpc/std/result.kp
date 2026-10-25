@@ -36,17 +36,11 @@ enum Result<T, E> {
     Err(val error: E)
 }
 
-/// Whether the result is a success.
-fun is_ok<T, E>(r: &Result<T, E>) => bool = when r {
-    Ok(_) -> true
-    Err(_) -> false
-}
+/// Whether the result is a success: `result.is_ok(r)` is `r.is_ok()`.
+fun is_ok<T, E>(r: &Result<T, E>) => bool = r.is_ok()
 
-/// Whether the result is a failure.
-fun is_err<T, E>(r: &Result<T, E>) => bool = when r {
-    Ok(_) -> false
-    Err(_) -> true
-}
+/// Whether the result is a failure: `result.is_err(r)` is `r.is_err()`.
+fun is_err<T, E>(r: &Result<T, E>) => bool = r.is_err()
 
 /// The success payload, or `fallback`. `T` must be `Copy`: the receiver is a
 /// borrow, so an owned payload cannot be handed out of it; read one with a
@@ -103,49 +97,45 @@ fun map_err<T, E, F>(r: move Result<T, E>, f: closure fun(&E) => F) => Result<T,
     Err(e) -> Result.Err(error = f(e))
 }
 
+// ---- methods ----
+//
+// The borrowing helpers, also callable on a value: `r.is_ok()`, `r.and_then(f)`.
+// The ones that take the result with `move` (`map`, `map_err`) stay free
+// functions: a method always borrows its receiver. The free `is_ok` and
+// `is_err` stay as the module's public spelling; each one calls its method.
+
+/// Whether the result is a success.
+fun Result<T, E>.is_ok() => bool = when self {
+    Ok(_) -> true
+    Err(_) -> false
+}
+
+/// Whether the result is a failure.
+fun Result<T, E>.is_err() => bool = when self {
+    Ok(_) -> false
+    Err(_) -> true
+}
+
 /// Chain a second fallible step: `f` returns a `Result` itself, which is what
 /// makes a sequence of fallible steps readable without nesting `if let`.
 /// `E` must be `Copy`, since the failure arm rebuilds `Err`.
-fun and_then<T, U, E>(r: &Result<T, E>, f: closure fun(&T) => Result<U, E>) => Result<U, E> = when r {
+fun Result<T, E>.and_then<U>(f: closure fun(&T) => Result<U, E>) => Result<U, E> = when self {
     Ok(v) -> f(v)
     Err(e) -> Result.Err(error = e)
 }
 
 /// The result, or `f(e)` when it failed. `T` must be `Copy`, since the success
 /// arm rebuilds `Ok`.
-fun or_else<T, E, F>(r: &Result<T, E>, f: closure fun(&E) => Result<T, F>) => Result<T, F> = when r {
+fun Result<T, E>.or_else<F>(f: closure fun(&E) => Result<T, F>) => Result<T, F> = when self {
     Ok(v) -> Result.Ok(value = v)
     Err(e) -> f(e)
 }
 
 /// Run `f` over the success payload, if there is one, and discard the result.
 /// Works for any `T`.
-fun each<T, E>(r: &Result<T, E>, f: closure fun(&T)) {
-    when r {
+fun Result<T, E>.each(f: closure fun(&T)) {
+    when self {
         Ok(v) -> f(v)
         Err(_) -> {}
     }
-}
-
-// ---- method forms ----
-//
-// The borrowing helpers above, also callable on a value: `r.is_ok()` is
-// `result.is_ok(r)`. The ones that take the result with `move` (`map`,
-// `map_err`) stay free functions: a method always borrows its receiver.
-
-/// `r.is_ok()`.
-fun Result<T, E>.is_ok() => bool = is_ok(self)
-
-/// `r.is_err()`.
-fun Result<T, E>.is_err() => bool = is_err(self)
-
-/// `r.and_then(f)`: see `and_then`.
-fun Result<T, E>.and_then<U>(f: closure fun(&T) => Result<U, E>) => Result<U, E> = and_then(self, f)
-
-/// `r.or_else(f)`: see `or_else`.
-fun Result<T, E>.or_else<F>(f: closure fun(&E) => Result<T, F>) => Result<T, F> = or_else(self, f)
-
-/// `r.each(f)`: see `each`.
-fun Result<T, E>.each(f: closure fun(&T)) {
-    each(self, f)
 }

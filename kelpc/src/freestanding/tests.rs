@@ -123,4 +123,9 @@ fn only_the_allocator_rows_need_an_allocator() {
     assert_eq!(item_name("std.math.abs@i32"), "abs@i32");
     assert_eq!(item_name("std.option.is_some<u32>"), "is_some");
     assert_eq!(item_name("std.str.byte"), "byte");
+    // A receiver method's key names the method, so the allocator table sees it
+    // (issue #295: `o.map(f)` on an `Option` needs the allocator like `option.map`).
+    assert_eq!(item_name("std.option.Option#map<i32, i32>"), "map");
+    assert!(item_needs_allocator("std/option", item_name("std.option.Option#map<i32, i32>")));
+    assert!(item_is_callable("std/option", item_name("std.option.Option#is_some"), false));
 }

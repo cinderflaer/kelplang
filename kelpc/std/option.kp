@@ -43,17 +43,11 @@ enum Option<T> {
     None
 }
 
-/// Whether the option holds a value.
-fun is_some<T>(o: &Option<T>) => bool = when o {
-    Some(_) -> true
-    None -> false
-}
+/// Whether the option holds a value: `option.is_some(o)` is `o.is_some()`.
+fun is_some<T>(o: &Option<T>) => bool = o.is_some()
 
 /// Whether the option is empty.
-fun is_none<T>(o: &Option<T>) => bool = when o {
-    Some(_) -> false
-    None -> true
-}
+fun is_none<T>(o: &Option<T>) => bool = o.is_none()
 
 /// The payload, or `fallback`. The option is taken with `move`, because either
 /// answer is the caller's value: an owned payload is moved out and `fallback` is
@@ -82,17 +76,37 @@ fun expect<T>(o: move Option<T>, message: &str) => T {
     panic(message)
 }
 
+// ---- methods ----
+//
+// The borrowing helpers, also callable on a value: `o.map(f)`. Each has one
+// definition, the method. The ones that take the option with `move`
+// (`unwrap_or`, `unwrap`, `expect`) stay free functions: a method always
+// borrows its receiver. The free `is_some` and `is_none` stay as the module's
+// public spelling, `option.is_none(o)`, and each one calls its method.
+
+/// Whether the option holds a value.
+fun Option<T>.is_some() => bool = when self {
+    Some(_) -> true
+    None -> false
+}
+
+/// Whether the option is empty.
+fun Option<T>.is_none() => bool = when self {
+    Some(_) -> false
+    None -> true
+}
+
 /// Transform the payload through `f`, or pass `None` through. The callback
 /// borrows the payload, so this works for any `T`: the result is a fresh `U`.
-fun map<T, U>(o: &Option<T>, f: closure fun(&T) => U) => Option<U> = when o {
+fun Option<T>.map<U>(f: closure fun(&T) => U) => Option<U> = when self {
     Some(v) -> Option.Some(value = f(v))
     None -> Option.None
 }
 
-/// Chain a second fallible step: `and_then`'s callback returns an `Option`
-/// itself, which is what makes a sequence of fallible steps readable without
-/// nesting `if let`. Works for any `T`, for the same reason `map` does.
-fun and_then<T, U>(o: &Option<T>, f: closure fun(&T) => Option<U>) => Option<U> = when o {
+/// Chain a second fallible step: `f` returns an `Option` itself, which is what
+/// makes a sequence of fallible steps readable without nesting `if let`. Works
+/// for any `T`, for the same reason `map` does.
+fun Option<T>.and_then<U>(f: closure fun(&T) => Option<U>) => Option<U> = when self {
     Some(v) -> f(v)
     None -> Option.None
 }
@@ -101,7 +115,7 @@ fun and_then<T, U>(o: &Option<T>, f: closure fun(&T) => Option<U>) => Option<U> 
 /// borrow and the `Some` arm rebuilds the payload out of it, which is a copy;
 /// an owned payload comes out with `unwrap_or`, which takes the option with
 /// `move`.
-fun or_else<T>(o: &Option<T>, f: closure fun() => Option<T>) => Option<T> = when o {
+fun Option<T>.or_else(f: closure fun() => Option<T>) => Option<T> = when self {
     Some(v) -> Option.Some(value = v)
     None -> f()
 }
@@ -109,36 +123,9 @@ fun or_else<T>(o: &Option<T>, f: closure fun() => Option<T>) => Option<T> = when
 /// Run `f` over the payload, if there is one, and discard the result, the
 /// `Unit` case of `map`, written as its own call so a side effect reads like
 /// one. Works for any `T`.
-fun each<T>(o: &Option<T>, f: closure fun(&T)) {
-    when o {
+fun Option<T>.each(f: closure fun(&T)) {
+    when self {
         Some(v) -> f(v)
         None -> {}
     }
-}
-
-// ---- method forms ----
-//
-// The borrowing helpers above, also callable on a value: `o.map(f)` is
-// `option.map(o, f)`. The ones that take the option with `move`
-// (`unwrap_or`, `unwrap`, `expect`) stay free functions: a method always
-// borrows its receiver.
-
-/// `o.is_some()`.
-fun Option<T>.is_some() => bool = is_some(self)
-
-/// `o.is_none()`.
-fun Option<T>.is_none() => bool = is_none(self)
-
-/// `o.map(f)`: see `map`.
-fun Option<T>.map<U>(f: closure fun(&T) => U) => Option<U> = map(self, f)
-
-/// `o.and_then(f)`: see `and_then`.
-fun Option<T>.and_then<U>(f: closure fun(&T) => Option<U>) => Option<U> = and_then(self, f)
-
-/// `o.or_else(f)`: see `or_else`.
-fun Option<T>.or_else(f: closure fun() => Option<T>) => Option<T> = or_else(self, f)
-
-/// `o.each(f)`: see `each`.
-fun Option<T>.each(f: closure fun(&T)) {
-    each(self, f)
 }

@@ -427,6 +427,9 @@ fn admitted_items(module: &str, allocator: bool) -> String {
 /// are different declarations with different bodies.
 fn item_name(name: &str) -> &str {
     let item = name.rsplit('.').next().unwrap_or(name);
+    // A receiver method's call key carries its type (`Option#map<i32, i32>`);
+    // the tables name the method, so the receiver is stripped here as well.
+    let item = item.rsplit('#').next().unwrap_or(item);
     item.split('<').next().unwrap_or(item)
 }
 
