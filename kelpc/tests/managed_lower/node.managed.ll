@@ -26,16 +26,17 @@ target triple = "x86_64-unknown-linux-gnu"
 @kelp_caps_node_ui = external global ptr
 @panic.msg = private unnamed_addr constant [31 x i8] c"Bytes.get: index out of bounds\00", align 1
 @panic.msg.1 = private unnamed_addr constant [31 x i8] c"Bytes.set: index out of bounds\00", align 1
-@panic.msg.2 = private unnamed_addr constant [30 x i8] c"View.get: index out of bounds\00", align 1
+@panic.msg.2 = private unnamed_addr constant [31 x i8] c"String.reserve: negative count\00", align 1
+@panic.msg.3 = private unnamed_addr constant [30 x i8] c"View.get: index out of bounds\00", align 1
 @kelp_gc_ptrs_Node = internal constant [2 x i32] [i32 0, i32 8]
 @kelp_gc_type_Node = internal constant %kelp_gc_type { i32 1, i32 16, i32 8, i32 0, i32 2, ptr @kelp_gc_ptrs_Node, i32 0, i32 0, ptr null }
-@panic.msg.3 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
-@panic.msg.4 = private unnamed_addr constant [26 x i8] c"Box.get: the box is empty\00", align 1
-@panic.msg.5 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
-@panic.msg.6 = private unnamed_addr constant [27 x i8] c"Box.take: the box is empty\00", align 1
+@panic.msg.4 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
+@panic.msg.5 = private unnamed_addr constant [26 x i8] c"Box.get: the box is empty\00", align 1
+@panic.msg.6 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
+@panic.msg.7 = private unnamed_addr constant [27 x i8] c"Box.take: the box is empty\00", align 1
 @str = private unnamed_addr constant [5 x i8] c"true\00", align 1
-@str.7 = private unnamed_addr constant [6 x i8] c"false\00", align 1
-@str.8 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
+@str.8 = private unnamed_addr constant [6 x i8] c"false\00", align 1
+@str.9 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
 
 declare i32 @printf(ptr, ...)
 
@@ -312,6 +313,14 @@ reserved:                                         ; preds = %grow, %copy
 
 define internal void @kelp_String__reserve(ptr %0, i64 %1) {
 entry:
+  %neg = icmp slt i64 %1, 0
+  br i1 %neg, label %negative, label %counted
+
+negative:                                         ; preds = %entry
+  call void @kelp_panic(ptr @panic.msg.2)
+  unreachable
+
+counted:                                          ; preds = %entry
   %len = getelementptr inbounds nuw %kelp_String, ptr %0, i32 0, i32 1
   %len1 = load i64, ptr %len, align 8
   %cap = getelementptr inbounds nuw %kelp_String, ptr %0, i32 0, i32 2
@@ -320,13 +329,13 @@ entry:
   %fits = icmp ule i64 %need, %cap2
   br i1 %fits, label %reserved, label %grow
 
-grow:                                             ; preds = %entry
+grow:                                             ; preds = %counted
   %data = getelementptr inbounds nuw %kelp_String, ptr %0, i32 0, i32 0
   %cap3 = getelementptr inbounds nuw %kelp_String, ptr %0, i32 0, i32 2
   call void @kelp_buf_reserve(ptr %data, i64 %len1, ptr %cap3, i64 %1)
   br label %reserved
 
-reserved:                                         ; preds = %grow, %entry
+reserved:                                         ; preds = %grow, %counted
   ret void
 }
 
@@ -358,7 +367,7 @@ entry:
   br i1 %oob, label %panic, label %in.bounds
 
 panic:                                            ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.2)
+  call void @kelp_panic(ptr @panic.msg.3)
   unreachable
 
 in.bounds:                                        ; preds = %entry
@@ -515,7 +524,7 @@ entry:
   br i1 %oom, label %oom1, label %alloc.ok
 
 oom1:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.3)
+  call void @kelp_panic(ptr @panic.msg.4)
   unreachable
 
 alloc.ok:                                         ; preds = %entry
@@ -542,7 +551,7 @@ entry:
   br i1 %empty, label %empty2, label %get
 
 empty2:                                           ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.4)
+  call void @kelp_panic(ptr @panic.msg.5)
   unreachable
 
 get:                                              ; preds = %entry
@@ -570,7 +579,7 @@ store:                                            ; preds = %have, %alloc.ok
   ret void
 
 oom2:                                             ; preds = %alloc
-  call void @kelp_panic(ptr @panic.msg.5)
+  call void @kelp_panic(ptr @panic.msg.6)
   unreachable
 
 alloc.ok:                                         ; preds = %alloc
@@ -586,7 +595,7 @@ entry:
   br i1 %empty, label %empty2, label %take
 
 empty2:                                           ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.6)
+  call void @kelp_panic(ptr @panic.msg.7)
   unreachable
 
 take:                                             ; preds = %entry
@@ -637,15 +646,15 @@ entry:
   call void @kelp_gc_safepoint(), !dbg !9
   %left7 = getelementptr inbounds nuw %tag_Node, ptr %tree, i32 0, i32 0, !dbg !9
   %call8 = call i1 @kelp_Box__Node__is_empty(ptr %left7), !dbg !9
-  %bool = select i1 %call8, ptr @str, ptr @str.7, !dbg !9
-  %2 = call i32 (ptr, ...) @printf(ptr @str.8, ptr %bool), !dbg !9
+  %bool = select i1 %call8, ptr @str, ptr @str.8, !dbg !9
+  %2 = call i32 (ptr, ...) @printf(ptr @str.9, ptr %bool), !dbg !9
   ret i32 0, !dbg !9
 }
 
 !llvm.dbg.cu = !{!0, !0}
 !llvm.module.flags = !{!2}
 
-!0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "kelpc 26.10.5", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, splitDebugInlining: false)
+!0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "kelpc 26.10.6", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, splitDebugInlining: false)
 !1 = !DIFile(filename: "node.kp", directory: "@FIXTURE_DIR@")
 !2 = !{i32 2, !"Debug Info Version", i32 3}
 !3 = distinct !DISubprogram(name: "main", linkageName: "main", scope: !1, file: !1, line: 7, type: !4, scopeLine: 7, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: !0)

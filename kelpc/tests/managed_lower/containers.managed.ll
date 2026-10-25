@@ -12,11 +12,11 @@ target triple = "x86_64-unknown-linux-gnu"
 %tag_std__block__BlockError.kelp_v = type { i8 }
 %kelp_List__Item = type { ptr, i64, i64 }
 %kelp_List__String = type { ptr, i64, i64 }
-%kelp_Box__i32 = type { ptr }
+%kelp_Box__int = type { ptr }
 %kelp_Map__String__Item = type { ptr, i64, i64, i64, ptr, i64, i64 }
 %kelp_Map__String__Item_entry = type { %kelp_String, %tag_Item, i8 }
 %kelp_Closure__i32__i32 = type { ptr, ptr, ptr }
-%kelp_Env____funlit1 = type { %kelp_Box__i32 }
+%kelp_Env____funlit1 = type { %kelp_Box__int }
 
 @kelp_argc = external global i32
 @kelp_argv = external global ptr
@@ -32,44 +32,49 @@ target triple = "x86_64-unknown-linux-gnu"
 @kelp_caps_containers_ui = external global ptr
 @panic.msg = private unnamed_addr constant [31 x i8] c"Bytes.get: index out of bounds\00", align 1
 @panic.msg.1 = private unnamed_addr constant [31 x i8] c"Bytes.set: index out of bounds\00", align 1
-@panic.msg.2 = private unnamed_addr constant [30 x i8] c"View.get: index out of bounds\00", align 1
+@panic.msg.2 = private unnamed_addr constant [31 x i8] c"String.reserve: negative count\00", align 1
+@panic.msg.3 = private unnamed_addr constant [30 x i8] c"View.get: index out of bounds\00", align 1
 @kelp_gc_ptrs_Item = internal constant [1 x i32] zeroinitializer
 @kelp_gc_type_Item = internal constant %kelp_gc_type { i32 1, i32 32, i32 8, i32 0, i32 1, ptr @kelp_gc_ptrs_Item, i32 0, i32 0, ptr null }
-@panic.msg.3 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
-@panic.msg.4 = private unnamed_addr constant [30 x i8] c"List.get: index out of bounds\00", align 1
-@panic.msg.5 = private unnamed_addr constant [28 x i8] c"List.pop: the list is empty\00", align 1
-@panic.msg.6 = private unnamed_addr constant [33 x i8] c"List.insert: index out of bounds\00", align 1
-@panic.msg.7 = private unnamed_addr constant [33 x i8] c"List.remove: index out of bounds\00", align 1
-@panic.msg.8 = private unnamed_addr constant [32 x i8] c"List.slice: range out of bounds\00", align 1
+@panic.msg.4 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
+@panic.msg.5 = private unnamed_addr constant [35 x i8] c"List.with_capacity: negative count\00", align 1
+@panic.msg.6 = private unnamed_addr constant [30 x i8] c"List.get: index out of bounds\00", align 1
+@panic.msg.7 = private unnamed_addr constant [28 x i8] c"List.pop: the list is empty\00", align 1
+@panic.msg.8 = private unnamed_addr constant [33 x i8] c"List.insert: index out of bounds\00", align 1
+@panic.msg.9 = private unnamed_addr constant [33 x i8] c"List.remove: index out of bounds\00", align 1
+@panic.msg.10 = private unnamed_addr constant [32 x i8] c"List.slice: range out of bounds\00", align 1
 @kelp_gc_ptrs_String = internal constant [1 x i32] zeroinitializer
 @kelp_gc_type_String = internal constant %kelp_gc_type { i32 2, i32 24, i32 8, i32 0, i32 1, ptr @kelp_gc_ptrs_String, i32 0, i32 0, ptr null }
-@panic.msg.9 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
-@panic.msg.10 = private unnamed_addr constant [30 x i8] c"List.get: index out of bounds\00", align 1
-@panic.msg.11 = private unnamed_addr constant [28 x i8] c"List.pop: the list is empty\00", align 1
-@panic.msg.12 = private unnamed_addr constant [33 x i8] c"List.insert: index out of bounds\00", align 1
-@panic.msg.13 = private unnamed_addr constant [33 x i8] c"List.remove: index out of bounds\00", align 1
-@panic.msg.14 = private unnamed_addr constant [32 x i8] c"List.slice: range out of bounds\00", align 1
-@kelp_gc_type_i32 = internal constant %kelp_gc_type { i32 3, i32 4, i32 4, i32 1, i32 0, ptr null, i32 0, i32 0, ptr null }
-@panic.msg.15 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
-@panic.msg.16 = private unnamed_addr constant [26 x i8] c"Box.get: the box is empty\00", align 1
-@panic.msg.17 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
-@panic.msg.18 = private unnamed_addr constant [27 x i8] c"Box.take: the box is empty\00", align 1
+@panic.msg.11 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
+@panic.msg.12 = private unnamed_addr constant [35 x i8] c"List.with_capacity: negative count\00", align 1
+@panic.msg.13 = private unnamed_addr constant [30 x i8] c"List.get: index out of bounds\00", align 1
+@panic.msg.14 = private unnamed_addr constant [28 x i8] c"List.pop: the list is empty\00", align 1
+@panic.msg.15 = private unnamed_addr constant [33 x i8] c"List.insert: index out of bounds\00", align 1
+@panic.msg.16 = private unnamed_addr constant [33 x i8] c"List.remove: index out of bounds\00", align 1
+@panic.msg.17 = private unnamed_addr constant [32 x i8] c"List.slice: range out of bounds\00", align 1
+@kelp_gc_type_int = internal constant %kelp_gc_type { i32 3, i32 8, i32 8, i32 1, i32 0, ptr null, i32 0, i32 0, ptr null }
+@panic.msg.18 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
+@panic.msg.19 = private unnamed_addr constant [26 x i8] c"Box.get: the box is empty\00", align 1
+@panic.msg.20 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
+@panic.msg.21 = private unnamed_addr constant [27 x i8] c"Box.take: the box is empty\00", align 1
+@panic.msg.22 = private unnamed_addr constant [34 x i8] c"Map.with_capacity: negative count\00", align 1
 @kelp_gc_ptrs_map_entry.kelp_Map__String__Item = internal constant [2 x i32] [i32 0, i32 24]
 @kelp_gc_type_map_entry.kelp_Map__String__Item = internal constant %kelp_gc_type { i32 4, i32 64, i32 8, i32 0, i32 2, ptr @kelp_gc_ptrs_map_entry.kelp_Map__String__Item, i32 0, i32 0, ptr null }
-@panic.msg.19 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
-@kelp_gc_type_u32 = internal constant %kelp_gc_type { i32 5, i32 4, i32 4, i32 1, i32 0, ptr null, i32 0, i32 0, ptr null }
-@panic.msg.20 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
-@panic.msg.21 = private unnamed_addr constant [23 x i8] c"Map.get: key not found\00", align 1
-@panic.msg.22 = private unnamed_addr constant [26 x i8] c"Map.remove: key not found\00", align 1
 @panic.msg.23 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
+@kelp_gc_type_u32 = internal constant %kelp_gc_type { i32 5, i32 4, i32 4, i32 1, i32 0, ptr null, i32 0, i32 0, ptr null }
+@panic.msg.24 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
+@panic.msg.25 = private unnamed_addr constant [23 x i8] c"Map.get: key not found\00", align 1
+@panic.msg.26 = private unnamed_addr constant [26 x i8] c"Map.remove: key not found\00", align 1
+@panic.msg.27 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
 @str = private unnamed_addr constant [6 x i8] c"alpha\00", align 1
-@str.24 = private unnamed_addr constant [5 x i8] c"%zu\0A\00", align 1
-@str.25 = private unnamed_addr constant [2 x i8] c"a\00", align 1
-@str.26 = private unnamed_addr constant [6 x i8] c"alpha\00", align 1
+@str.28 = private unnamed_addr constant [6 x i8] c"%lld\0A\00", align 1
+@str.29 = private unnamed_addr constant [2 x i8] c"a\00", align 1
+@str.30 = private unnamed_addr constant [6 x i8] c"alpha\00", align 1
 @"kelp_gc_ptrs_env.#funlit1" = internal constant [1 x i32] zeroinitializer
 @"kelp_gc_type_env.#funlit1" = internal constant %kelp_gc_type { i32 6, i32 8, i32 8, i32 0, i32 1, ptr @"kelp_gc_ptrs_env.#funlit1", i32 0, i32 0, ptr null }
-@panic.msg.27 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
-@str.28 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
+@panic.msg.31 = private unnamed_addr constant [14 x i8] c"out of memory\00", align 1
+@str.32 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
+@str.33 = private unnamed_addr constant [31 x i8] c"int.to_i32: value out of range\00", align 1
 
 declare i32 @printf(ptr, ...)
 
@@ -346,6 +351,14 @@ reserved:                                         ; preds = %grow, %copy
 
 define internal void @kelp_String__reserve(ptr %0, i64 %1) {
 entry:
+  %neg = icmp slt i64 %1, 0
+  br i1 %neg, label %negative, label %counted
+
+negative:                                         ; preds = %entry
+  call void @kelp_panic(ptr @panic.msg.2)
+  unreachable
+
+counted:                                          ; preds = %entry
   %len = getelementptr inbounds nuw %kelp_String, ptr %0, i32 0, i32 1
   %len1 = load i64, ptr %len, align 8
   %cap = getelementptr inbounds nuw %kelp_String, ptr %0, i32 0, i32 2
@@ -354,13 +367,13 @@ entry:
   %fits = icmp ule i64 %need, %cap2
   br i1 %fits, label %reserved, label %grow
 
-grow:                                             ; preds = %entry
+grow:                                             ; preds = %counted
   %data = getelementptr inbounds nuw %kelp_String, ptr %0, i32 0, i32 0
   %cap3 = getelementptr inbounds nuw %kelp_String, ptr %0, i32 0, i32 2
   call void @kelp_buf_reserve(ptr %data, i64 %len1, ptr %cap3, i64 %1)
   br label %reserved
 
-reserved:                                         ; preds = %grow, %entry
+reserved:                                         ; preds = %grow, %counted
   ret void
 }
 
@@ -392,7 +405,7 @@ entry:
   br i1 %oob, label %panic, label %in.bounds
 
 panic:                                            ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.2)
+  call void @kelp_panic(ptr @panic.msg.3)
   unreachable
 
 in.bounds:                                        ; preds = %entry
@@ -730,7 +743,7 @@ grow.end:                                         ; preds = %grow.cond
   br i1 %oom, label %oom8, label %alloc.ok
 
 oom8:                                             ; preds = %grow.end
-  call void @kelp_panic(ptr @panic.msg.3)
+  call void @kelp_panic(ptr @panic.msg.4)
   unreachable
 
 alloc.ok:                                         ; preds = %grow.end
@@ -744,6 +757,14 @@ alloc.ok:                                         ; preds = %grow.end
 
 define internal %kelp_List__Item @kelp_List__Item__with_capacity(i64 %0) {
 entry:
+  %neg = icmp slt i64 %0, 0
+  br i1 %neg, label %negative, label %counted
+
+negative:                                         ; preds = %entry
+  call void @kelp_panic(ptr @panic.msg.5)
+  unreachable
+
+counted:                                          ; preds = %entry
   %l = alloca %kelp_List__Item, align 8
   store %kelp_List__Item zeroinitializer, ptr %l, align 8
   call void @kelp_List__Item__reserve(ptr %l, i64 %0)
@@ -807,7 +828,7 @@ entry:
   br i1 %oob, label %oob2, label %inbounds
 
 oob2:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.4)
+  call void @kelp_panic(ptr @panic.msg.6)
   unreachable
 
 inbounds:                                         ; preds = %entry
@@ -841,7 +862,7 @@ entry:
   br i1 %empty, label %empty2, label %pop
 
 empty2:                                           ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.5)
+  call void @kelp_panic(ptr @panic.msg.7)
   unreachable
 
 pop:                                              ; preds = %entry
@@ -1452,7 +1473,7 @@ entry:
   br i1 %oob, label %oob2, label %slice
 
 oob2:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.8)
+  call void @kelp_panic(ptr @panic.msg.10)
   unreachable
 
 slice:                                            ; preds = %entry
@@ -1507,7 +1528,7 @@ entry:
   br i1 %oob, label %oob2, label %insert
 
 oob2:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.6)
+  call void @kelp_panic(ptr @panic.msg.8)
   unreachable
 
 insert:                                           ; preds = %entry
@@ -1550,7 +1571,7 @@ entry:
   br i1 %oob, label %oob2, label %remove
 
 oob2:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.7)
+  call void @kelp_panic(ptr @panic.msg.9)
   unreachable
 
 remove:                                           ; preds = %entry
@@ -1648,7 +1669,7 @@ grow.end:                                         ; preds = %grow.cond
   br i1 %oom, label %oom8, label %alloc.ok
 
 oom8:                                             ; preds = %grow.end
-  call void @kelp_panic(ptr @panic.msg.9)
+  call void @kelp_panic(ptr @panic.msg.11)
   unreachable
 
 alloc.ok:                                         ; preds = %grow.end
@@ -1662,6 +1683,14 @@ alloc.ok:                                         ; preds = %grow.end
 
 define internal %kelp_List__String @kelp_List__String__with_capacity(i64 %0) {
 entry:
+  %neg = icmp slt i64 %0, 0
+  br i1 %neg, label %negative, label %counted
+
+negative:                                         ; preds = %entry
+  call void @kelp_panic(ptr @panic.msg.12)
+  unreachable
+
+counted:                                          ; preds = %entry
   %l = alloca %kelp_List__String, align 8
   store %kelp_List__String zeroinitializer, ptr %l, align 8
   call void @kelp_List__String__reserve(ptr %l, i64 %0)
@@ -1725,7 +1754,7 @@ entry:
   br i1 %oob, label %oob2, label %inbounds
 
 oob2:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.10)
+  call void @kelp_panic(ptr @panic.msg.13)
   unreachable
 
 inbounds:                                         ; preds = %entry
@@ -1759,7 +1788,7 @@ entry:
   br i1 %empty, label %empty2, label %pop
 
 empty2:                                           ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.11)
+  call void @kelp_panic(ptr @panic.msg.14)
   unreachable
 
 pop:                                              ; preds = %entry
@@ -2446,7 +2475,7 @@ entry:
   br i1 %oob, label %oob2, label %slice
 
 oob2:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.14)
+  call void @kelp_panic(ptr @panic.msg.17)
   unreachable
 
 slice:                                            ; preds = %entry
@@ -2501,7 +2530,7 @@ entry:
   br i1 %oob, label %oob2, label %insert
 
 oob2:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.12)
+  call void @kelp_panic(ptr @panic.msg.15)
   unreachable
 
 insert:                                           ; preds = %entry
@@ -2544,7 +2573,7 @@ entry:
   br i1 %oob, label %oob2, label %remove
 
 oob2:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.13)
+  call void @kelp_panic(ptr @panic.msg.16)
   unreachable
 
 remove:                                           ; preds = %entry
@@ -2595,67 +2624,67 @@ entry:
   ret void
 }
 
-define internal %kelp_Box__i32 @kelp_Box__i32__empty() {
+define internal %kelp_Box__int @kelp_Box__int__empty() {
 entry:
-  %b = alloca %kelp_Box__i32, align 8
-  %value = getelementptr inbounds nuw %kelp_Box__i32, ptr %b, i32 0, i32 0
+  %b = alloca %kelp_Box__int, align 8
+  %value = getelementptr inbounds nuw %kelp_Box__int, ptr %b, i32 0, i32 0
   store ptr null, ptr %value, align 8
-  %empty = load %kelp_Box__i32, ptr %b, align 8
-  ret %kelp_Box__i32 %empty
+  %empty = load %kelp_Box__int, ptr %b, align 8
+  ret %kelp_Box__int %empty
 }
 
-define internal %kelp_Box__i32 @kelp_Box__i32__of(i32 %0) {
+define internal %kelp_Box__int @kelp_Box__int__of(i64 %0) {
 entry:
-  %b = alloca %kelp_Box__i32, align 8
-  %gc = call ptr @kelp_gc_alloc(ptr @kelp_gc_type_i32)
+  %b = alloca %kelp_Box__int, align 8
+  %gc = call ptr @kelp_gc_alloc(ptr @kelp_gc_type_int)
   %oom = icmp eq ptr %gc, null
   br i1 %oom, label %oom1, label %alloc.ok
 
 oom1:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.15)
+  call void @kelp_panic(ptr @panic.msg.18)
   unreachable
 
 alloc.ok:                                         ; preds = %entry
-  store i32 %0, ptr %gc, align 4
-  %value = getelementptr inbounds nuw %kelp_Box__i32, ptr %b, i32 0, i32 0
+  store i64 %0, ptr %gc, align 8
+  %value = getelementptr inbounds nuw %kelp_Box__int, ptr %b, i32 0, i32 0
   store ptr %gc, ptr %value, align 8
-  %of = load %kelp_Box__i32, ptr %b, align 8
-  ret %kelp_Box__i32 %of
+  %of = load %kelp_Box__int, ptr %b, align 8
+  ret %kelp_Box__int %of
 }
 
-define internal i1 @kelp_Box__i32__is_empty(ptr %0) {
+define internal i1 @kelp_Box__int__is_empty(ptr %0) {
 entry:
-  %value = getelementptr inbounds nuw %kelp_Box__i32, ptr %0, i32 0, i32 0
+  %value = getelementptr inbounds nuw %kelp_Box__int, ptr %0, i32 0, i32 0
   %value1 = load ptr, ptr %value, align 8
   %empty = icmp eq ptr %value1, null
   ret i1 %empty
 }
 
-define internal i32 @kelp_Box__i32__get(ptr %0) {
+define internal i64 @kelp_Box__int__get(ptr %0) {
 entry:
-  %value = getelementptr inbounds nuw %kelp_Box__i32, ptr %0, i32 0, i32 0
+  %value = getelementptr inbounds nuw %kelp_Box__int, ptr %0, i32 0, i32 0
   %value1 = load ptr, ptr %value, align 8
   %empty = icmp eq ptr %value1, null
   br i1 %empty, label %empty2, label %get
 
 empty2:                                           ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.16)
+  call void @kelp_panic(ptr @panic.msg.19)
   unreachable
 
 get:                                              ; preds = %entry
-  %get3 = load i32, ptr %value1, align 4
-  ret i32 %get3
+  %get3 = load i64, ptr %value1, align 8
+  ret i64 %get3
 }
 
-define internal void @kelp_Box__i32__set(ptr %0, i32 %1) {
+define internal void @kelp_Box__int__set(ptr %0, i64 %1) {
 entry:
-  %value = getelementptr inbounds nuw %kelp_Box__i32, ptr %0, i32 0, i32 0
+  %value = getelementptr inbounds nuw %kelp_Box__int, ptr %0, i32 0, i32 0
   %value1 = load ptr, ptr %value, align 8
   %empty = icmp eq ptr %value1, null
   br i1 %empty, label %alloc, label %have
 
 alloc:                                            ; preds = %entry
-  %gc = call ptr @kelp_gc_alloc(ptr @kelp_gc_type_i32)
+  %gc = call ptr @kelp_gc_alloc(ptr @kelp_gc_type_int)
   %oom = icmp eq ptr %gc, null
   br i1 %oom, label %oom2, label %alloc.ok
 
@@ -2664,11 +2693,11 @@ have:                                             ; preds = %entry
 
 store:                                            ; preds = %have, %alloc.ok
   %value3 = load ptr, ptr %value, align 8
-  store i32 %1, ptr %value3, align 4
+  store i64 %1, ptr %value3, align 8
   ret void
 
 oom2:                                             ; preds = %alloc
-  call void @kelp_panic(ptr @panic.msg.17)
+  call void @kelp_panic(ptr @panic.msg.20)
   unreachable
 
 alloc.ok:                                         ; preds = %alloc
@@ -2676,26 +2705,26 @@ alloc.ok:                                         ; preds = %alloc
   br label %store
 }
 
-define internal i32 @kelp_Box__i32__take(ptr %0) {
+define internal i64 @kelp_Box__int__take(ptr %0) {
 entry:
-  %value = getelementptr inbounds nuw %kelp_Box__i32, ptr %0, i32 0, i32 0
+  %value = getelementptr inbounds nuw %kelp_Box__int, ptr %0, i32 0, i32 0
   %value1 = load ptr, ptr %value, align 8
   %empty = icmp eq ptr %value1, null
   br i1 %empty, label %empty2, label %take
 
 empty2:                                           ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.18)
+  call void @kelp_panic(ptr @panic.msg.21)
   unreachable
 
 take:                                             ; preds = %entry
-  %take3 = load i32, ptr %value1, align 4
+  %take3 = load i64, ptr %value1, align 8
   store ptr null, ptr %value, align 8
-  ret i32 %take3
+  ret i64 %take3
 }
 
-define internal void @kelp_box_drop__i32(ptr %0) {
+define internal void @kelp_box_drop__int(ptr %0) {
 entry:
-  %value = getelementptr inbounds nuw %kelp_Box__i32, ptr %0, i32 0, i32 0
+  %value = getelementptr inbounds nuw %kelp_Box__int, ptr %0, i32 0, i32 0
   %value1 = load ptr, ptr %value, align 8
   %empty = icmp eq ptr %value1, null
   br i1 %empty, label %ret, label %live
@@ -2720,21 +2749,29 @@ define internal %kelp_Map__String__Item @kelp_Map__String__Item__with_capacity(i
 entry:
   %m = alloca %kelp_Map__String__Item, align 8
   store %kelp_Map__String__Item zeroinitializer, ptr %m, align 8
+  %neg = icmp slt i64 %0, 0
+  br i1 %neg, label %wc.negative, label %wc.counted
+
+wc.negative:                                      ; preds = %entry
+  call void @kelp_panic(ptr @panic.msg.22)
+  unreachable
+
+wc.counted:                                       ; preds = %entry
   %zerocap = icmp eq i64 %0, 0
   br i1 %zerocap, label %wc.empty, label %wc.sized
 
-wc.empty:                                         ; preds = %alloc.ok, %entry
+wc.empty:                                         ; preds = %alloc.ok, %wc.counted
   %map = load %kelp_Map__String__Item, ptr %m, align 8
   ret %kelp_Map__String__Item %map
 
-wc.sized:                                         ; preds = %entry
+wc.sized:                                         ; preds = %wc.counted
   %bytes = mul i64 %0, 64
   %gc.arr = call ptr @kelp_gc_alloc_array(ptr @kelp_gc_type_map_entry.kelp_Map__String__Item, i64 %0)
   %oom = icmp eq ptr %gc.arr, null
   br i1 %oom, label %oom1, label %alloc.ok
 
 oom1:                                             ; preds = %wc.sized
-  call void @kelp_panic(ptr @panic.msg.19)
+  call void @kelp_panic(ptr @panic.msg.23)
   unreachable
 
 alloc.ok:                                         ; preds = %wc.sized
@@ -2876,7 +2913,7 @@ rehash.end:                                       ; preds = %rehash.cond
   br i1 %oom, label %oom6, label %alloc.ok
 
 oom6:                                             ; preds = %rehash.end
-  call void @kelp_panic(ptr @panic.msg.20)
+  call void @kelp_panic(ptr @panic.msg.24)
   unreachable
 
 alloc.ok:                                         ; preds = %rehash.end
@@ -3070,7 +3107,7 @@ insert.space:                                     ; preds = %alloc.ok, %insert.f
   br i1 %wasempty, label %insert.bump, label %insert.done
 
 oom12:                                            ; preds = %insert.resize
-  call void @kelp_panic(ptr @panic.msg.23)
+  call void @kelp_panic(ptr @panic.msg.27)
   unreachable
 
 alloc.ok:                                         ; preds = %insert.resize
@@ -3121,7 +3158,7 @@ entry:
   br i1 %missing, label %missing2, label %get
 
 missing2:                                         ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.21)
+  call void @kelp_panic(ptr @panic.msg.25)
   unreachable
 
 get:                                              ; preds = %entry
@@ -3178,7 +3215,7 @@ entry:
   br i1 %missing, label %missing2, label %remove
 
 missing2:                                         ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.22)
+  call void @kelp_panic(ptr @panic.msg.26)
   unreachable
 
 remove:                                           ; preds = %entry
@@ -3469,7 +3506,7 @@ entry:
   %sret.out = alloca %kelp_String, align 8, !dbg !6
   %names = alloca %kelp_List__String, align 8, !dbg !6
   %items = alloca %kelp_Map__String__Item, align 8, !dbg !6
-  %b = alloca %kelp_Box__i32, align 8, !dbg !6
+  %b = alloca %kelp_Box__int, align 8, !dbg !6
   %add = alloca %kelp_Closure__i32__i32, align 8, !dbg !6
   call void @kelp_gc_init(i64 8388608, i64 268435456, i64 1048576, i64 4194304, i64 10, i64 0), !dbg !6
   call void @kelp_gc_thread_attach(), !dbg !6
@@ -3486,32 +3523,32 @@ entry:
   call void @kelp_gc_safepoint(), !dbg !9
   call void @kelp_gc_safepoint(), !dbg !9
   %call1 = call i64 @kelp_List__String__len(ptr %names), !dbg !9
-  %2 = call i32 (ptr, ...) @printf(ptr @str.24, i64 %call1), !dbg !9
+  %2 = call i32 (ptr, ...) @printf(ptr @str.28, i64 %call1), !dbg !9
   call void @kelp_gc_safepoint(), !dbg !10
   %call2 = call %kelp_Map__String__Item @kelp_Map__String__Item__new(), !dbg !10
   store %kelp_Map__String__Item %call2, ptr %items, align 8, !dbg !6
   call void @kelp_gc_safepoint(), !dbg !11
   call void @kelp_gc_safepoint(), !dbg !11
-  call void @kelp_String__from_str(ptr %sret.out3, ptr @str.26), !dbg !6
+  call void @kelp_String__from_str(ptr %sret.out3, ptr @str.30), !dbg !6
   %sret.val4 = load %kelp_String, ptr %sret.out3, align 8, !dbg !6
   %name = insertvalue %tag_Item undef, %kelp_String %sret.val4, 0, !dbg !6
   %n = insertvalue %tag_Item %name, i32 1, 1, !dbg !6
-  call void @kelp_Map__String__Item__insert(ptr %items, ptr @str.25, %tag_Item %n), !dbg !6
+  call void @kelp_Map__String__Item__insert(ptr %items, ptr @str.29, %tag_Item %n), !dbg !6
   call void @kelp_gc_safepoint(), !dbg !12
-  %call5 = call %kelp_Box__i32 @kelp_Box__i32__of(i32 41), !dbg !12
-  store %kelp_Box__i32 %call5, ptr %b, align 8, !dbg !6
+  %call5 = call %kelp_Box__int @kelp_Box__int__of(i64 41), !dbg !12
+  store %kelp_Box__int %call5, ptr %b, align 8, !dbg !6
   %env = call ptr @kelp_gc_alloc(ptr @"kelp_gc_type_env.#funlit1"), !dbg !13
   %oom = icmp eq ptr %env, null, !dbg !13
   br i1 %oom, label %oom6, label %alloc.ok, !dbg !13
 
 oom6:                                             ; preds = %entry
-  call void @kelp_panic(ptr @panic.msg.27), !dbg !13
+  call void @kelp_panic(ptr @panic.msg.31), !dbg !13
   unreachable, !dbg !13
 
 alloc.ok:                                         ; preds = %entry
-  %b7 = load %kelp_Box__i32, ptr %b, align 8, !dbg !13
+  %b7 = load %kelp_Box__int, ptr %b, align 8, !dbg !13
   %c0 = getelementptr inbounds nuw %kelp_Env____funlit1, ptr %env, i32 0, i32 0, !dbg !13
-  store %kelp_Box__i32 %b7, ptr %c0, align 8, !dbg !13
+  store %kelp_Box__int %b7, ptr %c0, align 8, !dbg !13
   %env8 = insertvalue %kelp_Closure__i32__i32 { ptr @kelp___funlit1, ptr undef, ptr undef }, ptr %env, 1, !dbg !13
   %drop = insertvalue %kelp_Closure__i32__i32 %env8, ptr @kelp_env_drop____funlit1, 2, !dbg !13
   store %kelp_Closure__i32__i32 %drop, ptr %add, align 8, !dbg !6
@@ -3521,7 +3558,7 @@ alloc.ok:                                         ; preds = %entry
   %env10 = getelementptr inbounds nuw %kelp_Closure__i32__i32, ptr %add, i32 0, i32 1, !dbg !14
   %env11 = load ptr, ptr %env10, align 8, !dbg !14
   %call12 = call i32 %fn9(ptr %env11, i32 1), !dbg !14
-  %3 = call i32 (ptr, ...) @printf(ptr @str.28, i32 %call12), !dbg !14
+  %3 = call i32 (ptr, ...) @printf(ptr @str.32, i32 %call12), !dbg !14
   call void @kelp_closure_drop__Closure__i32__i32(ptr %add), !dbg !14
   ret i32 0, !dbg !14
 }
@@ -3534,17 +3571,29 @@ entry:
   store i32 %1, ptr %x, align 4, !dbg !16
   %x1 = load i32, ptr %x, align 4, !dbg !17
   call void @kelp_gc_safepoint(), !dbg !17
+  call void @kelp_gc_safepoint(), !dbg !17
   %env2 = load ptr, ptr %env, align 8, !dbg !17
   %c0 = getelementptr inbounds nuw %kelp_Env____funlit1, ptr %env2, i32 0, i32 0, !dbg !17
-  %call = call i32 @kelp_Box__i32__get(ptr %c0), !dbg !17
-  %add = add i32 %x1, %call, !dbg !17
+  %call = call i64 @kelp_Box__int__get(ptr %c0), !dbg !17
+  %lo = icmp slt i64 %call, -2147483648, !dbg !17
+  %hi = icmp sgt i64 %call, 2147483647, !dbg !17
+  %oor = or i1 %lo, %hi, !dbg !17
+  br i1 %oor, label %range.panic, label %range.ok, !dbg !17
+
+range.panic:                                      ; preds = %entry
+  call void @kelp_panic(ptr @str.33), !dbg !17
+  unreachable, !dbg !17
+
+range.ok:                                         ; preds = %entry
+  %cast = trunc i64 %call to i32, !dbg !17
+  %add = add i32 %x1, %cast, !dbg !17
   ret i32 %add, !dbg !17
 }
 
 !llvm.dbg.cu = !{!0, !0}
 !llvm.module.flags = !{!2}
 
-!0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "kelpc 26.10.5", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, splitDebugInlining: false)
+!0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "kelpc 26.10.6", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, splitDebugInlining: false)
 !1 = !DIFile(filename: "containers.kp", directory: "@FIXTURE_DIR@")
 !2 = !{i32 2, !"Debug Info Version", i32 3}
 !3 = distinct !DISubprogram(name: "main", linkageName: "main", scope: !1, file: !1, line: 8, type: !4, scopeLine: 8, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: !0)
