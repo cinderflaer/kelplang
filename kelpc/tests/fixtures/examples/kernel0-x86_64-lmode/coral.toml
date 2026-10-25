@@ -14,3 +14,9 @@ panic = "kp_panic"
 
 [unsafe]
 modules = ["uart", "inspect"]
+
+# The boot table `kelpc boot` reads (issue #303): the QEMU machine and the serial
+# lines this example must print. It replaces the run.sh that used to sit beside it.
+[run]
+qemu = "x86_64"
+expect = ["hello from kelp (x86_64)", "long mode on"]

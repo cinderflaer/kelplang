@@ -81,6 +81,7 @@ pub(crate) fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagno
         module_caps: HashMap::new(),
         extern_modules: HashMap::new(),
         unsafe_modules: Vec::new(),
+        run: None,
         target_seen: false,
         target: TargetDecl::hosted(),
         target_mode_set: false,
@@ -101,6 +102,8 @@ pub(crate) fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagno
     // `[extern."<module id>"]` section (MK9-S1-M1), `Some(<anything else>)`
     // while inside a section that is Coral's, not the compiler's, to read.
     let mut section: Option<String> = None;
+    // The `[run]` table being read (#303), `None` until its header is seen.
+    let mut run_draft: Option<RunDraft> = None;
     for raw in text.lines() {
         let line = raw.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
@@ -193,6 +196,17 @@ pub(crate) fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagno
             if name == "target" {
                 manifest.target_seen = true;
             }
+            if name == "run" {
+                // `[[run]]` is an array of tables, not the one table `kelpc boot` reads.
+                if line.starts_with("[[") {
+                    return Err(Diagnostic::new(
+                        format!("'[[run]]' is not a table in {MANIFEST_NAME}: write '[run]' once"),
+                        at,
+                        "",
+                    ));
+                }
+                run_draft.get_or_insert_with(RunDraft::default);
+            }
             section = Some(name.to_string());
             continue;
         }
@@ -219,6 +233,8 @@ pub(crate) fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagno
                 parse_dependency_line(&mut manifest, line, at)?;
             } else if name == "tidepool" {
                 parse_tidepool_line(&mut manifest, line, at)?;
+            } else if name == "run" {
+                parse_run_line(run_draft.get_or_insert_with(RunDraft::default), line, at)?;
             }
             continue;
         }
@@ -487,6 +503,9 @@ pub(crate) fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagno
     }
     // The runtime reads the section through the target, next to heap_max.
     manifest.target.tidepool = std::mem::take(&mut manifest.tidepool);
+    if let Some(draft) = run_draft {
+        manifest.run = Some(finish_run(draft, at)?);
+    }
     Ok(manifest)
 }
 
@@ -724,6 +743,9 @@ pub(crate) struct Manifest {
     /// allowed to contain `unsafe`. Empty when the section is absent, which
     /// keeps a project that never writes `unsafe` behaving exactly as before.
     pub(crate) unsafe_modules: Vec<String>,
+    /// `[run]` (#303): the boot table `kelpc boot` reads. `None` when the
+    /// manifest has no such table, which every build that does not boot ignores.
+    pub(crate) run: Option<RunDecl>,
     /// `[alias]`: one `name = "path"` per line, in the order the manifest
     /// lists them. Each is an alias whose replacement text is the relative
     /// module path.

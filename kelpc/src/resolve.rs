@@ -508,6 +508,9 @@ fn raw_imports(tokens: &[Token]) -> Vec<(String, Span)> {
 mod manifest;
 pub(crate) use manifest::*;
 
+mod manifest_run;
+pub(crate) use manifest_run::*;
+
 /// One `[dependencies]` entry of `coral.toml`. `caps` is `None` for the plain
 /// string form (`name = "fpl/name"`), which carries no extra check, and the
 /// allowed domains for `name = { source = "...", caps = ["ui"] }`.
@@ -675,6 +678,19 @@ pub(crate) use manifest_targets::*;
 /// answering the question "what case does this project write?" from a file it
 /// cannot read would mean inventing an answer. The option's default is the
 /// honest one.
+/// The `[run]` table of the project at `root` (#303), read for `kelpc boot`.
+/// Errors are the message to print: no coral.toml, an unreadable one, a
+/// malformed manifest, or a project with no `[run]` table.
+pub(crate) fn manifest_run(root: &Path) -> Result<RunDecl, String> {
+    let path = root.join(MANIFEST_NAME);
+    let text = fs::read_to_string(&path)
+        .map_err(|_| format!("no {MANIFEST_NAME} in '{}': 'kelpc boot' needs the project's manifest", root.display()))?;
+    let manifest = parse_manifest(&text, &path).map_err(|d| d.message)?;
+    manifest
+        .run
+        .ok_or_else(|| format!("'{}' has no [run] table: 'kelpc boot' boots only a project that names one", path.display()))
+}
+
 pub fn manifest_naming_case(root: &Path) -> Option<usize> {
     let path = root.join(MANIFEST_NAME);
     let text = fs::read_to_string(&path).ok()?;

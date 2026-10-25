@@ -19,3 +19,9 @@ dealloc = "dealloc"
 # byte moves through the `in`/`out` instructions, not through a `Ptr.from_addr`.
 [unsafe]
 modules = ["main", "uart", "fb_platform", "deps/polyp/backends/soft/soft/fb", "deps/polyp/backends/soft/soft/draw"]
+
+# The boot table `kelpc boot` reads (issue #303): the QEMU machine and the serial
+# lines this example must print. It replaces the run.sh that used to sit beside it.
+[run]
+qemu = "x86_64"
+expect = ["end", "done"]

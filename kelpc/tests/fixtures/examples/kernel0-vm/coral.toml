@@ -29,3 +29,9 @@ modules = ["main", "uart", "vm"]
 [caps]
 mmio = ["*"]
 frames = ["*"]
+
+# The boot table `kelpc boot` reads (issue #303): the QEMU machine and the serial
+# lines this example must print. It replaces the run.sh that used to sit beside it.
+[run]
+qemu = "riscv64"
+expect = ["vm: m-mode", "vm: root", "vm: identity", "vm: uart page", "vm: high page", "vm: s-mode", "vm: paging on", "vm: alias ok", "vm: unmap ok", "vm: align refused", "vm: range refused"]

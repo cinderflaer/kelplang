@@ -25,3 +25,10 @@ modules = ["main", "uart", "fb_platform", "deps/polyp/backends/soft/soft/fb", "d
 # registration writes through. The framebuffer is a static, not MMIO, so it needs no grant.
 [caps]
 mmio = ["0x10000000+0x100"]
+
+# The boot table `kelpc boot` reads (issue #303): the QEMU machine and the serial
+# lines this example must print. It replaces the run.sh that used to sit beside it.
+[run]
+qemu = "riscv64"
+ramfb = true
+expect = ["end", "done"]

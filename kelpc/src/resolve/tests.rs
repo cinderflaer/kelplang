@@ -885,3 +885,60 @@ fn a_file_loads_a_default_std_module_only_when_it_writes_the_name() {
     assert!(named("fun f() { val str = 1 }").is_empty());
     assert!(named("fun f() { val math = 1 }").is_empty());
 }
+
+#[test]
+fn no_run_section_means_no_boot_table() {
+    assert!(manifest("name = \"x\"\n").run.is_none());
+}
+
+#[test]
+fn the_run_section_reads_qemu_and_expect() {
+    let m = manifest("name = \"x\"\n[run]\nqemu = \"riscv64\"\nexpect = \"bss clear\"\n");
+    let run = m.run.expect("a [run] table");
+    assert_eq!(run.machine, BootMachine::Riscv64);
+    assert_eq!(run.expect, ["bss clear".to_string()]);
+    assert!(!run.ramfb);
+    assert_eq!(run.smp, 1);
+}
+
+#[test]
+fn the_run_section_expect_takes_an_array_in_order_with_commas_in_strings() {
+    let m = manifest(
+        "[run]\nqemu = \"x86_64\"\nexpect = [\"stack: m-mode\", \"eq same: yes\", \"regex group: 42\"]\n",
+    );
+    let run = m.run.expect("a [run] table");
+    assert_eq!(run.machine, BootMachine::X86_64);
+    assert_eq!(run.expect, ["stack: m-mode", "eq same: yes", "regex group: 42"]);
+    let m = manifest("[run]\nqemu = \"aarch64\"\nexpect = [\"a, b\"]\n");
+    assert_eq!(m.run.expect("a [run] table").expect, ["a, b".to_string()]);
+}
+
+#[test]
+fn the_run_section_reads_ramfb_and_smp() {
+    let m = manifest("[run]\nqemu = \"riscv64\"\nexpect = \"end\"\nramfb = true\nsmp = 2\n");
+    let run = m.run.expect("a [run] table");
+    assert!(run.ramfb);
+    assert_eq!(run.smp, 2);
+}
+
+#[test]
+fn a_malformed_run_section_is_rejected_by_name() {
+    let err = manifest_err("[run]\nexpect = \"end\"\n");
+    assert!(err.message.contains("'[run] qemu' is required"), "{}", err.message);
+    let err = manifest_err("[run]\nqemu = \"riscv64\"\n");
+    assert!(err.message.contains("'[run] expect' is required"), "{}", err.message);
+    let err = manifest_err("[run]\nqemu = \"mips\"\nexpect = \"end\"\n");
+    assert!(err.message.contains("'riscv64', 'aarch64' or 'x86_64'"), "{}", err.message);
+    let err = manifest_err("[run]\nqemu = \"riscv64\"\nexpect = \"end\"\nmachine = \"virt\"\n");
+    assert!(err.message.contains("unknown key 'machine' in coral.toml's [run] section"), "{}", err.message);
+    let err = manifest_err("[run]\nqemu = \"riscv64\"\nexpect = \"end\"\nsmp = 0\n");
+    assert!(err.message.contains("'[run] smp' must be a whole number of at least 1"), "{}", err.message);
+    let err = manifest_err("[run]\nqemu = \"riscv64\"\nexpect = \"end\"\nramfb = yes\n");
+    assert!(err.message.contains("'[run] ramfb' must be true or false"), "{}", err.message);
+    let err = manifest_err("[run]\nqemu = \"riscv64\"\nexpect = [\"end\", end]\n");
+    assert!(err.message.contains("'[run] expect' must be a double-quoted string or a bracketed list"), "{}", err.message);
+    let err = manifest_err("[run]\nqemu = \"riscv64\"\nexpect = \"end\"\nqemu = \"x86_64\"\n");
+    assert!(err.message.contains("'[run] qemu' is set more than once"), "{}", err.message);
+    let err = manifest_err("[[run]]\nqemu = \"riscv64\"\nexpect = \"end\"\n");
+    assert!(err.message.contains("'[[run]]' is not a table"), "{}", err.message);
+}

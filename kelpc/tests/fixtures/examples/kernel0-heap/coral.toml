@@ -24,3 +24,9 @@ modules = ["main", "uart"]
 # from the device's address (`language/capabilities.md` (kelp wiki)).
 [caps]
 mmio = ["0x10000000+0x100"]
+
+# The boot table `kelpc boot` reads (issue #303): the QEMU machine and the serial
+# lines this example must print. It replaces the run.sh that used to sit beside it.
+[run]
+qemu = "riscv64"
+expect = ["heap sum 55", "balanced"]

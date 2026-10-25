@@ -24,3 +24,9 @@ modules = ["uart"]
 # (`language/capabilities.md` (kelp wiki)).
 [caps]
 mmio = ["0x09000000+0x1000"]
+
+# The boot table `kelpc boot` reads (issue #303): the QEMU machine and the serial
+# lines this example must print. It replaces the run.sh that used to sit beside it.
+[run]
+qemu = "aarch64"
+expect = ["hello from kelp (aarch64)"]
