@@ -37,7 +37,9 @@ done
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 proj=$work/project
-cp -R "$project" "$proj"
+# -L copies the file each link in src/ names: the shared example files are links
+# into examples/shared/, and a link copied as a link would dangle in the scratch tree.
+cp -RL "$project" "$proj"
 
 # The 1-based line of the statement the check was inserted into, taken from the
 # same file the compiler read.
