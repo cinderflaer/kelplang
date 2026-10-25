@@ -36,7 +36,7 @@ fun show(label: &str, r: move result.Result<http.Response, http.HttpErr>) {
         Ok(resp) -> print("${label} ok ${resp.status} ${resp.body.as_str()}")
         Err(e) -> {
             when e {
-                Dial(reason) -> print("${label} dial")
+                Dial(_) -> print("${label} dial")
                 Exchange(reason) -> print("${label} exchange ${reason}")
                 Redirects(reason) -> print("${label} redirects ${reason}")
             }

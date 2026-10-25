@@ -40,7 +40,7 @@ impl iter.Iterator for Reader {
         val r = read_high(n)
         return when r {
             Ok(v) -> option.Option.Some(value = v)
-            Err(e) -> option.Option.None
+            Err(_) -> option.Option.None
         }
     }
 }

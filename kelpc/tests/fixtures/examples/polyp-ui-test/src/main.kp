@@ -258,9 +258,9 @@ fun run_damage() {
     val frames_after = p.frame_count()
     print(frames_after - frames_before)
     when tick {
-        Idle(t) -> {}
-        Changed(t) -> {}
-        Quit(t) -> {}
+        Idle(_) -> {}
+        Changed(_) -> {}
+        Quit(_) -> {}
     }
 }
 

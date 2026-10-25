@@ -22,7 +22,7 @@ fun main() {
             when e {
                 Dial(reason) -> print("dial ${str.contains(reason, "not trusted by the system store")}")
                 Exchange(reason) -> print("unexpected exchange ${reason}")
-                Redirects(reason) -> print("unexpected redirects")
+                Redirects(_) -> print("unexpected redirects")
             }
         }
     }

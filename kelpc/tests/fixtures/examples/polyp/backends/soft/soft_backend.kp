@@ -1673,7 +1673,7 @@ fun mut SoftBackend.handle(ev: event.Event) {
                 }
             }
         }
-        Scroll(dx, dy) -> {
+        Scroll(_, dy) -> {
             var dy2 = dy
             if dy2 == 0 {
                 dy2 = 1

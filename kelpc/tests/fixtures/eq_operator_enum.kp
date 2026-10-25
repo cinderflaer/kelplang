@@ -11,7 +11,7 @@ fun K.eq(other: &K) => bool = when self {
         B -> false
     }
     B -> when other {
-        A(b) -> false
+        A(_) -> false
         B -> true
     }
 }

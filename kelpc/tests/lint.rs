@@ -383,3 +383,30 @@ fn a_borrow_written_on_an_owned_parameter_is_reported_and_the_spellings_that_dif
         );
     }
 }
+
+#[test]
+fn an_unused_pattern_binding_is_a_warning_that_names_the_underscore_fix() {
+    let dir = scratch("unused_binding");
+    let file = write(
+        &dir,
+        "unused.kp",
+        "fun f(r: Result<i32, i32>) -> i32 {\n    when r {\n        Ok(v) -> v\n        Err(e) -> 0\n    }\n}\n\nfun main() {}\n",
+    );
+
+    let out = lint(&file);
+    assert!(
+        out.status.success(),
+        "'lint' exits zero for a warning, got {:?}:\n{}",
+        out.status.code(),
+        stderr(&out)
+    );
+    let text = stderr(&out);
+    assert!(
+        text.contains("warning: unused binding 'e' in a pattern: write '_' to ignore the value"),
+        "the warning does not name the binding and the fix:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("{}:4:13", file.display())),
+        "the warning does not locate the binding:\n{text}"
+    );
+}

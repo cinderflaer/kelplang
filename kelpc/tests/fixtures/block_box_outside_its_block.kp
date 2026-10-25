@@ -9,7 +9,7 @@ fun make() => result.Result<i32, BlockError> {
         Node(value = 1)
     } {
         Ok(v) -> v.value
-        Err(e) -> 0
+        Err(_) -> 0
     }
     val late = a.box()?
     Ok(n)

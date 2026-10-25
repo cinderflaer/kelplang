@@ -16,7 +16,7 @@ fun decode_show(text: &str) {
     val r = encoding.base32_decode(text)
     when r {
         Ok(b) -> print(encoding.hex_encode(&b))
-        Err(e) -> print("invalid")
+        Err(_) -> print("invalid")
     }
 }
 

@@ -11,7 +11,7 @@ fun decode_show(text: &str) {
     val r = encoding.base64_decode(text)
     when r {
         Ok(b) -> print(encoding.hex_encode(&b))
-        Err(e) -> print("invalid")
+        Err(_) -> print("invalid")
     }
 }
 
@@ -60,6 +60,6 @@ fun main() {
             print(b.len())
             print(b.get(3000))
         }
-        Err(e) -> print("invalid")
+        Err(_) -> print("invalid")
     }
 }

@@ -131,9 +131,9 @@ fun run_idle() {
     print(b.pixels_written())
     print(b.frame_alloc_count())
     when tick {
-        Idle(t) -> {}
-        Changed(t) -> {}
-        Quit(t) -> {}
+        Idle(_) -> {}
+        Changed(_) -> {}
+        Quit(_) -> {}
     }
 }
 
@@ -279,9 +279,9 @@ fun run_type() {
     print(b.frame_alloc_count())
     print(b.entry_text(eid))
     when tick {
-        Idle(t) -> {}
-        Changed(t) -> {}
-        Quit(t) -> {}
+        Idle(_) -> {}
+        Changed(_) -> {}
+        Quit(_) -> {}
     }
 }
 
@@ -429,8 +429,8 @@ fun run_deadline() {
     print(b.damage_count())
     val second = soft_backend.frame_budgeted(backend = b, platform = p, tree = tr, state = st, view = two_view, update = nop, budget_us = 2500)
     when second {
-        Done(t) -> print("done")
-        Deferred(t) -> print("deferred")
+        Done(_) -> print("done")
+        Deferred(_) -> print("deferred")
     }
     print(p.presented_count())
     print(b.damage_count())
@@ -553,9 +553,9 @@ fun run_steady() {
     print(b3.frame_alloc_count())
     print(b3.caret_of(eid))
     when ctick {
-        Idle(t) -> {}
-        Changed(t) -> {}
-        Quit(t) -> {}
+        Idle(_) -> {}
+        Changed(_) -> {}
+        Quit(_) -> {}
     }
 
     print("scroll")
@@ -581,9 +581,9 @@ fun run_steady() {
     print(b4.pixels_written())
     print(b4.frame_alloc_count())
     when stick {
-        Idle(t) -> {}
-        Changed(t) -> {}
-        Quit(t) -> {}
+        Idle(_) -> {}
+        Changed(_) -> {}
+        Quit(_) -> {}
     }
 }
 
@@ -622,9 +622,9 @@ fun run_allocs() {
     print(b.frame_alloc_count())
     print(b.arena_high_water())
     when tick {
-        Idle(t) -> {}
-        Changed(t) -> {}
-        Quit(t) -> {}
+        Idle(_) -> {}
+        Changed(_) -> {}
+        Quit(_) -> {}
     }
 }
 

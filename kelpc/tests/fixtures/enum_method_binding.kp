@@ -6,7 +6,7 @@ enum Shape {
 }
 
 fun Shape.label() => String = when self {
-    Circle(r) -> "circle"
+    Circle(_) -> "circle"
     Empty -> "empty"
 }
 

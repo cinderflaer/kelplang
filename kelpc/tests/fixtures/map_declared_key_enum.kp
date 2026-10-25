@@ -9,7 +9,7 @@ enum Kind {
 }
 
 fun Kind.hash() => u64 = when self {
-    Ratio(r) -> 1
+    Ratio(_) -> 1
     Nothing -> 0
 }
 
@@ -19,7 +19,7 @@ fun Kind.eq(other: &Kind) => bool = when self {
         Nothing -> false
     }
     Nothing -> when other {
-        Ratio(b) -> false
+        Ratio(_) -> false
         Nothing -> true
     }
 }

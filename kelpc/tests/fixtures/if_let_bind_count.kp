@@ -6,7 +6,7 @@ enum Shape {
 }
 
 fun main() {
-    if let Circle(a, b) = Shape.Circle(r = 1.0) {
+    if let Circle(a, _) = Shape.Circle(r = 1.0) {
         print(a)
     }
 }

@@ -16,7 +16,7 @@ fun err_of(pat: &str) => String {
         val n = str.from_u64(e.offset.to_u64())
         out.push_str(n)
     }
-    if let Ok(re) = r {
+    if let Ok(_) = r {
         out.push_str("compiled")
     }
     return out

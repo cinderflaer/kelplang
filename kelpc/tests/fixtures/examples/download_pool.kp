@@ -95,7 +95,7 @@ fun job_for(worker: int) => Job {
     }
     val port = when str.parse_u64(args.get(2).as_str()) {
         Ok(v) -> v.to_u16()
-        Err(e) -> 0
+        Err(_) -> 0
     }
     return Job(host = args.get(1).clone(), port = port, paths = slice_for(&paths, worker))
 }
@@ -138,7 +138,7 @@ fun main() {
     // The port is checked here; each worker parses its own copy from the command line.
     val port = when str.parse_u64(args.get(2).as_str()) {
         Ok(v) -> v.to_u16()
-        Err(e) -> {
+        Err(_) -> {
             print("bad port")
             process.exit(2)
             0

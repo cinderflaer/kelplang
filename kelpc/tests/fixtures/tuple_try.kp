@@ -31,7 +31,7 @@ fun main() {
 
     val second = go(-1)
     when second {
-        Ok(v) -> print(1)
+        Ok(_) -> print(1)
         Err(e) -> print(e)
     }
 }

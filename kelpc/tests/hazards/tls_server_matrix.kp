@@ -189,7 +189,7 @@ fun server_with_config(cfg: tls.ServerConfig, job: &Job) => String {
                 }
             }
         }
-        Err(e) -> {
+        Err(_) -> {
             line = String.from_str("server: no client")
         }
     }
@@ -202,7 +202,7 @@ fun ca_bytes(path: &str) => Bytes {
         Ok(b) -> {
             return b
         }
-        Err(e) -> {
+        Err(_) -> {
             panic("cannot read the CA")
         }
     }

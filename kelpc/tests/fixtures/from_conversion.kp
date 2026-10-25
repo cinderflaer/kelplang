@@ -25,7 +25,7 @@ impl convert.From<IoErr> for AppErr {
 impl convert.From<ParseErr> for AppErr {
     fun from(value: ParseErr) => AppErr {
         return when value {
-            Letter(ch) -> AppErr.Parse(note = "parse")
+            Letter(_) -> AppErr.Parse(note = "parse")
         }
     }
 }
@@ -65,13 +65,13 @@ fun main() {
     print(result.is_err(r = lift_parse()))
     val a = make<AppErr>(v = 5)
     when a {
-        Io(code, note) -> print(code)
-        Parse(note) -> print(0)
+        Io(code, _) -> print(code)
+        Parse(_) -> print(0)
     }
     val e = AppErr.from(value = IoErr.Bad(code = 9))
     when e {
-        Io(code, note) -> print(code)
-        Parse(note) -> print(0)
+        Io(code, _) -> print(code)
+        Parse(_) -> print(0)
     }
     val e2 = AppErr.from(value = IoErr.Bad(code = 11))
     val n: i32 = e2.into()

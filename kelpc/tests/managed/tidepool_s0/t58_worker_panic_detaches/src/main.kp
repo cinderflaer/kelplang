@@ -24,7 +24,7 @@ fun main() {
     val t = thread.spawn(worker, 300000)
     when thread.join(t) {
         Ok(_) -> print("ok")
-        Err(e) -> print("err")
+        Err(_) -> print("err")
     }
     print(churn(600000))
 }

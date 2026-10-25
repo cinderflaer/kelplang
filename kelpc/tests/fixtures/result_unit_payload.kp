@@ -14,14 +14,14 @@ fun noop() => unit {
 fun main() {
     val r: result.Result<unit, i64> = result.Result.Ok(value = noop())
     when r {
-        Ok(v) -> print("ok")
+        Ok(_) -> print("ok")
         Err(e) -> print(e)
     }
     print(calls)
 
     val e: result.Result<unit, i64> = result.Result.Err(error = 7)
     when e {
-        Ok(v) -> print("ok")
+        Ok(_) -> print("ok")
         Err(err) -> print(err)
     }
 }

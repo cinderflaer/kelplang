@@ -30,7 +30,7 @@ fun main() {
         v.value = 7
     }
     when thread.join(t) {
-        Ok(v) -> print("read")
+        Ok(_) -> print("read")
         Err(e) -> print(e.message)
     }
 }

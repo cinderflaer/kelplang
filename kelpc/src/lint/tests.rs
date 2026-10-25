@@ -154,7 +154,7 @@ fn an_else_if_link_is_not_reported() {
 
 #[test]
 fn an_else_if_let_link_is_not_reported() {
-    let src = "fun f(m: Answer) {\n    if let Yes(n) = m { } else if let No = m { }\n}\n";
+    let src = "fun f(m: Answer) {\n    if let Yes(_n) = m { } else if let No = m { }\n}\n";
     assert!(findings(src, None).expect("lexes").is_empty());
 }
 
@@ -437,4 +437,119 @@ fn the_findings_of_one_file_come_out_in_source_order() {
     starts.sort_unstable();
     assert_eq!(starts, sorted);
     assert_eq!(found[0].span.start, at(src, "read_text"));
+}
+
+/// The unused-binding findings as `(byte offset of the name, name)`.
+fn unused(src: &str) -> Vec<(usize, String)> {
+    findings(src, None)
+        .expect("the fixture lexes")
+        .into_iter()
+        .filter(|f| f.message.starts_with("unused binding"))
+        .map(|f| {
+            let name = src[f.span.start..f.span.end].to_string();
+            (f.span.start, name)
+        })
+        .collect()
+}
+
+#[test]
+fn an_unused_binding_in_a_when_arm_is_reported_at_the_name() {
+    let src = "fun f(r: Result<i32, i32>) -> i32 {\n    when r {\n        Ok(v) -> v\n        Err(e) -> 0\n    }\n}\n";
+    assert_eq!(unused(src), vec![(at(src, "e) -> 0"), "e".to_string())]);
+}
+
+#[test]
+fn a_binding_used_in_its_own_arm_is_not_reported() {
+    let src = "fun f(r: Result<i32, i32>) -> i32 {\n    when r {\n        Ok(v) -> v\n        Err(e) -> e\n    }\n}\n";
+    assert_eq!(unused(src), vec![]);
+}
+
+#[test]
+fn a_name_starting_with_an_underscore_is_never_reported() {
+    let src = "fun f(r: Result<i32, i32>) -> i32 {\n    when r {\n        Ok(_v) -> 1\n        Err(_) -> 0\n    }\n}\n";
+    assert_eq!(unused(src), vec![]);
+}
+
+#[test]
+fn a_binding_of_an_if_let_is_reported_when_the_block_does_not_read_it() {
+    let src = "fun f(o: Option<i32>) -> i32 {\n    if let Some(x) = o {\n        1\n    } else {\n        2\n    }\n}\n";
+    assert_eq!(unused(src), vec![(at(src, "x) = o"), "x".to_string())]);
+}
+
+#[test]
+fn a_binding_of_an_if_let_that_the_block_reads_is_not_reported() {
+    let src = "fun f(o: Option<i32>) -> i32 {\n    if let Some(x) = o {\n        x\n    } else {\n        0\n    }\n}\n";
+    assert_eq!(unused(src), vec![]);
+}
+
+#[test]
+fn a_use_in_another_arm_does_not_count_for_this_arm() {
+    // The second `e` is the second arm's own binding and reads it; the first
+    // arm's `e` is still unread.
+    let src = "fun f(r: Result<i32, i32>) -> i32 {\n    when r {\n        Err(e) -> 0\n        Ok(e) -> e\n    }\n}\n";
+    assert_eq!(unused(src), vec![(at(src, "e) -> 0"), "e".to_string())]);
+}
+
+#[test]
+fn a_use_inside_a_string_interpolation_counts() {
+    let src = "fun f(r: Result<i32, i32>) -> String {\n    when r {\n        Err(e) -> \"bad $e\"\n        Ok(_v) -> \"ok\"\n    }\n}\n";
+    assert_eq!(unused(src), vec![]);
+}
+
+#[test]
+fn a_use_in_a_block_body_counts_across_its_lines() {
+    let src = "fun f(r: Result<i32, i32>) -> i32 {\n    when r {\n        Err(e) -> {\n            val n = 1\n            n + e\n        }\n        Ok(v) -> v\n    }\n}\n";
+    assert_eq!(unused(src), vec![]);
+}
+
+#[test]
+fn a_body_continued_on_the_next_line_counts_as_one_arm() {
+    let src = "fun f(r: Result<i32, i32>) -> i32 {\n    when r {\n        Err(e) -> 0 +\n            e\n        Ok(v) -> v\n    }\n}\n";
+    assert_eq!(unused(src), vec![]);
+}
+
+#[test]
+fn arms_on_one_line_are_split_by_their_commas() {
+    let src = "fun f(r: Result<i32, i32>) -> i32 {\n    when r { Ok(v) -> v, Err(e) -> 0 }\n}\n";
+    assert_eq!(unused(src), vec![(at(src, "e) -> 0"), "e".to_string())]);
+}
+
+#[test]
+fn the_finding_says_to_write_an_underscore() {
+    let src = "fun f(r: Result<i32, i32>) -> i32 {\n    when r {\n        Err(e) -> 0\n        Ok(v) -> v\n    }\n}\n";
+    let found = findings(src, None).expect("the fixture lexes");
+    let message = &found.iter().find(|f| f.message.starts_with("unused binding")).expect("a finding").message;
+    assert_eq!(
+        message,
+        "unused binding 'e' in a pattern: write '_' to ignore the value"
+    );
+}
+
+#[test]
+fn a_generic_fun_header_is_not_a_pattern_arm() {
+    // `=>` after a parameter list is a return type, even when the name has
+    // type arguments in front of the list.
+    let src = "fun srv_err<T>(code: i32, text: &str) => Result<T, E> {\n    Err(code)\n}\n";
+    assert_eq!(unused(src), vec![]);
+}
+
+#[test]
+fn a_generic_header_with_bounds_is_not_a_pattern_arm() {
+    let src = "pub fun map<I: Iterator, U>(it: move I, f: move closure fun(&I::Item) => U) => Map<I, U> {\n    return Map(inner = it, f = f)\n}\n";
+    assert_eq!(unused(src), vec![]);
+}
+
+#[test]
+fn a_select_case_is_a_call_and_not_a_pattern() {
+    // `send(tx, x) -> 1` is a channel operation: `tx` and `x` are read.
+    let src = "fun f(tx: Chan<i32>, x: i32) -> i32 {\n    select {\n        send(tx, x) -> 1,\n        else -> 0\n    }\n}\n";
+    assert_eq!(unused(src), vec![]);
+}
+
+#[test]
+fn a_let_else_is_not_an_if_let_block() {
+    // The else block does not see the bindings, so the unread `user` here is
+    // not reported from its block (the rule does not check let-else).
+    let src = "fun f(id: i32) -> Result<i32, String> {\n    let Some(user) = find(id) else { return Err(\"missing\") }\n    return Ok(0)\n}\n";
+    assert_eq!(unused(src), vec![]);
 }

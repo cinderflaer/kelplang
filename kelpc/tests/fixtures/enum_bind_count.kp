@@ -4,7 +4,7 @@ enum Shape {
 }
 
 fun area(s: &Shape) => f64 = when s {
-    Circle(r, x) -> r
+    Circle(r, _) -> r
     Rect(w, h) -> w * h
 }
 

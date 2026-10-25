@@ -10,7 +10,7 @@
 //! reason: `lint` lexes a file and reads nothing else, so a file that does not
 //! parse, or that names an alias only its project can resolve, is still linted.
 //!
-//! There are four rules:
+//! There are five rules:
 //!
 //! - the **comment run** (roadmap item G-5): two or more consecutive `//`
 //!   lines with no blank line between them.
@@ -22,6 +22,8 @@
 //!   [`redundant_borrow_params_in`].
 //! - the **redundant comparison** (`== true`, and `.len() == 0` where
 //!   `.is_empty()` says it): a warning, never a failure.
+//! - the **unused pattern binding** (`Err(e) -> 0`, where `e` is never read in
+//!   its arm): a warning that names the fix, `_`. See [`unused_bindings_in`].
 //!
 //! ## The comment run
 //!
@@ -155,6 +157,7 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
         .collect();
     all.extend(redundant_comparisons_in(&tokens));
     all.extend(redundant_borrow_params_in(&tokens));
+    all.extend(unused_bindings_in(&tokens));
     all.extend(crate::doc::orphan_findings(src, &tokens));
     if let Some(naming) = naming {
         all.extend(naming_findings_in(&tokens, naming));
@@ -293,6 +296,214 @@ fn redundant_comparisons_in(tokens: &[Token]) -> Vec<Finding> {
         }
     }
     out
+}
+
+/// A name a `when` arm or an `if let` binds, and that its arm (or its block)
+/// never reads. The fix is `_`, which the language spells for "I do not read
+/// this" (`Err(_) -> 0`), so the finding names it.
+///
+/// The scope is the arm's body or the `if let`'s then-block, and a name counts
+/// as read when it appears there as a plain identifier (a string interpolation
+/// `"$e"` is one, see the lexer's template tokens). Two choices keep the rule
+/// on the safe side:
+///
+/// - a name that starts with `_` is never reported, and neither is a name that
+///   is not lowercase (`Some` and `Err` are variants, not bindings);
+/// - the scope ends where the next arm starts, so a name read by a *later*
+///   arm does not count for this one. A body continued on the next line
+///   (`Err(e) -> 0 +` then `e`) is one arm, because the next line only ends the
+///   arm when it begins an arm head.
+///
+/// Shadowing can only hide a finding (a nested pattern that reuses the name
+/// counts as a read), never invent one. `val`, `var` and `for` bindings are
+/// not checked here. Warning only.
+fn unused_bindings_in(tokens: &[Token]) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for open in 0..tokens.len() {
+        if !matches!(tokens[open].kind, TokenKind::LParen) {
+            continue;
+        }
+        // `pattern_binds` is the one place that says which parenthesised lists
+        // are patterns, so an empty answer means "not a pattern, or no names".
+        if pattern_binds(tokens, open).is_empty() {
+            continue;
+        }
+        // A parameter list (`fun f<T>(text: &str) => ...`, a `fun` type) names
+        // types and parameters, not bindings, and its `=>` looks like an arm.
+        if is_parameter_list(tokens, open) {
+            continue;
+        }
+        // A pattern's head is a variant, and variants are written in PascalCase.
+        // A lowercase head is a call, so `send(tx, x) -> 1` (a `select` case)
+        // is not a pattern: its names are read, not bound. A tuple arm has no
+        // head and is left alone.
+        let head_is_variant = open > 0
+            && matches!(&tokens[open - 1].kind, TokenKind::Ident(h) if h.starts_with(char::is_uppercase));
+        if !head_is_variant {
+            continue;
+        }
+        let Some(close) = matching_paren(tokens, open) else {
+            continue;
+        };
+        let scope = match tokens.get(close + 1).map(|t| &t.kind) {
+            Some(TokenKind::Arrow) => {
+                let start = close + 2;
+                (start, arm_end(tokens, start))
+            }
+            Some(TokenKind::Eq) => match if_let_block(tokens, close + 2) {
+                Some(block) => block,
+                None => continue,
+            },
+            _ => continue,
+        };
+        for k in open + 1..close {
+            let TokenKind::Ident(name) = &tokens[k].kind else {
+                continue;
+            };
+            if !is_unused_candidate(tokens, k, name) || read_in(tokens, scope, name) {
+                continue;
+            }
+            out.push(Finding {
+                span: tokens[k].span,
+                message: format!(
+                    "unused binding '{name}' in a pattern: write '_' to ignore the value"
+                ),
+            });
+        }
+    }
+    out
+}
+
+/// Whether the `(` at `open` opens a `fun` or `closure` parameter list. A
+/// header can hold a receiver's `Type.`, type arguments with bounds
+/// (`fun map<I: Iterator, U>(`) and nested `fun` types, so the walk back goes
+/// over everything up to the start of the statement: a line break, a brace,
+/// an `=`, an `=>` or a `)`. Reaching a `fun` or `closure` keyword first means
+/// the list is a parameter list. A pattern after a `{`, a newline or `=` is
+/// never mistaken for one.
+fn is_parameter_list(tokens: &[Token], open: usize) -> bool {
+    let mut i = open;
+    while i > 0 {
+        i -= 1;
+        match tokens[i].kind {
+            TokenKind::Fun | TokenKind::Closure => return true,
+            TokenKind::Newline
+            | TokenKind::LBrace
+            | TokenKind::RBrace
+            | TokenKind::RParen
+            | TokenKind::Eq
+            | TokenKind::Arrow
+            | TokenKind::Eof => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether the identifier at `k`, a name inside a pattern's parentheses, is a
+/// binding the unused rule may report: a lowercase name with no leading
+/// underscore, that is not a path part (`.`) and not a call (`(`).
+fn is_unused_candidate(tokens: &[Token], k: usize, name: &str) -> bool {
+    let starts_lower = name.starts_with(char::is_lowercase);
+    let after_dot = k > 0 && matches!(tokens[k - 1].kind, TokenKind::Dot);
+    let called = matches!(tokens.get(k + 1).map(|t| &t.kind), Some(TokenKind::LParen | TokenKind::Dot));
+    starts_lower && !after_dot && !called
+}
+
+/// Whether `name` is read as a plain identifier inside the token range
+/// `scope` (`start` inclusive, `end` exclusive). A field path after a `.` is
+/// not a read of a local of that name.
+fn read_in(tokens: &[Token], (start, end): (usize, usize), name: &str) -> bool {
+    (start..end.min(tokens.len())).any(|k| {
+        matches!(&tokens[k].kind, TokenKind::Ident(n) if n == name)
+            && !(k > 0 && matches!(tokens[k - 1].kind, TokenKind::Dot))
+    })
+}
+
+/// The index just past the body of the `when` arm whose body starts at
+/// `start`. The body ends at a comma or a closing bracket at its own depth, at
+/// the next line that begins an arm head, or at the end of the file.
+fn arm_end(tokens: &[Token], start: usize) -> usize {
+    let mut depth = 0usize;
+    let mut k = start;
+    while k < tokens.len() {
+        match tokens[k].kind {
+            TokenKind::LParen | TokenKind::LBrace | TokenKind::LBracket => depth += 1,
+            TokenKind::RParen | TokenKind::RBrace | TokenKind::RBracket => {
+                if depth == 0 {
+                    return k;
+                }
+                depth -= 1;
+            }
+            TokenKind::Comma if depth == 0 => return k,
+            TokenKind::Newline if depth == 0 && starts_an_arm_head(tokens, k + 1) => return k,
+            TokenKind::Eof => return k,
+            _ => {}
+        }
+        k += 1;
+    }
+    tokens.len()
+}
+
+/// Whether the tokens from `at` (after any newlines) open an arm: `else ->`, or
+/// a variant or name followed by `->`, or by a payload list and then `->`.
+fn starts_an_arm_head(tokens: &[Token], at: usize) -> bool {
+    let mut j = at;
+    while matches!(tokens.get(j).map(|t| &t.kind), Some(TokenKind::Newline)) {
+        j += 1;
+    }
+    let names_an_arm = matches!(
+        tokens.get(j).map(|t| &t.kind),
+        Some(TokenKind::Ident(_) | TokenKind::Else)
+    );
+    if !names_an_arm {
+        return false;
+    }
+    match tokens.get(j + 1).map(|t| &t.kind) {
+        Some(TokenKind::Arrow) => true,
+        Some(TokenKind::LParen) => matches!(
+            matching_paren(tokens, j + 1).and_then(|c| tokens.get(c + 1)).map(|t| &t.kind),
+            Some(TokenKind::Arrow)
+        ),
+        _ => false,
+    }
+}
+
+/// The then-block of an `if let` whose scrutinee starts at `from`, as the
+/// token range from its `{` to just past its matching `}`. A brace inside the
+/// scrutinee's parentheses does not start the block.
+fn if_let_block(tokens: &[Token], from: usize) -> Option<(usize, usize)> {
+    let mut parens = 0usize;
+    for k in from..tokens.len() {
+        match tokens[k].kind {
+            TokenKind::LParen | TokenKind::LBracket => parens += 1,
+            TokenKind::RParen | TokenKind::RBracket => parens = parens.saturating_sub(1),
+            TokenKind::LBrace if parens == 0 => {
+                // `let Some(x) = e else { ... }` is a let-else: its block is the
+                // failure branch, which does not see the bindings, and the
+                // bindings are read later in the enclosing block. Not checked.
+                if k > 0 && matches!(tokens[k - 1].kind, TokenKind::Else) {
+                    return None;
+                }
+                let mut depth = 0usize;
+                for (j, token) in tokens.iter().enumerate().skip(k) {
+                    match token.kind {
+                        TokenKind::LBrace => depth += 1,
+                        TokenKind::RBrace => {
+                            depth -= 1;
+                            if depth == 0 {
+                                return Some((k, j + 1));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                return None;
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The naming case a project asks for, as `coral.toml`'s `naming_case`

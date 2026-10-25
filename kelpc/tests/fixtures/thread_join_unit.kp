@@ -14,7 +14,7 @@ fun worker(x: move i64) {
 fun main() {
     val h: Thread<unit> = thread.spawn(worker, 1)
     when thread.join(h) {
-        Ok(v) -> print("joined")
+        Ok(_) -> print("joined")
         Err(e) -> print(e.message)
     }
 }
