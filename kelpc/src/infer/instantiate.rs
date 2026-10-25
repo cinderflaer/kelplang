@@ -413,7 +413,7 @@ pub(crate) fn instantiate_function(
         })?,
         None => Ty::Unit,
     };
-    let sig = FnSig { params, ret };
+    let sig = FnSig { defaults: Vec::new(), params, ret };
     let mut st = ctx.fns.instances.borrow_mut();
     if st.sigs.len() >= MAX_FUNCTION_INSTANTIATIONS {
         return Err(TypeError {

@@ -1,0 +1,7 @@
+// A fun literal takes no default value (issue #296): a function value is
+// called with every argument.
+
+fun main() {
+    val f = fun(n: int = 1) => int = n
+    print(f(2))
+}

@@ -1,0 +1,10 @@
+// A receiver method takes no default value yet (issue #296): only a plain fun.
+
+datac Counter(val step: int)
+
+fun Counter.bump(by: int = 1) => int = step + by
+
+fun main() {
+    var c = Counter(step = 4)
+    print(c.bump())
+}

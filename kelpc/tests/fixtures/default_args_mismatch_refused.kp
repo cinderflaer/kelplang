@@ -1,0 +1,7 @@
+// A default is checked against its parameter's type at every call (issue #296).
+
+fun scale(n: int, factor: int = "three") => int = n * 3
+
+fun main() {
+    print(scale(2))
+}

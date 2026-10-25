@@ -1,0 +1,7 @@
+// A generic function takes no default value yet (issue #296).
+
+fun keep<t>(x: t, n: int = 1) => t = x
+
+fun main() {
+    print(keep(2))
+}

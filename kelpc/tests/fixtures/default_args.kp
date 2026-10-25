@@ -1,0 +1,25 @@
+// A parameter may take a default value (issue #296). A call may leave out a
+// trailing argument that has a default, or name the later ones and leave out a
+// middle one. The written argument always wins over the default.
+
+impl "std/fmt"
+
+fun scale(n: int, factor: int = 3) => int = n * factor
+
+fun pick(a: int, b: int = 0, c: str = "none") => String ="${a}/${b}/${c}"
+
+fun offset(by: f64 = -1.5) => bool = by < 0.0
+
+fun main() {
+    print(scale(2))
+    print(scale(2, 10))
+    print(scale(2, factor = 5))
+    print(pick(1))
+    print(pick(1, c = "some"))
+    print(pick(1, 7))
+    print(pick(1, 7, "x"))
+    print(offset())
+    print(offset(2.0))
+    print(fmt.float(3.14159))
+    print(fmt.float(3.14159, 4))
+}

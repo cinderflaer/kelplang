@@ -721,6 +721,9 @@ pub(crate) use http_helpers::*;
 #[path = "compile_and_run/eval_order.rs"]
 mod eval_order;
 
+#[path = "compile_and_run/default_args.rs"]
+mod default_args;
+
 // Gitea #223: `()` and `Result<(), E>` are spelled as the issue asks. The
 // success arm is built from `()`, matched, passed through `?`, and the `Err`
 // arm still carries its reason.

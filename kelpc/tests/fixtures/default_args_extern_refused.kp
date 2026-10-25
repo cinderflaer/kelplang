@@ -1,0 +1,8 @@
+// An extern fun takes no default value (issue #296): its native symbol gets
+// every argument.
+
+extern fun native_scale(n: int, factor: int = 3) => int
+
+fun main() {
+    print(native_scale(2))
+}

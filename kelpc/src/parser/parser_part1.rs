@@ -84,6 +84,7 @@ impl Parser {
                     name,
                     ty: TypeExpr::named("", span),
                     mode: ParamMode::Borrow,
+                    default: None,
                 });
                 if self.check(&TokenKind::Comma) {
                     self.advance();

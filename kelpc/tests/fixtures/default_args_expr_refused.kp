@@ -1,0 +1,7 @@
+// A default value is one literal, not an expression (issue #296).
+
+fun scale(n: int, factor: int = 1 + 2) => int = n * factor
+
+fun main() {
+    print(scale(2))
+}

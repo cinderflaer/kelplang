@@ -1,0 +1,7 @@
+// A default value cannot name another parameter (issue #296): it is a literal.
+
+fun pair(a: int, b: int = a) => int = a + b
+
+fun main() {
+    print(pair(2))
+}

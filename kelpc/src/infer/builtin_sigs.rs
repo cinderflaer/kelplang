@@ -97,22 +97,22 @@ pub(crate) fn ptr_sig(key: &str, elem: &Ty, cast_to: Option<&Ty>, span: Span) ->
     let ptr = Ty::Ptr(Box::new(elem.clone()));
     let p = |n: &str, t: Ty| (n.to_string(), t);
     Ok(Some(match key {
-        "Ptr#addr" => FnSig { params: vec![p("self", ptr)], ret: Ty::Usize },
-        "Ptr#is_null" => FnSig { params: vec![p("self", ptr)], ret: Ty::Bool },
-        "Ptr#offset" | "Ptr#byte_offset" => FnSig {
+        "Ptr#addr" => FnSig { defaults: Vec::new(), params: vec![p("self", ptr)], ret: Ty::Usize },
+        "Ptr#is_null" => FnSig { defaults: Vec::new(), params: vec![p("self", ptr)], ret: Ty::Bool },
+        "Ptr#offset" | "Ptr#byte_offset" => FnSig { defaults: Vec::new(),
             params: vec![p("self", ptr.clone()), p("n", Ty::Isize)],
             ret: ptr,
         },
         "Ptr#cast" => {
             let target = cast_to.expect("Ptr.cast resolves its target before its signature");
-            FnSig { params: vec![p("self", ptr)], ret: Ty::Ptr(Box::new(target.clone())) }
+            FnSig { defaults: Vec::new(), params: vec![p("self", ptr)], ret: Ty::Ptr(Box::new(target.clone())) }
         }
-        "Ptr#free" => FnSig { params: vec![p("self", ptr)], ret: Ty::Unit },
+        "Ptr#free" => FnSig { defaults: Vec::new(), params: vec![p("self", ptr)], ret: Ty::Unit },
         // `Ptr.free_count(count)` (freestanding only): the sized free. The
         // count is the one `Ptr.alloc`/`try_alloc` was called with, so the
         // project's `dealloc` gets the byte size and alignment the block was
         // allocated with.
-        "Ptr#free_count" => FnSig {
+        "Ptr#free_count" => FnSig { defaults: Vec::new(),
             params: vec![p("self", ptr), p("count", Ty::Usize)],
             ret: Ty::Unit,
         },
@@ -130,9 +130,9 @@ pub(crate) fn ptr_sig(key: &str, elem: &Ty, cast_to: Option<&Ty>, span: Span) ->
                     span,
                 });
             }
-            FnSig { params: vec![p("self", ptr)], ret: elem.clone() }
+            FnSig { defaults: Vec::new(), params: vec![p("self", ptr)], ret: elem.clone() }
         }
-        "Ptr#write" | "Ptr#write_volatile" | "Ptr#write_unaligned" => FnSig {
+        "Ptr#write" | "Ptr#write_volatile" | "Ptr#write_unaligned" => FnSig { defaults: Vec::new(),
             params: vec![p("self", ptr), p("value", elem.clone())],
             ret: Ty::Unit,
         },
@@ -151,39 +151,39 @@ pub(crate) fn list_sig(key: &str, elem: &Ty, sortable: bool, clonable: bool) -> 
     let p = |n: &str, t: Ty| (n.to_string(), t);
     let elem_ref = Ty::Ref { mutable: false, inner: Box::new(elem.clone()) };
     Some(match key {
-        "List#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Int },
-        "List#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
-        "List#push" => FnSig {
+        "List#len" => FnSig { defaults: Vec::new(), params: vec![p("self", shared)], ret: Ty::Int },
+        "List#is_empty" => FnSig { defaults: Vec::new(), params: vec![p("self", shared)], ret: Ty::Bool },
+        "List#push" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive), p("v", elem.clone())],
             ret: Ty::Unit,
         },
-        "List#get" => FnSig {
+        "List#get" => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared), p("i", Ty::Int)],
             ret: if elem.is_copy() { elem.clone() } else { elem_ref },
         },
-        "List#set" => FnSig {
+        "List#set" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive), p("i", Ty::Int), p("v", elem.clone())],
             ret: Ty::Unit,
         },
-        "List#pop" => FnSig {
+        "List#pop" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive)],
             ret: elem.clone(),
         },
-        "List#clear" => FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit },
+        "List#clear" => FnSig { defaults: Vec::new(), params: vec![p("self", exclusive)], ret: Ty::Unit },
         // S1's additions. Three of them are only meaningful for an element
         // type that has an order / equality / a clone, so an unsupported
         // element type falls through to the "no method" diagnostic rather
         // than getting a signature codegen cannot emit (see
         // `types::list_sortable_elem` and friends).
         "List#sort" if sortable => {
-            FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit }
+            FnSig { defaults: Vec::new(), params: vec![p("self", exclusive)], ret: Ty::Unit }
         }
-        "List#reverse" => FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit },
-        "List#contains" if crate::types::list_comparable_elem(elem) => FnSig {
+        "List#reverse" => FnSig { defaults: Vec::new(), params: vec![p("self", exclusive)], ret: Ty::Unit },
+        "List#contains" if crate::types::list_comparable_elem(elem) => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared), p("v", contains_param(elem))],
             ret: Ty::Bool,
         },
-        "List#slice" if clonable => FnSig {
+        "List#slice" if clonable => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared), p("from", Ty::Int), p("to", Ty::Int)],
             ret: list.clone(),
         },
@@ -192,13 +192,13 @@ pub(crate) fn list_sig(key: &str, elem: &Ty, sortable: bool, clonable: bool) -> 
         // element that cannot be copied out gets the "no method" diagnostic
         // rather than a signature codegen has no body for.
         "List#clone" if clonable => {
-            FnSig { params: vec![p("self", shared)], ret: list.clone() }
+            FnSig { defaults: Vec::new(), params: vec![p("self", shared)], ret: list.clone() }
         }
-        "List#insert" => FnSig {
+        "List#insert" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive), p("i", Ty::Int), p("v", elem.clone())],
             ret: Ty::Unit,
         },
-        "List#remove" => FnSig {
+        "List#remove" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive), p("i", Ty::Int)],
             ret: elem.clone(),
         },
@@ -229,34 +229,34 @@ pub(crate) fn map_sig(key: &str, map_key: &Ty, value: &Ty, clonable: bool) -> Op
     // key is passed by value.
     let key_param = map_key_param(map_key);
     Some(match key {
-        "Map#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Int },
-        "Map#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
-        "Map#has" => FnSig {
+        "Map#len" => FnSig { defaults: Vec::new(), params: vec![p("self", shared)], ret: Ty::Int },
+        "Map#is_empty" => FnSig { defaults: Vec::new(), params: vec![p("self", shared)], ret: Ty::Bool },
+        "Map#has" => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared), p("key", key_param.clone())],
             ret: Ty::Bool,
         },
-        "Map#get" => FnSig {
+        "Map#get" => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared), p("key", key_param.clone())],
             ret: if value.is_copy() { value.clone() } else { value_ref },
         },
-        "Map#get_or" if clonable => FnSig {
+        "Map#get_or" if clonable => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared), p("key", key_param.clone()), p("fallback", value.clone())],
             ret: value.clone(),
         },
-        "Map#insert" => FnSig {
+        "Map#insert" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive), p("key", key_param.clone()), p("v", value.clone())],
             ret: Ty::Unit,
         },
-        "Map#remove" => FnSig {
+        "Map#remove" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive), p("key", key_param.clone())],
             ret: value.clone(),
         },
-        "Map#clear" => FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit },
-        "Map#keys" => FnSig {
+        "Map#clear" => FnSig { defaults: Vec::new(), params: vec![p("self", exclusive)], ret: Ty::Unit },
+        "Map#keys" => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared)],
             ret: Ty::List(Box::new(map_key.clone())),
         },
-        "Map#values" if clonable => FnSig {
+        "Map#values" if clonable => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared)],
             ret: Ty::List(Box::new(value.clone())),
         },
@@ -337,7 +337,7 @@ pub fn builtin_signatures() -> Vec<BuiltinSig> {
 
 /// The signature a builtin key resolves to, if it is one.
 pub(crate) fn builtin_sig(key: &str) -> Option<FnSig> {
-    BUILTINS.get(key).map(|b| FnSig {
+    BUILTINS.get(key).map(|b| FnSig { defaults: Vec::new(),
         params: b.params.clone(),
         ret: b.ret.clone(),
     })

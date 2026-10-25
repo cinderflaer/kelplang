@@ -695,6 +695,11 @@ pub fn box_dyn_drop_fn(trait_name: &str) -> String {
 pub struct FnSig {
     pub params: Vec<(String, Ty)>,
     pub ret: Ty,
+    /// The default value of each parameter, by position (issue #296). Empty
+    /// when no parameter has one, and a missing entry means no default. Only a
+    /// plain top-level `fun` carries any; a call that leaves an argument out
+    /// takes its default from here, checked at that call.
+    pub defaults: Vec<Option<crate::ast::Expr>>,
 }
 
 /// One `datac` field: `val`/`var` name: Type.

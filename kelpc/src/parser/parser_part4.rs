@@ -23,7 +23,7 @@ impl Parser {
                 variadic = true;
                 break;
             }
-            let (pname, _) = self.expect_ident()?;
+            let (pname, pspan) = self.expect_ident()?;
             self.expect(TokenKind::Colon, "':'")?;
             // `mut T` requests an exclusive borrow and `move T` takes
             // ownership (A-4); this is the *only* spelling for either in
@@ -32,10 +32,32 @@ impl Parser {
             // keyword token), and `&`/`mut` stay expression-only.
             let mode = self.parse_param_mode()?;
             let ty = self.parse_type()?;
+            let default = if self.check(&TokenKind::Eq) {
+                self.advance();
+                Some(self.parse_default_literal(&pname)?)
+            } else {
+                None
+            };
+            // A call that leaves an argument out must be able to tell which
+            // one, so a parameter without a default cannot follow one with it
+            // (issue #296).
+            if default.is_none() {
+                if let Some(earlier) = params.iter().rev().find(|p: &&Param| p.default.is_some()) {
+                    return Err(ParseError {
+                        help: Some(format!("move '{pname}' before '{}', or give '{pname}' a default too", earlier.name)),
+                        message: format!(
+                            "parameter '{pname}' has no default, and it comes after '{}', which has one: a parameter with a default must come after every parameter without a default",
+                            earlier.name
+                        ),
+                        span: pspan,
+                    });
+                }
+            }
             params.push(Param {
                 name: pname,
                 ty,
                 mode,
+                default,
             });
             if self.check(&TokenKind::Comma) {
                 self.advance();
@@ -61,6 +83,13 @@ impl Parser {
     pub(crate) fn parse_fn_literal_inner(&mut self) -> PResult<Expr> {
         let start = self.expect(TokenKind::Fun, "'fun'")?.span;
         let (params, variadic) = self.parse_params()?;
+        if let Some(p) = params.iter().find(|p| p.default.is_some()) {
+            return Err(ParseError {
+                help: Some("call the function with every argument".to_string()),
+                message: format!("a fun literal takes no default value, and parameter '{}' has one", p.name),
+                span: start,
+            });
+        }
         if variadic {
             return Err(ParseError {
                 help: None,
@@ -93,6 +122,28 @@ impl Parser {
             body: Box::new(body),
             span: start.to(end),
         })
+    }
+
+    /// The value after `name: T =` (issue #296). A default is one literal, not
+    /// an expression: an expression would be checked in the caller's scope, and
+    /// a name in it (another parameter, or a caller's own local) would then
+    /// mean something different at each call. A literal names nothing.
+    pub(crate) fn parse_default_literal(&mut self, pname: &str) -> PResult<Expr> {
+        let start = self.peek().span;
+        let e = self.parse_expr()?;
+        let is_literal = match &e {
+            Expr::IntLit(..) | Expr::FloatLit(..) | Expr::StringLit(..) | Expr::CharLit(..) | Expr::ByteLit(..) | Expr::BoolLit(..) => true,
+            Expr::Unary { op: UnOp::Neg, expr, .. } => matches!(**expr, Expr::IntLit(..) | Expr::FloatLit(..)),
+            _ => false,
+        };
+        if !is_literal {
+            return Err(ParseError {
+                help: Some(format!("write the value itself, for example '{pname}: int = 3', and compute the rest inside the function")),
+                message: format!("the default value of '{pname}' must be a literal (a number, string, character, byte or bool), not an expression"),
+                span: start,
+            });
+        }
+        Ok(e)
     }
 
     /// The `mut`/`move` qualifier before a parameter's type, in either

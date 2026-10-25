@@ -24,8 +24,9 @@ fun int(n: i64) => String = str.from_i64(n)
 /// The decimal text of an unsigned integer.
 fun uint(n: u64) => String = str.from_u64(n)
 
-/// `x` in decimal with exactly `decimals` digits after the point.
-fun float(x: f64, decimals: i32) => String = str.from_f64(x, decimals)
+/// `x` in decimal with exactly `decimals` digits after the point, two when
+/// `decimals` is left out (issue #296).
+fun float(x: f64, decimals: i32 = 2) => String = str.from_f64(x, decimals)
 
 /// The hexadecimal text of `n`. Lowercase, no `0x` prefix.
 extern fun hex(n: u64) => String = "hex_raw"

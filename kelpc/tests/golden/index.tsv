@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1244 ran=608 c_refused=589 hosted_refused=9 excluded=38
+# counts candidates=1253 ran=608 c_refused=589 hosted_refused=9 excluded=47
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -1245,3 +1245,12 @@ fixture_expr_body_borrow_needs_type	c-refused		error: expression body of 'first'
 fixture_expr_body_method_infers	ran	exit 0		68ca3fba3b7e864770cb61aeb306d4bd4354b68ab4dd38450860c5d823e42a53
 fixture_expr_body_method_recursive_needs_type	c-refused		error: recursive expression-bodied function 'shrink' requires a '=> T' return type	
 fixture_expr_body_pub_private_type	c-refused		error: 'Hidden' is private, so it cannot be the inferred return type of the public function 'make': make 'Hidden' public, or write '=> T' with a public type	
+fixture_default_args	excluded		added with issue 296 after the C oracle was removed; its behaviour is checked by the default_args tests in compile_and_run	
+fixture_default_args_expr_refused	excluded		added with issue 296 after the C oracle was removed; its behaviour is checked by the default_args tests in compile_and_run	
+fixture_default_args_extern_refused	excluded		added with issue 296 after the C oracle was removed; its behaviour is checked by the default_args tests in compile_and_run	
+fixture_default_args_generic_refused	excluded		added with issue 296 after the C oracle was removed; its behaviour is checked by the default_args tests in compile_and_run	
+fixture_default_args_literal_fn_refused	excluded		added with issue 296 after the C oracle was removed; its behaviour is checked by the default_args tests in compile_and_run	
+fixture_default_args_method_refused	excluded		added with issue 296 after the C oracle was removed; its behaviour is checked by the default_args tests in compile_and_run	
+fixture_default_args_mismatch_refused	excluded		added with issue 296 after the C oracle was removed; its behaviour is checked by the default_args tests in compile_and_run	
+fixture_default_args_order_refused	excluded		added with issue 296 after the C oracle was removed; its behaviour is checked by the default_args tests in compile_and_run	
+fixture_default_args_param_ref_refused	excluded		added with issue 296 after the C oracle was removed; its behaviour is checked by the default_args tests in compile_and_run	

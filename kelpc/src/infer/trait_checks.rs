@@ -377,7 +377,7 @@ pub(crate) fn resolve_trait_method_sig(
         Some(t) => scope.resolve_return(t)?,
         None => Ty::Unit,
     };
-    Ok(FnSig { params, ret })
+    Ok(FnSig { defaults: Vec::new(), params, ret })
 }
 
 /// Coherence (MISSING-Ve8Nc step 4): two impls of one trait that could both

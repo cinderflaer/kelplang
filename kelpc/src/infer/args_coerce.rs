@@ -16,6 +16,44 @@ pub(crate) fn match_args(
     Ok(fixed)
 }
 
+/// Fills in the defaults a call leaves out (issue #296). A call that names
+/// fewer arguments than the callee has parameters takes each missing one's
+/// default, as a named argument, so `match_args` checks it like any other
+/// argument at this call. The arguments are returned unchanged when there is
+/// nothing to fill in, or when the call is wrong in some other way (an unknown
+/// name, a repeated one, too many positional arguments, or a parameter with
+/// neither an argument nor a default): `match_args` then reports that error.
+pub(crate) fn with_defaults<'a>(sig: &FnSig, args: &'a [ast::CallArg]) -> std::borrow::Cow<'a, [ast::CallArg]> {
+    if args.len() >= sig.params.len() || !sig.defaults.iter().any(Option::is_some) {
+        return std::borrow::Cow::Borrowed(args);
+    }
+    let mut named: HashMap<&str, &ast::CallArg> = HashMap::new();
+    for a in args {
+        if let Some(n) = &a.name {
+            if !sig.params.iter().any(|(p, _)| p == n) || named.insert(n.as_str(), a).is_some() {
+                return std::borrow::Cow::Borrowed(args);
+            }
+        }
+    }
+    let mut positional = args.iter().filter(|a| a.name.is_none());
+    let mut out = Vec::with_capacity(sig.params.len());
+    for (i, (pname, _)) in sig.params.iter().enumerate() {
+        if let Some(a) = named.get(pname.as_str()) {
+            out.push((**a).clone());
+        } else if let Some(a) = positional.next() {
+            out.push(a.clone());
+        } else if let Some(Some(value)) = sig.defaults.get(i) {
+            out.push(ast::CallArg { name: Some(pname.clone()), value: value.clone() });
+        } else {
+            return std::borrow::Cow::Borrowed(args);
+        }
+    }
+    if positional.next().is_some() {
+        return std::borrow::Cow::Borrowed(args);
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Field shorthand (#258): in a constructor's argument list (`datac` or enum
 /// variant), a bare name `host` is `host = host`. It needs a field of that name
 /// and a local of that name in scope; anything else is refused here, with the

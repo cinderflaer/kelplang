@@ -278,6 +278,9 @@ pub struct Param {
     /// `Borrow` (the default), `mut T` (an exclusive borrow) or `move T`
     /// (the callee takes ownership, A-4).
     pub mode: ParamMode,
+    /// `name: T = literal` (issue #296): the value a call uses when it leaves
+    /// this argument out. Always one literal, checked at each call.
+    pub default: Option<Expr>,
 }
 
 /// How a parameter receives its argument. One enum rather than two flags,

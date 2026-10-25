@@ -476,13 +476,13 @@ pub(crate) fn array_sig(key: &str, elem: &Ty, len: u64) -> Option<FnSig> {
     let p = |n: &str, t: Ty| (n.to_string(), t);
     let elem_ref = Ty::Ref { mutable: false, inner: Box::new(elem.clone()) };
     Some(match key {
-        "Array#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Int },
-        "Array#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
-        "Array#get" => FnSig {
+        "Array#len" => FnSig { defaults: Vec::new(), params: vec![p("self", shared)], ret: Ty::Int },
+        "Array#is_empty" => FnSig { defaults: Vec::new(), params: vec![p("self", shared)], ret: Ty::Bool },
+        "Array#get" => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared), p("i", Ty::Int)],
             ret: if elem.is_copy() { elem.clone() } else { elem_ref },
         },
-        "Array#set" => FnSig {
+        "Array#set" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive), p("i", Ty::Int), p("v", elem.clone())],
             ret: Ty::Unit,
         },
@@ -501,16 +501,16 @@ pub(crate) fn box_sig(key: &str, elem: &Ty) -> Option<FnSig> {
     let p = |n: &str, t: Ty| (n.to_string(), t);
     let elem_ref = Ty::Ref { mutable: false, inner: Box::new(elem.clone()) };
     Some(match key {
-        "Box#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
-        "Box#get" => FnSig {
+        "Box#is_empty" => FnSig { defaults: Vec::new(), params: vec![p("self", shared)], ret: Ty::Bool },
+        "Box#get" => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared)],
             ret: if elem.is_copy() { elem.clone() } else { elem_ref },
         },
-        "Box#set" => FnSig {
+        "Box#set" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive), p("v", elem.clone())],
             ret: Ty::Unit,
         },
-        "Box#take" => FnSig {
+        "Box#take" => FnSig { defaults: Vec::new(),
             params: vec![p("self", exclusive)],
             ret: elem.clone(),
         },
@@ -584,12 +584,12 @@ pub(crate) fn atomic_sig(key: &str, elem: &Ty, ctx: &Ctx, span: Span) -> Result<
     let p = |n: &str, t: Ty| (n.to_string(), t);
     let order = atomic_order_ty();
     Ok(Some(match key {
-        "Atomic#new" => FnSig { params: vec![p("value", elem.clone())], ret: cell },
-        "Atomic#load" => FnSig {
+        "Atomic#new" => FnSig { defaults: Vec::new(), params: vec![p("value", elem.clone())], ret: cell },
+        "Atomic#load" => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared), p("order", order)],
             ret: elem.clone(),
         },
-        "Atomic#store" => FnSig {
+        "Atomic#store" => FnSig { defaults: Vec::new(),
             params: vec![p("self", shared), p("value", elem.clone()), p("order", order)],
             ret: Ty::Unit,
         },
@@ -605,7 +605,7 @@ pub(crate) fn atomic_sig(key: &str, elem: &Ty, ctx: &Ctx, span: Span) -> Result<
         | "Atomic#fetch_xor"
             if key == "Atomic#swap" || elem.is_integer() =>
         {
-            FnSig {
+            FnSig { defaults: Vec::new(),
                 params: vec![
                     p("self", shared),
                     p("value", elem.clone()),
@@ -631,7 +631,7 @@ pub(crate) fn atomic_sig(key: &str, elem: &Ty, ctx: &Ctx, span: Span) -> Result<
                 });
             }
             let result = ctx.instantiate_type(&result_key, &[elem.clone(), elem.clone()], span)?;
-            FnSig {
+            FnSig { defaults: Vec::new(),
                 params: vec![
                     p("self", shared),
                     p("current", elem.clone()),

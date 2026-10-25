@@ -118,9 +118,22 @@ pub(crate) fn declare_signatures(program: &ast::Program, project: &Project, decl
         // instantiates it; it is a template, so it gets a declaration key
         // (which the passdown scan needs) and no `sigs` entry.
         if !decl_type_params(f).is_empty() {
+            check_no_param_default(f, "a generic function takes no default value yet")?;
             decl_keys.push(sig_key(f));
             continue;
         }
+        if f.receiver.is_some() {
+            check_no_param_default(f, "a receiver method takes no default value yet")?;
+        } else if f.extern_ {
+            check_no_param_default(f, "an extern fun takes no default value: its native symbol gets every argument")?;
+        } else if matches!(f.body, ast::FunctionBody::Signature) {
+            check_no_param_default(f, "a trait method takes no default value")?;
+        }
+        let defaults: Vec<Option<ast::Expr>> = if f.params.iter().any(|p| p.default.is_some()) {
+            f.params.iter().map(|p| p.default.clone()).collect()
+        } else {
+            Vec::new()
+        };
         let prefix = project.prefix_of(&f.module);
         let aliases = project.alias_prefixes_of(&f.module);
         let scope = TypeScope {
@@ -246,7 +259,7 @@ pub(crate) fn declare_signatures(program: &ast::Program, project: &Project, decl
                 .push((types, key.clone()));
         }
         decl_keys.push(key.clone());
-        sigs.insert(key, FnSig { params, ret });
+        sigs.insert(key, FnSig { defaults, params, ret });
     }
 
     // A-12 slice 2: every `impl Name for Type` block, checked against the
@@ -352,4 +365,17 @@ pub(crate) fn declare_signatures(program: &ast::Program, project: &Project, decl
         enum_order,
     };
     Ok((decls, Signatures { sigs, overloads, decl_keys }))
+}
+
+/// Refuses a default value on a declaration that takes none (issue #296): the
+/// reason is named, and the span is the parameter that has the default.
+fn check_no_param_default(f: &ast::FunctionDecl, reason: &str) -> std::result::Result<(), Diagnostic> {
+    match f.params.iter().find(|p| p.default.is_some()) {
+        None => Ok(()),
+        Some(p) => Err(Diagnostic::new(
+            format!("parameter '{}' of '{}' has a default value, and {reason}", p.name, f.name),
+            f.span,
+            f.module.clone(),
+        )),
+    }
 }

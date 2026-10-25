@@ -1,0 +1,8 @@
+// A parameter with a default must come after every parameter without one
+// (issue #296), or a call could not tell which argument it left out.
+
+fun scale(factor: int = 3, n: int) => int = n * factor
+
+fun main() {
+    print(scale(n = 2))
+}

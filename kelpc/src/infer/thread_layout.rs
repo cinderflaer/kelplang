@@ -818,7 +818,10 @@ pub(crate) fn check_call(
     let (mut checked, extra_args) = if variadic {
         match_args_split(&what, &sig.params, args, span, ctx, true)?
     } else {
-        (match_args(&what, &sig.params, args, span, ctx)?, Vec::new())
+        // A parameter left out takes its default (issue #296), checked here at
+        // this call.
+        let filled = with_defaults(&sig, args);
+        (match_args(&what, &sig.params, &filled, span, ctx)?, Vec::new())
     };
     require_place_for_borrowed_arg(&sig.params, &sig.ret, &checked, span)?;
     let wrapper = if variadic {
