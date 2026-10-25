@@ -20,3 +20,5 @@ fun main() {
     xs.push(Item(n = 1))
     each(xs, fun(x: &Item) = print(x.n))
 }
+// stdout-begin
+// stdout: 1

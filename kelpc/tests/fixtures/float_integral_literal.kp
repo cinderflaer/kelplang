@@ -36,3 +36,9 @@ fun main() {
     val sum = small + big
     print(sum)
 }
+// stdout-begin
+// stdout: 100000000000000000000
+// stdout: 2.0
+// stdout: negative zero
+// stdout: negative product
+// stdout: 4.500000

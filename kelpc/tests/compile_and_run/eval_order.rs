@@ -9,23 +9,23 @@ use super::*;
 
 #[test]
 pub(crate) fn eval_order_template_interpolations_run_left_to_right() {
-    assert_compiles_and_runs("tests/fixtures/eval_order_template.kp", "removed 10, 1 left\n");
+    assert_fixture_runs("tests/fixtures/eval_order_template.kp");
 }
 
 #[test]
 pub(crate) fn ordered_binary_conditions_run_left_to_right() {
     // An effectful binary operation evaluates its left operand first. In a condition that has to hold whatever the operand's shape.
-    assert_compiles_and_runs("tests/fixtures/eval_order_condition.kp", "12\n1234\n");
+    assert_fixture_runs("tests/fixtures/eval_order_condition.kp");
 }
 
 #[test]
 pub(crate) fn eval_order_basic_transcript_is_left_to_right() {
-    assert_compiles_and_runs("tests/fixtures/eval_order_basic.kp", "x 1 2 3\ntmpl: 123\n6\ncall: 123\nbinop: 123\nctor: 123\narray: 123\npush: 12\nand: 1\nor: 1\nset: 12\ncompound: 7\n195\nnested: 12345\n7 4\narith: 1234\nrecv: 123\n6\nrecv2: 123\n");
+    assert_fixture_runs("tests/fixtures/eval_order_basic.kp");
 }
 
 #[test]
 pub(crate) fn eval_order_aggregates_operators_and_indirect_calls_are_left_to_right() {
-    assert_compiles_and_runs("tests/fixtures/eval_order_more.kp", "enum: 12\nctor_swapped: 21\nindirect: 12\nindirect_plus: 345\ncmp: 12\nchain: 1234\n2 1 2\nreads: 12\nread_then_call: 5\nif: 12\narr_expr: 1234\nclosure: 1828\n");
+    assert_fixture_runs("tests/fixtures/eval_order_more.kp");
 }
 
 // ---------------------------------------------------------------------------
@@ -36,15 +36,12 @@ pub(crate) fn eval_order_aggregates_operators_and_indirect_calls_are_left_to_rig
 
 #[test]
 pub(crate) fn two_mutex_a_rwlock_and_a_condvar_global_initialise_together() {
-    assert_compiles_and_runs("tests/fixtures/pd_lock_globals_pair.kp", "10\n21\n32\n");
+    assert_fixture_runs("tests/fixtures/pd_lock_globals_pair.kp");
 }
 
 #[test]
 pub(crate) fn six_lock_globals_are_used_from_several_threads() {
-    assert_compiles_and_runs(
-        "tests/fixtures/pd_lock_globals_many.kp",
-        "20\n21\n25\n27\n20\n",
-    );
+    assert_fixture_runs("tests/fixtures/pd_lock_globals_many.kp");
 }
 
 // ---------------------------------------------------------------------------
@@ -55,7 +52,7 @@ pub(crate) fn six_lock_globals_are_used_from_several_threads() {
 
 #[test]
 pub(crate) fn result_of_unit_builds_its_success_arm_from_unit_and_matches_it() {
-    assert_compiles_and_runs("tests/fixtures/result_unit_ok.kp", "ok\nnot positive\nsuccess\n");
+    assert_fixture_runs("tests/fixtures/result_unit_ok.kp");
 }
 
 #[test]
@@ -73,10 +70,7 @@ pub(crate) fn unit_is_not_stored_in_a_tuple_even_though_unit_is_a_value() {
 /// path. The components are pinned to the 26.10.4 output.
 #[test]
 pub(crate) fn the_path_split_edges_are_unchanged() {
-    assert_compiles_and_runs(
-        "tests/fixtures/path_split_edges.kp",
-        "2\na\nb\n0\n0\n0\n1\na\n2\né\nü\n3\na\nb\nc\n2000\ncomp\ncomp\n4\n",
-    );
+    assert_fixture_runs("tests/fixtures/path_split_edges.kp");
 }
 
 /// `std/encoding` base64 on its edge cases: the RFC 4648 vectors, every byte
@@ -85,10 +79,7 @@ pub(crate) fn the_path_split_edges_are_unchanged() {
 /// is pinned to the 26.10.4 output.
 #[test]
 pub(crate) fn the_base64_edges_are_unchanged() {
-    assert_compiles_and_runs(
-        "tests/fixtures/base64_edges.kp",
-        "\nZg==\nZm8=\nZm9v\nZm9vYg==\nZm9vYmE=\nZm9vYmFy\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==\n4004\n666f6f626172\n666f6f62\n666f6f6261\n66\n\ninvalid\ninvalid\ninvalid\ninvalid\ninvalid\nfbffbf\n3001\n8\n",
-    );
+    assert_fixture_runs("tests/fixtures/base64_edges.kp");
 }
 
 /// `str.from_f64` and `fmt.float` on zero and negative zero, rounding at the last
@@ -97,10 +88,7 @@ pub(crate) fn the_base64_edges_are_unchanged() {
 /// 26.10.4 output.
 #[test]
 pub(crate) fn the_float_formatting_edges_are_unchanged() {
-    assert_compiles_and_runs(
-        "tests/fixtures/float_format_edges.kp",
-        "0.00\n-0.00\n2\n2\n123.4560000000\n-3.142\n0.000\n0.10000000000000000555\n0.666667\n1048576.00\n1000000000000000052504760255204420248704468581108159154915854115511802457988908195786371375080447864043704443832883878176942523235360430575644792184786706982848387200926575803737830233794788090059368953234970799945081119038967640880074652742780142494579258788820056842838115669472196386865459400540160.00\n1.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\nnan\ninf\n-inf\n",
-    );
+    assert_fixture_runs("tests/fixtures/float_format_edges.kp");
 }
 
 /// `std/encoding` base32 on its edge cases: the RFC 4648 vectors, every byte value
@@ -109,10 +97,7 @@ pub(crate) fn the_float_formatting_edges_are_unchanged() {
 /// to the 26.10.4 output.
 #[test]
 pub(crate) fn the_base32_edges_are_unchanged() {
-    assert_compiles_and_runs(
-        "tests/fixtures/base32_edges.kp",
-        "\nMY======\nMZXQ====\nMZXW6===\nMZXW6YQ=\nMZXW6YTB\nMZXW6YTBOI======\nAAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSAIJCEMSCKJRHFAUSUKZMFUXC6MBRGIZTINJWG44DSOR3HQ6T4P2AIFBEGRCFIZDUQSKKJNGE2TSPKBIVEU2UKVLFOWCZLJNVYXK6L5QGCYTDMRSWMZ3INFVGW3DNNZXXA4LSON2HK5TXPB4XU634PV7H7AEBQKBYJBMGQ6EITCULRSGY5D4QSGJJHFEVS2LZRGM2TOOJ3HU7UCQ2FI5EUWTKPKFJVKV2ZLNOV6YLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM7UGR2LJ5JVOW27MNTWW33TO55X7A4HROHZHF43T6R2PK5PWO33XP6DY7F47U6X3PP6HZ7L57Z7P674======\n666f6f62\n666f6f\n666f6f626172\n666f6f6261\ninvalid\ninvalid\n\ninvalid\n",
-    );
+    assert_fixture_runs("tests/fixtures/base32_edges.kp");
 }
 
 /// `kelpc doc` never writes an em dash (U+2014) or an en dash (U+2013) into a
@@ -169,22 +154,22 @@ pub(crate) fn the_doc_generator_never_emits_an_em_or_en_dash() {
 // accepts its block values. Their refusal twins are unit tests in that file.
 #[test]
 pub(crate) fn escape_twin_block_value_returns_a_number() {
-    assert_compiles_and_runs("tests/escape/twin_returns_number.kp", "5\n");
+    assert_fixture_runs("tests/escape/twin_returns_number.kp");
 }
 
 #[test]
 pub(crate) fn escape_twin_block_value_used_only_inside_its_body() {
-    assert_compiles_and_runs("tests/escape/twin_local_use.kp", "6\n");
+    assert_fixture_runs("tests/escape/twin_local_use.kp");
 }
 
 #[test]
 pub(crate) fn escape_twin_borrowing_method_with_a_plain_result() {
-    assert_compiles_and_runs("tests/escape/twin_method_plain_result.kp", "false\n3\n");
+    assert_fixture_runs("tests/escape/twin_method_plain_result.kp");
 }
 
 #[test]
 pub(crate) fn escape_twin_number_stored_in_an_outer_variable() {
-    assert_compiles_and_runs("tests/escape/twin_number_outer.kp", "5\n");
+    assert_fixture_runs("tests/escape/twin_number_outer.kp");
 }
 
 // Tidepool step 2, T34: manifest refusals. The `[tidepool]` block is not read

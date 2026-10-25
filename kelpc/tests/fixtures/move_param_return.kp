@@ -38,3 +38,9 @@ fun main() {
     print(length_if_any(String.from_str("abc"), n = 1))
     print(measure(String.from_str("hello")))
 }
+// stdout-begin
+// stdout: 4
+// stdout: true
+// stdout: 3
+// stdout: long
+// stdout: 5

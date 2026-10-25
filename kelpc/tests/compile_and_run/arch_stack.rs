@@ -472,10 +472,7 @@ pub(crate) fn only_a_tls_program_links_openssl() {
 /// reusable. No `unsafe` is written in the fixture, so both backends build it.
 #[test]
 pub(crate) fn an_arena_bumps_with_alignment_and_reuses_after_reset() {
-    assert_compiles_and_runs(
-        "tests/fixtures/arena_bump.kp",
-        "false\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n0\ntrue\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/arena_bump.kp");
 }
 
 /// A non-power-of-two `align` is refused at the call with the arena's own

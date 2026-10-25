@@ -20,3 +20,6 @@ fun main() {
     print(total)
     print(calls)
 }
+// stdout-begin
+// stdout: 1006
+// stdout: 3

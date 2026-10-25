@@ -19,3 +19,6 @@ fun main() {
     val c = Bag(name = String.from_str("kept"), xs = List.of(4))
     print(take_count(c))
 }
+// stdout-begin
+// stdout: taken
+// stdout: 1

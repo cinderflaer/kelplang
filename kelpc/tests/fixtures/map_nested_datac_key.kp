@@ -17,3 +17,11 @@ fun main() {
     print(m.len())
     print(m.has(key = Name(text = String.from_str(s = "beta"), id = 2)))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 10
+// stdout: false
+// stdout: 20
+// stdout: 10
+// stdout: 1
+// stdout: true

@@ -27,3 +27,9 @@ fun main() {
         print(s)
     }
 }
+// stdout-begin
+// stdout: hello
+// stdout: none
+// stdout: expected
+// stdout: held
+// stdout: staged

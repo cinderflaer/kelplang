@@ -9,3 +9,11 @@ fun main() {
     print(math.floor(z / 3))
     print(math.is_nan(z))
 }
+// stdout-begin
+// stdout: 2.000000
+// stdout: 16.000000
+// stdout: 9.500000
+// stdout: 4.000000
+// stdout: 4.000000
+// stdout: 1.000000
+// stdout: false

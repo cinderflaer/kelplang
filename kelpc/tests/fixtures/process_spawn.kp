@@ -81,3 +81,21 @@ fun main() {
     print(str.len(argv.get(0).as_str()) > 0)
     print(process.getpid() > 0)
 }
+// stdout-begin
+// stdout: 0
+// stdout: one-two
+// stdout: 7
+// stdout: 0
+// stdout: 0
+// stdout: oops
+// stdout: 0
+// stdout: hello
+// stdout:
+// stdout: true
+// stdout: 137
+// stdout: false
+// stdout: 127
+// stdout: true
+// stdout: 1
+// stdout: true
+// stdout: true

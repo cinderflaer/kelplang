@@ -18,3 +18,13 @@ fun main() {
     print(rep)
     print(rep.len())
 }
+// stdout-begin
+// stdout: HI THERE
+// stdout: 8
+// stdout: 8
+// stdout: true
+// stdout: false
+// stdout: hello
+// stdout: 98
+// stdout: ababab
+// stdout: 6

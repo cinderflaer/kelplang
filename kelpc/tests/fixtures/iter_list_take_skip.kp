@@ -13,3 +13,11 @@ fun main() {
     print(iter.count(iter.take(iter.range(0, 100), 7)))
     print(iter.sum_i64(iter.skip(iter.range(0, 10), 7)))
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 4
+// stdout: 5
+// stdout: 7
+// stdout: 24

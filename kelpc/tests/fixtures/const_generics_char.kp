@@ -28,3 +28,11 @@ fun main() {
     print(b.mark())
     print(a.weight + b.weight)
 }
+// stdout-begin
+// stdout: x
+// stdout: y
+// stdout: true
+// stdout: false
+// stdout: x
+// stdout: y
+// stdout: 3

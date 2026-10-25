@@ -25,3 +25,8 @@ fun main() {
     log.set(0, log.get(0) + log.get(1))
     print(log.get(0))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2
+// stdout: 42
+// stdout: 3

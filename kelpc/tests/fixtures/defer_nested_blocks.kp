@@ -8,3 +8,8 @@ fun main() {
     }
     print("outer-body")
 }
+// stdout-begin
+// stdout: inner-body
+// stdout: inner-end
+// stdout: outer-body
+// stdout: outer-end

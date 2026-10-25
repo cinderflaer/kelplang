@@ -81,3 +81,17 @@ fun main() {
 
     print(sum_all(xs))
 }
+// stdout-begin
+// stdout: 6
+// stdout: 3
+// stdout: 7
+// stdout: 8
+// stdout: 9
+// stdout: 4
+// stdout: 5
+// stdout: 1
+// stdout: a
+// stdout: b
+// stdout: c
+// stdout: 1 2 3 2 4 6 3 6 9 
+// stdout: 6

@@ -19,3 +19,8 @@ fun main() {
     print(p.a + p.b)
     print(sum3(make3(5, 6)))
 }
+// stdout-begin
+// stdout: 3
+// stdout: 4
+// stdout: 14
+// stdout: 11

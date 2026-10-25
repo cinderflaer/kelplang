@@ -9,10 +9,7 @@ use super::*;
 
 #[test]
 pub(crate) fn a_trait_is_implemented_by_a_datac_and_an_enum_and_called_through_a_generic() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_datac_and_enum.kp",
-        "12.000000\n27.000000\n27.000000\ncircle\ntrue\n9.000000\n18.000000\n2\n9.000000\n0.000000\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_datac_and_enum.kp");
 }
 
 #[test]
@@ -20,10 +17,7 @@ pub(crate) fn a_generic_datac_method_calls_a_bounded_generic_with_its_type_param
     // The bound is resolved when the *method* is instantiated, so the call
     // inside `Pair<A, B>.total()` is checked once per pair of concrete
     // arguments, exactly as a free function's body is.
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_generic_datac_method.kp",
-        "7\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_generic_datac_method.kp");
 }
 
 #[test]
@@ -108,7 +102,7 @@ pub(crate) fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
     // A `where` clause was on this list and is now the other spelling of a
     // bound (26.10.3); `a_trait_can_be_implemented_for_a_generic_type_under_bounds`
     // pins it.
-    assert_compiles_and_runs("tests/fixtures/traits_where_clause.kp", "");
+    assert_fixture_runs("tests/fixtures/traits_where_clause.kp");
     assert_rejected_with(
         "tests/fixtures/traits_drop_declared.kp",
         "the trait 'Drop' is built in",
@@ -120,20 +114,14 @@ pub(crate) fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
 /// default may call the trait's other methods through `self`.
 #[test]
 pub(crate) fn a_default_method_is_inherited_overridden_and_may_call_the_traits_others() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_default_body.kp",
-        "9\n9\n18\n5\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_default_body.kp");
 }
 
 /// A-12 slice 3: `trait B: A` requires an `impl A for` the type, lets a
 /// `<T: B>` call `A`'s methods, and lets a `T: B` satisfy a `T: A` bound.
 #[test]
 pub(crate) fn a_supertrait_is_required_and_its_methods_are_callable_through_the_subtrait() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_supertrait.kp",
-        "12\n21\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_supertrait.kp");
 }
 
 /// A-12 slice 3: a trait implemented for a builtin type that already carries
@@ -141,10 +129,7 @@ pub(crate) fn a_supertrait_is_required_and_its_methods_are_callable_through_the_
 /// `datac`'s impl is.
 #[test]
 pub(crate) fn a_trait_implemented_for_a_builtin_is_called_through_a_generic() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_impl_for_builtin.kp",
-        "20\n36\na string\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_impl_for_builtin.kp");
 }
 
 /// A-12 slice 3: a default body is resolved in the trait's module even when
@@ -192,52 +177,40 @@ pub(crate) fn the_new_trait_shapes_are_refused_by_name() {
 /// bounded generic all resolve per instantiation.
 #[test]
 pub(crate) fn self_stands_for_the_implementing_type_everywhere_in_a_signature() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_self_in_signature.kp",
-        "1\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_self_in_signature.kp");
 }
 
 /// A-12 slice 4: two types implementing one trait, called through a `&dyn` in
 /// a loop over borrowed bindings.
 #[test]
 pub(crate) fn two_types_are_dispatched_through_a_dyn_in_a_loop() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_dyn_dispatch.kp",
-        "circle\nsquare\n21.000000\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_dyn_dispatch.kp");
 }
 
 /// A-12 slice 4: a default method and a supertrait method are both callable
 /// through a `&dyn` of the subtrait.
 #[test]
 pub(crate) fn a_default_and_a_supertrait_method_are_callable_through_a_dyn() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_dyn_default_super.kp",
-        "circle\na shape\n16.000000\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_dyn_default_super.kp");
 }
 
 /// A-12 slice 4: `&mut dyn` mutates its target through the vtable.
 #[test]
 pub(crate) fn a_mut_dyn_mutates_its_target() {
-    assert_compiles_and_runs("tests/fixtures/traits_dyn_mut.kp", "11\n18\n");
+    assert_fixture_runs("tests/fixtures/traits_dyn_mut.kp");
 }
 
 /// A-12 slice 4: a `&dyn` binding forwards on to another function.
 #[test]
 pub(crate) fn a_dyn_borrow_forwards_to_another_function() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_dyn_forward.kp",
-        "36.000000\n18.000000\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_dyn_forward.kp");
 }
 
 /// A-12 slice 4: a trait implemented for a `Copy` builtin is reached through a
 /// `&dyn`, so the thunk reads the scalar out of the erased pointer.
 #[test]
 pub(crate) fn a_builtin_impl_is_reached_through_a_dyn() {
-    assert_compiles_and_runs("tests/fixtures/traits_dyn_builtin.kp", "84\n");
+    assert_fixture_runs("tests/fixtures/traits_dyn_builtin.kp");
 }
 
 /// A-12 slice 4 rejections: an object-unsafe trait that returns `Self` or takes
@@ -281,27 +254,21 @@ pub(crate) fn the_dyn_shapes_this_slice_does_not_reach_are_refused_by_name() {
 /// static, so every call is the concrete type's own method.
 #[test]
 pub(crate) fn an_associated_type_is_bound_by_each_impl_and_projected_through_a_generic() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_assoc_two_types.kp",
-        "6\n12\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_assoc_two_types.kp");
 }
 
 /// A-12 slice 5: `type Entry: Named` is checked at the impl, and generic code
 /// reaches the bound's method through the projection.
 #[test]
 pub(crate) fn a_bounded_associated_type_is_usable_inside_generic_code() {
-    assert_compiles_and_runs("tests/fixtures/traits_assoc_bound.kp", "item\n5\n");
+    assert_fixture_runs("tests/fixtures/traits_assoc_bound.kp");
 }
 
 /// A-12 slice 5: `Self::Item` in a default method resolves through the impl's
 /// binding when the concrete copy is synthesized.
 #[test]
 pub(crate) fn self_item_in_a_default_method_resolves_per_impl() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_assoc_default_self.kp",
-        "107\n107\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_assoc_default_self.kp");
 }
 
 /// A-12 slice 5: a `pub trait` with an associated type, implemented in another
@@ -357,17 +324,14 @@ pub(crate) fn the_associated_type_shapes_are_refused_by_name() {
 /// emit the same direct calls.
 #[test]
 pub(crate) fn a_from_impl_converts_a_differing_failure_and_a_generic_trait_is_bounded() {
-    assert_compiles_and_runs(
-        "tests/fixtures/from_conversion.kp",
-        "true\ntrue\n5\n9\n42\n5\n",
-    );
+    assert_fixture_runs("tests/fixtures/from_conversion.kp");
 }
 
 /// A-12 slice 6: a static method written on the trait's own name
 /// (`From.from(x)`), with the implementing type from the expected type.
 #[test]
 pub(crate) fn a_static_method_is_called_on_the_traits_own_name() {
-    assert_compiles_and_runs("tests/fixtures/from_trait_name.kp", "5\n9\n");
+    assert_fixture_runs("tests/fixtures/from_trait_name.kp");
 }
 
 /// A-12 slice 6: the `From` impl lives in the implementing type's module, and
@@ -473,20 +437,14 @@ pub(crate) fn a_freestanding_image_dispatches_through_a_dyn_and_boots() {
 pub(crate) fn a_list_of_owned_trait_objects_is_dispatched_through_each_vtable() {
     // Both implementors are memory, so a `Box<dyn Shape>` is memory and the list
     // may hold it in a hosted build (the classifier counts the coerced types).
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_boxdyn_list.kp",
-        "circle\nsquare\n21.000000\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_boxdyn_list.kp");
 }
 
 /// A-12 slice 7: a factory function returns a `Box<dyn Shape>` chosen by a flag,
 /// and a `&dyn` borrowed back out of a box goes on to a free function.
 #[test]
 pub(crate) fn a_factory_returns_an_owned_trait_object_and_the_trait_is_borrowed_back() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_boxdyn_factory.kp",
-        "circle\nsquare\n12.000000\n9.000000\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_boxdyn_factory.kp");
 }
 
 /// A-12 slice 7: a `datac` holds a `Box<dyn Trait>` field, a `mut Self` method is
@@ -512,10 +470,7 @@ pub(crate) fn an_enum_payload_holds_an_owned_trait_object_and_drops_it_through_t
 /// by value.
 #[test]
 pub(crate) fn an_owned_trait_object_moves_between_lists_and_through_a_move_parameter() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_boxdyn_move.kp",
-        "true\n12.000000\n0\nfalse\n12.000000\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/traits_boxdyn_move.kp");
 }
 
 /// The classifier gap, named: a `Box<dyn Trait>` whose implementors are all
@@ -763,10 +718,7 @@ pub(crate) fn a_map_grows_by_rehashing_and_keeps_insertion_order() {
     // Twenty-three inserts cross two index capacities, and the six removes
     // before the twenty-fourth insert leave tombstones the rebuild has to
     // skip; `keys()` must still be insertion order with the removed keys gone.
-    assert_compiles_and_runs(
-        "tests/fixtures/map_growth_and_rehash.kp",
-        "23\n220\n50\n60\n70\n80\n90\n100\n17\nfalse\n18\ntrue\n1000\n18\n0\n1\n2\n3\n4\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n100\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_growth_and_rehash.kp");
 }
 
 #[test]
@@ -774,19 +726,13 @@ pub(crate) fn a_map_sized_with_with_capacity_grows_and_behaves_like_a_new_one() 
     // Sixty-four entries of capacity for two hundred inserts crosses both
     // growth thresholds, so the hint has to leave the map in the same state
     // `Map.empty()` would: same insertion order, same tombstones, same lookups.
-    assert_compiles_and_runs(
-        "tests/fixtures/map_with_capacity.kp",
-        "200\n597\nfalse\n70\n1\n20\n10\nfalse\n30\n200\n0\n199\n99\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_with_capacity.kp");
     assert_rejected("tests/fixtures/map_with_capacity_arity.kp");
 }
 
 #[test]
 pub(crate) fn a_list_sized_with_with_capacity_grows_like_an_empty_one() {
-    assert_compiles_and_runs(
-        "tests/fixtures/list_with_capacity.kp",
-        "0\n100\n0\n198\ntrue\n7\n2\nb\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_with_capacity.kp");
     assert_rejected("tests/fixtures/list_with_capacity_arity.kp");
 }
 
@@ -794,18 +740,12 @@ pub(crate) fn a_list_sized_with_with_capacity_grows_like_an_empty_one() {
 pub(crate) fn a_map_probe_steps_over_a_tombstone_and_still_finds_the_live_key() {
     // "k0", "k8" and "k13" share one probe chain, so the tombstone `remove`
     // leaves at the chain's head is what a probe has to step past.
-    assert_compiles_and_runs(
-        "tests/fixtures/map_tombstones_and_reuse.kp",
-        "2\n1\n1\nfalse\ntrue\n2\n2\ntrue\n3\n2\n3\ntrue\n9\n2\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_tombstones_and_reuse.kp");
 }
 
 #[test]
 pub(crate) fn a_map_entry_keeps_the_value_at_the_key_width_offset() {
-    assert_compiles_and_runs(
-        "tests/fixtures/map_key_widths.kp",
-        "2\n1000000007\n1000000009\n2\n2000000011\n2000000013\n2\n3000000017\n3000000019\n2\n4000000023\n4000000029\n2\n5000000031\n5000000037\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_key_widths.kp");
 }
 
 #[test]
@@ -813,31 +753,22 @@ pub(crate) fn replacing_a_map_value_drops_the_old_one() {
     // The stdout is the same whether or not the old value is dropped; the
     // replacement path is a valgrind check (`memory_gate.rs` sweeps every
     // fixture), and this run only makes each replacement observable.
-    assert_compiles_and_runs(
-        "tests/fixtures/map_replace_drops_old_value.kp",
-        "2\n2\nONE\n2\n1\nTWO\n2\nTWO\ntwo again\n2\n2\n1\ntwo again\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_replace_drops_old_value.kp");
 }
 
 #[test]
 pub(crate) fn map_string_values_survive_the_whole_ownership_path() {
-    assert_compiles_and_runs(
-        "tests/fixtures/map_owned_round_trip.kp",
-        "3\ntwo\nthree\nfallback\none\n2\n2\nbeta\ngamma\n2\ntwo\nthree\n0\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_owned_round_trip.kp");
 }
 
 #[test]
 pub(crate) fn a_cleared_map_is_empty_and_reusable() {
-    assert_compiles_and_runs(
-        "tests/fixtures/map_clear_then_reuse.kp",
-        "10\n81\n0\ntrue\nfalse\n2\n33\n44\ntrue\n44\n1\nfalse\n1\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_clear_then_reuse.kp");
 }
 
 #[test]
 pub(crate) fn a_shared_borrow_of_a_temporary_is_allowed_for_a_call() {
-    assert_compiles_and_runs("tests/fixtures/borrow_temp_arg.kp", "3\n18\n");
+    assert_fixture_runs("tests/fixtures/borrow_temp_arg.kp");
 }
 
 #[test]
@@ -847,25 +778,22 @@ pub(crate) fn each_borrowed_temporary_gets_a_slot_of_its_own() {
     // before the first call reads it (`pair_sum(Pair(..), Pair(..))`), when the
     // temporary is itself a call's result (`sum(make(7, 8))`), and when it is
     // wider than one eightbyte (`quad_sum(Quad(..))`).
-    assert_compiles_and_runs(
-        "tests/fixtures/borrow_temp_slots.kp",
-        "3\n18\n15\n6\n30\n6\n6\n",
-    );
+    assert_fixture_runs("tests/fixtures/borrow_temp_slots.kp");
 }
 
 #[test]
 pub(crate) fn a_borrow_from_a_temporary_bound_to_a_local_is_allowed() {
-    assert_compiles_and_runs("tests/fixtures/borrow_temp_returned.kp", "x\n");
+    assert_fixture_runs("tests/fixtures/borrow_temp_returned.kp");
 }
 
 #[test]
 pub(crate) fn a_binding_keeps_its_temporary_borrow_owner_alive() {
-    assert_compiles_and_runs("tests/fixtures/borrow_temp_binding.kp", "hello\n");
+    assert_fixture_runs("tests/fixtures/borrow_temp_binding.kp");
 }
 
 #[test]
 pub(crate) fn a_datac_can_own_the_text_its_view_field_borrows() {
-    assert_compiles_and_runs("tests/fixtures/aggregate_text_borrow.kp", "label\n");
+    assert_fixture_runs("tests/fixtures/aggregate_text_borrow.kp");
     assert_rejected_with(
         "tests/fixtures/refused_aggregate_text_borrow.kp",
         "not moved into an earlier String/Bytes field",
@@ -879,7 +807,7 @@ pub(crate) fn a_datac_can_own_the_text_its_view_field_borrows() {
 /// told apart, and this is the one that must not quietly start compiling.
 #[test]
 pub(crate) fn a_borrow_from_a_temporary_field_bound_to_a_local_is_allowed() {
-    assert_compiles_and_runs("tests/fixtures/borrow_field_of_temp_returned.kp", "x\n");
+    assert_fixture_runs("tests/fixtures/borrow_field_of_temp_returned.kp");
 }
 
 /// And the explicit-borrow half: `&<field of a temporary>` is not a place, so
@@ -899,10 +827,7 @@ pub(crate) fn an_explicit_borrow_of_a_field_of_a_temporary_is_rejected() {
 /// shallow AST question refused this until the check became the typed one.
 #[test]
 pub(crate) fn an_explicit_borrow_of_a_field_of_a_borrow_is_accepted() {
-    assert_compiles_and_runs(
-        "tests/fixtures/borrow_chain_through_a_borrow.kp",
-        "42\nforty-two\n43\n7\n",
-    );
+    assert_fixture_runs("tests/fixtures/borrow_chain_through_a_borrow.kp");
 }
 
 #[test]
@@ -935,10 +860,7 @@ pub(crate) fn fs_breadth_creates_walks_stats_copies_opens_and_removes_under_one_
 pub(crate) fn path_stem_extension_and_component_helpers() {
     // `stem` allocates (a prefix cannot be a view); `split` drops empty
     // components; `join_all` applies `join`'s absolute-part rule.
-    assert_compiles_and_runs(
-        "tests/fixtures/path_polish.kp",
-        "archive.tar\nMakefile\n.bashrc\ntrue\nfalse\n2\na\nb\n/a/b/c\n/etc/x\n",
-    );
+    assert_fixture_runs("tests/fixtures/path_polish.kp");
 }
 
 #[test]
@@ -947,10 +869,7 @@ pub(crate) fn path_absolute_resolves_a_relative_argument_against_a_base() {
     // resolved path is normalized so the capability check accepts it. The
     // absolute cases are compared to literals; the cwd-dependent ones assert
     // the property instead, since the test's own directory is not fixed.
-    assert_compiles_and_runs(
-        "tests/fixtures/path_absolute.kp",
-        "/a/b/c.txt\n/a/c.txt\n/abs/x\ntrue\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/path_absolute.kp");
 }
 
 /// MK7 §5 item 7 step 1's other half: a call whose wide return value is
@@ -961,7 +880,7 @@ pub(crate) fn path_absolute_resolves_a_relative_argument_against_a_base() {
 /// function-value shapes no fixture reached before.
 #[test]
 pub(crate) fn a_discarded_wide_return_still_builds() {
-    assert_compiles_and_runs("tests/fixtures/discard_wide_return.kp", "discarded\n");
+    assert_fixture_runs("tests/fixtures/discard_wide_return.kp");
 }
 
 #[test]

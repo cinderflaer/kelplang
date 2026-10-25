@@ -38,3 +38,19 @@ fun main() {
     print(m.get("k8"))
     print(m.get("k13"))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 1
+// stdout: 1
+// stdout: false
+// stdout: true
+// stdout: 2
+// stdout: 2
+// stdout: true
+// stdout: 3
+// stdout: 2
+// stdout: 3
+// stdout: true
+// stdout: 9
+// stdout: 2
+// stdout: 3

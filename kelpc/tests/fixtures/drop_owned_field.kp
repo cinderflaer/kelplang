@@ -14,3 +14,9 @@ fun main() {
     val b = Named(name = String.from_str("beta"))
     print("body")
 }
+// stdout-begin
+// stdout: body
+// stdout: named
+// stdout: 4
+// stdout: named
+// stdout: 5

@@ -24,3 +24,6 @@ fun main() {
     count = 100
     show()
 }
+// stdout-begin
+// stdout: count = 5
+// stdout: count = 100

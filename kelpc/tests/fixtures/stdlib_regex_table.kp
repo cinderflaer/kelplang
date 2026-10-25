@@ -258,3 +258,5 @@ fun main() {
     t(st, "\\w+\\s\\w+", "hi there you", "0-8")
     print("cases: ${st.run}, failed: ${st.bad}")
 }
+// stdout-begin
+// stdout: cases: 183, failed: 0

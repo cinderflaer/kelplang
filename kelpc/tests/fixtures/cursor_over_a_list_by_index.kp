@@ -20,3 +20,5 @@ fun main() {
     }
     print(total)
 }
+// stdout-begin
+// stdout: 60

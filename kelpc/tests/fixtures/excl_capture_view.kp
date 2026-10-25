@@ -41,3 +41,6 @@ fun main() {
     print(k.n)
     print(k.progress)
 }
+// stdout-begin
+// stdout: 2
+// stdout: 500

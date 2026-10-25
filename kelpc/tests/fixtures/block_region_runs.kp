@@ -89,3 +89,11 @@ fun main() {
         Err(_) -> print(0)
     }
 }
+// stdout-begin
+// stdout: 5
+// stdout: 3
+// stdout: 7
+// stdout: 0
+// stdout: 1
+// stdout: 2
+// stdout: 5

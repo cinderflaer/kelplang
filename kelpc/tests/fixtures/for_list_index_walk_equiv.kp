@@ -70,3 +70,25 @@ fun main() {
     }
     print(j)
 }
+// stdout-begin
+// stdout: 3
+// stdout: 4
+// stdout: 3
+// stdout: 4
+// stdout: ann
+// stdout: bo
+// stdout: cy
+// stdout: ann
+// stdout: bo
+// stdout: cy
+// stdout: 6
+// stdout: 4
+// stdout: 7
+// stdout: 4
+// stdout: 8
+// stdout: 6
+// stdout: 4
+// stdout: 7
+// stdout: 4
+// stdout: 8
+// stdout: 5

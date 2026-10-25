@@ -49,3 +49,19 @@ fun main() {
     print(text.get(key = "one"))
     print(text.get(key = "a longer key"))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 1000000007
+// stdout: 1000000009
+// stdout: 2
+// stdout: 2000000011
+// stdout: 2000000013
+// stdout: 2
+// stdout: 3000000017
+// stdout: 3000000019
+// stdout: 2
+// stdout: 4000000023
+// stdout: 4000000029
+// stdout: 2
+// stdout: 5000000031
+// stdout: 5000000037

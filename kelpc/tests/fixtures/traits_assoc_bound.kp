@@ -33,3 +33,6 @@ fun main() {
     print(describe(s))
     print(s.entry().n)
 }
+// stdout-begin
+// stdout: item
+// stdout: 5

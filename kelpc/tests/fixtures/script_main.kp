@@ -28,3 +28,11 @@ twice(x: int) => int = x * 2
 greet(name: &str) {
     print("hello, ${name}")
 }
+// stdout-begin
+// stdout: start
+// stdout: 42
+// stdout: hello, Kelp
+// stdout: 2
+// stdout: 0
+// stdout: 1
+// stdout: 2

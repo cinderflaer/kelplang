@@ -45,3 +45,8 @@ fun main() {
     }
     print(found)
 }
+// stdout-begin
+// stdout: 9
+// stdout: 8
+// stdout: 4
+// stdout: 23

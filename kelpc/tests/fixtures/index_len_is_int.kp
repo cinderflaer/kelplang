@@ -18,3 +18,9 @@ fun main() {
     print(k)
     print(str.byte(s, k - 1) == b'y')
 }
+// stdout-begin
+// stdout: 3
+// stdout: 20
+// stdout: 2
+// stdout: 3
+// stdout: true

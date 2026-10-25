@@ -57,3 +57,20 @@ fun main() {
     trios.clear()
     print(trios.len())
 }
+// stdout-begin
+// stdout: 3
+// stdout: 5000000002
+// stdout: 15000000003
+// stdout: 7
+// stdout: 3
+// stdout: 2
+// stdout: false
+// stdout: 3
+// stdout: 4
+// stdout: 9
+// stdout: 10
+// stdout: 7
+// stdout: 5
+// stdout: 2
+// stdout: 9
+// stdout: 0

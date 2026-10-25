@@ -46,3 +46,10 @@ fun main() {
     print(l)
     print(l.to_text())
 }
+// stdout-begin
+// stdout: v = (3, 4)
+// stdout: (3, 4)
+// stdout: 3
+// stdout: line = (3, 4) -> (5, 6)
+// stdout: (3, 4) -> (5, 6)
+// stdout: (3, 4) -> (5, 6)

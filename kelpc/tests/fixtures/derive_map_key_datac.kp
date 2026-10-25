@@ -22,3 +22,13 @@ fun main() {
     print(m.len())
     print(m.has(key = Tag(name = String.from_str(s = "alpha"), on = false, mark = 'x', n = 1)))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 10
+// stdout: false
+// stdout: 2
+// stdout: 99
+// stdout: false
+// stdout: 99
+// stdout: 1
+// stdout: true

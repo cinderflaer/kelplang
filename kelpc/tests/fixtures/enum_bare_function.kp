@@ -17,3 +17,6 @@ fun main() {
     val s = Shape.Circle(r = 2.0)
     print(area(s))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2.000000

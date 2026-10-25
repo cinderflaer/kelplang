@@ -46,3 +46,23 @@ fun main() {
     middle.clear()
     print(words.len())
 }
+// stdout-begin
+// stdout: -7
+// stdout: 0
+// stdout: 3
+// stdout: true
+// stdout: false
+// stdout: 1
+// stdout: -7
+// stdout: 3
+// stdout: 200
+// stdout: true
+// stdout: false
+// stdout: apple
+// stdout: fig
+// stdout: pear
+// stdout: true
+// stdout: false
+// stdout: 2
+// stdout: fig
+// stdout: 3

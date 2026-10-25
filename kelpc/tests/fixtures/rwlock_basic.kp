@@ -7,3 +7,7 @@ fun main() {
     print(rw.read { v -> *v })
     print(rw.into_inner())
 }
+// stdout-begin
+// stdout: 8
+// stdout: 10
+// stdout: 10

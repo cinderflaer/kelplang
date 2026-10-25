@@ -26,3 +26,11 @@ fun main() {
     print(width_plain("four"))
     print(width_ref("four"))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2
+// stdout: 2
+// stdout: 4
+// stdout: 4
+// stdout: 4
+// stdout: 4

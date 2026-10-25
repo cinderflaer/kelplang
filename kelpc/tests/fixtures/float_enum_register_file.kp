@@ -37,3 +37,8 @@ fun main() {
     print(takeMerge(mkMerge()))
     print(takePure(mkPure()))
 }
+// stdout-begin
+// stdout: 1.500000
+// stdout: 2.500000
+// stdout: 0.000000
+// stdout: 2.500000

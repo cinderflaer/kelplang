@@ -68,3 +68,13 @@ fun main() {
     print(classify(false, Maybe.Yes(n = 7)))
     print(classify(false, Maybe.No))
 }
+// stdout-begin
+// stdout: 3
+// stdout: 0
+// stdout: 5
+// stdout: 0
+// stdout: 1
+// stdout: 3
+// stdout: 1
+// stdout: 7
+// stdout: 0

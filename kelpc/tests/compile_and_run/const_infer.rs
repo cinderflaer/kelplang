@@ -8,10 +8,7 @@ use super::*;
 
 #[test]
 pub(crate) fn a_const_without_a_type_takes_the_type_of_its_value() {
-    assert_compiles_and_runs(
-        "tests/fixtures/const_infer.kp",
-        "268435456\n10\n1.500000\nx\ntrue\n44\n11\n",
-    );
+    assert_fixture_runs("tests/fixtures/const_infer.kp");
 }
 
 #[test]

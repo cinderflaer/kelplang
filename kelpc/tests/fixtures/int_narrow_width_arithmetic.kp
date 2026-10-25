@@ -69,3 +69,28 @@ fun main() {
     f += 10
     print(f)
 }
+// stdout-begin
+// stdout: 44
+// stdout: 100
+// stdout: 156
+// stdout: 32
+// stdout: 2
+// stdout: 0
+// stdout: 64
+// stdout: 236
+// stdout: 172
+// stdout: 32
+// stdout: 50
+// stdout: 55
+// stdout: 255
+// stdout: 44464
+// stdout: 24064
+// stdout: 5535
+// stdout: 10000
+// stdout: 88
+// stdout: 244
+// stdout: smaller
+// stdout: 44
+// stdout: 32
+// stdout: 4
+// stdout: 4

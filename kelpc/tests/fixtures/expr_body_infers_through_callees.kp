@@ -7,3 +7,5 @@ fun add(a: i32, b: i32) = a + b
 fun main() {
     print(twice(3))
 }
+// stdout-begin
+// stdout: 6

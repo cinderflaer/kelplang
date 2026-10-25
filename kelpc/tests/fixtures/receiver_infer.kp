@@ -50,3 +50,9 @@ fun main() {
     print(read(c))
     c.report()
 }
+// stdout-begin
+// stdout: 2
+// stdout: 3
+// stdout: 6
+// stdout: 6
+// stdout: 6

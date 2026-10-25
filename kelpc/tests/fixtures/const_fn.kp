@@ -43,3 +43,8 @@ fun main() {
     // and it composes with everything arithmetic does.
     print(TABLE_ENTRIES + FIVE_FACTORIAL)
 }
+// stdout-begin
+// stdout: 24
+// stdout: 120
+// stdout: 128
+// stdout: 144

@@ -33,3 +33,6 @@ fun main() {
     val err = h(n = 0)
     if let Err(e) = &err { print(e.to_i32()) }
 }
+// stdout-begin
+// stdout: 6
+// stdout: 9

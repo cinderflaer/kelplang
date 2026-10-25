@@ -46,3 +46,12 @@ fun main() {
     val (pt, n) = h.get_or(key = 1, fallback = (Pt(x = 0, y = 0), 0))
     print(pt.x + pt.y + n)
 }
+// stdout-begin
+// stdout: 30
+// stdout: 15
+// stdout: 3
+// stdout: 2
+// stdout: 4
+// stdout: true
+// stdout: 19
+// stdout: 6

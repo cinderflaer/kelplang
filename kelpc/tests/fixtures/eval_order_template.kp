@@ -5,3 +5,5 @@ fun main() {
     m.insert("b", 20)
     print("removed ${m.remove("a")}, ${m.len()} left")
 }
+// stdout-begin
+// stdout: removed 10, 1 left

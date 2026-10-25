@@ -59,3 +59,14 @@ fun main() {
 
     print(first_len(["abc", "de"]))
 }
+// stdout-begin
+// stdout: 1.500000
+// stdout: 2.250000
+// stdout: 3.750000
+// stdout: 4.500000
+// stdout: 9
+// stdout: 9
+// stdout: 7
+// stdout: 10
+// stdout: 4
+// stdout: 3

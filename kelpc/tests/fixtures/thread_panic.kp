@@ -35,3 +35,7 @@ fun main() {
     }
     print(counter.load(order = atomic.Ordering.SeqCst))
 }
+// stdout-begin
+// stdout: worker exploded
+// stdout: 0
+// stdout: 42

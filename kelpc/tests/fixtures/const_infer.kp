@@ -18,3 +18,11 @@ fun main() {
     val n: int = LIMIT
     print(n + 1)
 }
+// stdout-begin
+// stdout: 268435456
+// stdout: 10
+// stdout: 1.500000
+// stdout: x
+// stdout: true
+// stdout: 44
+// stdout: 11

@@ -16,3 +16,6 @@ fun main() {
         pass = 1
     }
 }
+// stdout-begin
+// stdout: 12
+// stdout: 1234

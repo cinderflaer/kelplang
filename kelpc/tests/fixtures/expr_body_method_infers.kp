@@ -10,3 +10,5 @@ fun main() {
     val r = Rect(w = 3, h = 4)
     print(r.doubled())
 }
+// stdout-begin
+// stdout: 24

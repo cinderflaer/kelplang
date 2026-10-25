@@ -11,3 +11,9 @@ fun main() {
     print(str.byte("abc", 1))
     print(math.is_nan(x = 0.0))
 }
+// stdout-begin
+// stdout: true
+// stdout: 6
+// stdout: llo
+// stdout: 98
+// stdout: false

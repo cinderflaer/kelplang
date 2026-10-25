@@ -46,3 +46,18 @@ fun main() {
     print(m.len())
     print(m.is_empty())
 }
+// stdout-begin
+// stdout: 3
+// stdout: two
+// stdout: three
+// stdout: fallback
+// stdout: one
+// stdout: 2
+// stdout: 2
+// stdout: beta
+// stdout: gamma
+// stdout: 2
+// stdout: two
+// stdout: three
+// stdout: 0
+// stdout: true

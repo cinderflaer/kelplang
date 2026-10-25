@@ -50,3 +50,6 @@ fun main() {
         print(x)
     }
 }
+// stdout-begin
+// stdout: 11
+// stdout: 21

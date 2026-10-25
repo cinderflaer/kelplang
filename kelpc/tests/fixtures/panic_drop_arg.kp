@@ -33,3 +33,11 @@ fun main() {
         Err(e) -> print(e.message)
     }
 }
+// stdout-begin
+// stdout: drop
+// stdout: 5
+// stdout: boom
+// stdout: ok
+// stdout: drop
+// stdout: 6
+// stdout: 0

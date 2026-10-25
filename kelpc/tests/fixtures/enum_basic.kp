@@ -29,3 +29,10 @@ fun main() {
     print(tag(r))
     print(tag(e))
 }
+// stdout-begin
+// stdout: 12.000000
+// stdout: 12.000000
+// stdout: 0.000000
+// stdout: 1
+// stdout: 2
+// stdout: 2

@@ -66,3 +66,13 @@ fun main() {
     var b = Box.of([7, 8, 9])
     print(b.get().get(i = 2))
 }
+// stdout-begin
+// stdout: 9 2
+// stdout: 6
+// stdout: bee
+// stdout: 3
+// stdout: 2
+// stdout: 3
+// stdout: 9
+// stdout: 2
+// stdout: 9

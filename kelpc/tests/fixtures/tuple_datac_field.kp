@@ -11,3 +11,7 @@ fun main() {
     print(hi)
     print(s.from.x + s.from.y + lo + hi)
 }
+// stdout-begin
+// stdout: 4
+// stdout: 5
+// stdout: 14

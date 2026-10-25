@@ -18,3 +18,9 @@ fun main() {
     print(m.len())
     print(m.get(key = Half(x = 2)))
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: 2
+// stdout: 20

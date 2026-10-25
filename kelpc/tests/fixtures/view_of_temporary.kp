@@ -4,3 +4,5 @@ fun main() {
     val v = String.from_str("x").view()
     print(v)
 }
+// stdout-begin
+// stdout: x

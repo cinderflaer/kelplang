@@ -62,3 +62,18 @@ fun main() {
     print(s12(v = &rc))
     print(c.len())
 }
+// stdout-begin
+// stdout: 4
+// stdout: 111
+// stdout: 987
+// stdout: 321
+// stdout: 1
+// stdout: 4
+// stdout: 98
+// stdout: 76
+// stdout: 2
+// stdout: 4
+// stdout: 10101
+// stdout: 90807
+// stdout: 30201
+// stdout: 1

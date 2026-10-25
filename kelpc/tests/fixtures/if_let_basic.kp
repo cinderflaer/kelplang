@@ -67,3 +67,14 @@ fun main() {
         print(r)
     }
 }
+// stdout-begin
+// stdout: 2.000000
+// stdout: 0.000000
+// stdout: 0.000000
+// stdout: 4
+// stdout: 0
+// stdout: 3.000000
+// stdout: -1.000000
+// stdout: 6.000000
+// stdout: 5.000000
+// stdout: 7.000000

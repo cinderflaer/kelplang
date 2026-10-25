@@ -12,3 +12,7 @@ fun main() {
     val b = a
     print("moved")
 }
+// stdout-begin
+// stdout: moved
+// stdout: leaf
+// stdout: 1

@@ -20,3 +20,6 @@ fun main() {
     }
     print(rw.read { v -> *v })
 }
+// stdout-begin
+// stdout: worker failed
+// stdout: 7

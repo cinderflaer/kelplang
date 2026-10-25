@@ -36,3 +36,7 @@ fun main() {
     print(text)
     print(n)
 }
+// stdout-begin
+// stdout: moved
+// stdout: kept
+// stdout: 2

@@ -45,3 +45,10 @@ fun main() {
         Err(e) -> print(e)
     }
 }
+// stdout-begin
+// stdout: ok
+// stdout: failed
+// stdout: ok
+// stdout: failed
+// stdout: unit ok
+// stdout: unit failed

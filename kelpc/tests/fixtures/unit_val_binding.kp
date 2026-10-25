@@ -10,3 +10,5 @@ fun noise() {
 fun main() {
     val x = noise()
 }
+// stdout-begin
+// stdout: 1

@@ -42,3 +42,8 @@ fun main() {
     )
     print(result.is_err(r = tagged))
 }
+// stdout-begin
+// stdout: 5
+// stdout: true
+// stdout: true
+// stdout: true

@@ -42,3 +42,18 @@ fun main() {
     val a: u8 = 'A'
     print(a == 0x41)
 }
+// stdout-begin
+// stdout: 255
+// stdout: 10
+// stdout: 511
+// stdout: true
+// stdout: 196
+// stdout: 184
+// stdout: 173
+// stdout: 1
+// stdout: 0
+// stdout: 255
+// stdout: 4294967295
+// stdout: 2147483647
+// stdout: 4294967295
+// stdout: true

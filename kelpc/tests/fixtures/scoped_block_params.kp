@@ -40,3 +40,12 @@ fun main() {
     print(sum(xs) { n -> n - 1 })
     print(sum(xs) { n -> if n > 5 { n } else { 0 } })
 }
+// stdout-begin
+// stdout: 4
+// stdout: 5
+// stdout: 6
+// stdout: 150
+// stdout: 101
+// stdout: 102
+// stdout: 12
+// stdout: 6

@@ -14,3 +14,6 @@ fun main() {
     val got = m.wait_while_timeout(&cv, is_zero, 30) { v -> *v }
     print(option.unwrap(o = got))
 }
+// stdout-begin
+// stdout: true
+// stdout: 7

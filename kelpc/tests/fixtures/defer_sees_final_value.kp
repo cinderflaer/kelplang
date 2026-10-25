@@ -5,3 +5,5 @@ fun main() {
     defer print(x)
     x = 42
 }
+// stdout-begin
+// stdout: 42

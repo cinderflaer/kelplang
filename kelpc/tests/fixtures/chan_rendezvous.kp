@@ -65,3 +65,8 @@ fun main() {
         None -> print("kept")
     }
 }
+// stdout-begin
+// stdout: blocked
+// stdout: 7
+// stdout: done
+// stdout: handed back

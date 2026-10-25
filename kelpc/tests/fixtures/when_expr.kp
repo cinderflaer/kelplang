@@ -9,3 +9,7 @@ fun main() {
     print(classify(-5))
     print(classify(0))
 }
+// stdout-begin
+// stdout: pos
+// stdout: neg
+// stdout: zero

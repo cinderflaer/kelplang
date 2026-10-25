@@ -14,3 +14,8 @@ fun main() {
         print(i)
     }
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 4
+// stdout: 5

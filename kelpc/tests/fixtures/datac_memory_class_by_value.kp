@@ -67,3 +67,16 @@ fun main() {
     print(pair_and_quad(Pair3(a = 1, b = 2), Quad(a = 3, b = 4, c = 5)))
     print(float_and_quad(1.5, 7, Quad(a = 1, b = 2, c = 3)))
 }
+// stdout-begin
+// stdout: 6
+// stdout: 15
+// stdout: 24
+// stdout: 150
+// stdout: 579
+// stdout: 45
+// stdout: 11
+// stdout: 11
+// stdout: 11
+// stdout: 106
+// stdout: 1234
+// stdout: 13

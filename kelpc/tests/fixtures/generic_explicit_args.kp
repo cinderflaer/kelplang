@@ -37,3 +37,11 @@ fun main() {
     val b = 3
     print(a < b)
 }
+// stdout-begin
+// stdout: 1
+// stdout: one
+// stdout: 7
+// stdout: 0
+// stdout: 5
+// stdout: text
+// stdout: true

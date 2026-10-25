@@ -47,3 +47,17 @@ fun main() {
     print(m.has(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha"))))
     print(m.has(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "beta"))))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 10
+// stdout: 20
+// stdout: false
+// stdout: 2
+// stdout: 99
+// stdout: 2
+// stdout: alpha
+// stdout: 1.500000
+// stdout: 20
+// stdout: 1
+// stdout: true
+// stdout: false

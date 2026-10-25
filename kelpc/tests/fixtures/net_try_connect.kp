@@ -26,3 +26,7 @@ fun main() {
     }
     print("survived")
 }
+// stdout-begin
+// stdout: err net.connect: connection failed
+// stdout:   errno 111: Connection refused
+// stdout: survived

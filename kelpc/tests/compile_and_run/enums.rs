@@ -6,23 +6,17 @@ use super::*;
 
 #[test]
 pub(crate) fn an_enum_matches_on_its_live_variant() {
-    assert_compiles_and_runs(
-        "tests/fixtures/enum_basic.kp",
-        "12.000000\n12.000000\n0.000000\n1\n2\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/enum_basic.kp");
 }
 
 #[test]
 pub(crate) fn an_owned_payload_binds_as_a_borrow() {
-    assert_compiles_and_runs(
-        "tests/fixtures/enum_owned.kp",
-        "5\n0\n0\n5\nfirst\n4\n0\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/enum_owned.kp");
 }
 
 #[test]
 pub(crate) fn a_recursive_enum_nests_through_a_box() {
-    assert_compiles_and_runs("tests/fixtures/enum_recursive.kp", "0\n7\n6\n");
+    assert_fixture_runs("tests/fixtures/enum_recursive.kp");
 }
 
 #[test]
@@ -34,18 +28,12 @@ pub(crate) fn an_enum_payload_is_laid_out_the_way_the_layout_rule_says() {
     // and `Wide`'s is at 8 with a 24-byte union (32 bytes, `MEMORY`). A wrong
     // payload offset and a wrong union size are both silent, which is what
     // makes this fixture worth its length.
-    assert_compiles_and_runs(
-        "tests/fixtures/enum_layout.kp",
-        "5\n17\n-1\n41\n-2\n14\n15\n-3\n17\n1\n-1\n20\n-2\n404\n0\n202\n0\n116\n2\n5\n",
-    );
+    assert_fixture_runs("tests/fixtures/enum_layout.kp");
 }
 
 #[test]
 pub(crate) fn an_enum_is_a_list_element_and_a_box_element() {
-    assert_compiles_and_runs(
-        "tests/fixtures/enum_in_containers.kp",
-        "2\n5\n0\n6\n0\n1\n5\n0\n0\n6\n0\n0\n4\n0\n5\n9\n-1\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/enum_in_containers.kp");
 }
 
 #[test]
@@ -58,10 +46,7 @@ pub(crate) fn the_enum_node_kinds_keep_two_live_locals_in_different_registers() 
     // live on the far side, the two shapes the slice's report claimed were
     // probed when the fixture held neither. A repeat of the mistake is a wrong
     // sum rather than a silent one.
-    assert_compiles_and_runs(
-        "tests/fixtures/enum_liveness.kp",
-        "21\n143\n-13\n141\n42\n-1\n185\n86\n297\n-3\n226\n136\n",
-    );
+    assert_fixture_runs("tests/fixtures/enum_liveness.kp");
 }
 
 #[test]
@@ -71,25 +56,19 @@ pub(crate) fn nested_aggregate_literals_are_staged_in_slots_of_their_own() {
     // another one overwrote what the outer value had already written. Three of
     // these five prints were wrong before the fix (`7` for `6`, `10` for `9`,
     // `20` for `19`).
-    assert_compiles_and_runs(
-        "tests/fixtures/nested_literal_staging.kp",
-        "6\n10\n9\n19\n13\n",
-    );
+    assert_fixture_runs("tests/fixtures/nested_literal_staging.kp");
 }
 
 #[test]
 pub(crate) fn an_enum_is_a_container_element_and_a_container_drops_it() {
-    assert_compiles_and_runs(
-        "tests/fixtures/enum_container.kp",
-        "12.000000\n0.000000\n4\n12\n0\n4\n",
-    );
+    assert_fixture_runs("tests/fixtures/enum_container.kp");
 }
 
 #[test]
 pub(crate) fn when_arms_do_not_need_a_newline_inside_parentheses() {
     // A `when` is an expression, and inside `(` `)` the lexer emits no
     // newline tokens at all, so an arm separator cannot be required there.
-    assert_compiles_and_runs("tests/fixtures/when_in_args.kp", "1\n2\n2\n");
+    assert_fixture_runs("tests/fixtures/when_in_args.kp");
 }
 
 #[test]
@@ -97,7 +76,7 @@ pub(crate) fn when_a_temporary_scrutinee_is_staged_into_a_local() {
     // A call's result is not a place, so it is bound to a local of its own and
     // the arms match that: a payload binds as a borrow, and the borrow needs
     // the temporary to outlive the arm.
-    assert_compiles_and_runs("tests/fixtures/enum_temp_scrutinee.kp", "0.000000\n");
+    assert_fixture_runs("tests/fixtures/enum_temp_scrutinee.kp");
 }
 
 #[test]
@@ -105,17 +84,14 @@ pub(crate) fn when_a_field_of_a_temporary_is_staged_at_its_root() {
     // `mk().t` stages `mk()` and matches `#when0.t` rather than staging the
     // field itself, so the whole `Holder` is freed once, `extra` included.
     // The same fixture covers the `if let` desugar and its `elif let` chain.
-    assert_compiles_and_runs(
-        "tests/fixtures/scrutinee_field_of_temporary.kp",
-        "4\n4\n4\n4\n8\n",
-    );
+    assert_fixture_runs("tests/fixtures/scrutinee_field_of_temporary.kp");
 }
 
 #[test]
 pub(crate) fn an_enum_method_is_called_on_a_binding() {
     // A method declared on an `enum` is called on a value of the enum type: a
     // binding reaches the method tables and resolves `fun Shape.label()`.
-    assert_compiles_and_runs("tests/fixtures/enum_method_binding.kp", "empty\ncircle\n");
+    assert_fixture_runs("tests/fixtures/enum_method_binding.kp");
 }
 
 #[test]
@@ -157,7 +133,7 @@ pub(crate) fn enum_misuse_is_rejected() {
 // enum of the module declares it. The qualified form still works.
 #[test]
 pub(crate) fn a_unique_variant_builds_by_its_bare_name() {
-    assert_compiles_and_runs("tests/fixtures/enum_bare_construct.kp", "12.000000\n0.000000\n3.000000\n");
+    assert_fixture_runs("tests/fixtures/enum_bare_construct.kp");
 }
 
 // #281: a variant name shared by two enums of the module must be qualified.
@@ -172,7 +148,7 @@ pub(crate) fn a_variant_name_shared_by_two_enums_must_be_qualified() {
 // #281: a function of the same name keeps the bare name.
 #[test]
 pub(crate) fn a_function_of_the_same_name_keeps_the_bare_name() {
-    assert_compiles_and_runs("tests/fixtures/enum_bare_function.kp", "2\n2.000000\n");
+    assert_fixture_runs("tests/fixtures/enum_bare_function.kp");
 }
 
 // #281: a prelude name is never rewritten to a module enum's variant.
@@ -187,38 +163,26 @@ pub(crate) fn a_prelude_name_is_never_a_bare_variant() {
 
 #[test]
 pub(crate) fn if_let_binds_one_variant_and_else_covers_the_rest() {
-    assert_compiles_and_runs(
-        "tests/fixtures/if_let_basic.kp",
-        "2.000000\n0.000000\n0.000000\n4\n0\n3.000000\n-1.000000\n6.000000\n5.000000\n7.000000\n",
-    );
+    assert_fixture_runs("tests/fixtures/if_let_basic.kp");
 }
 
 #[test]
 pub(crate) fn if_let_else_chain_reads_its_scrutinee_more_than_once() {
-    assert_compiles_and_runs(
-        "tests/fixtures/if_let_chain_same_scrutinee.kp",
-        "12.566360\n2\n2.000000\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/if_let_chain_same_scrutinee.kp");
 }
 
 #[test]
 pub(crate) fn let_else_binds_through_option_and_enum() {
     // design/syntax.md (kelp wiki) 4.1: a matched let-else binds for the rest of the block,
     // and a missed one runs its else block (return, or continue in a loop).
-    assert_compiles_and_runs(
-        "tests/fixtures/let_else.kp",
-        "40\n80\n-1\n2.000000\n0.000000\n4\n0\n30\n",
-    );
+    assert_fixture_runs("tests/fixtures/let_else.kp");
 }
 
 #[test]
 pub(crate) fn let_else_else_block_drops_the_enclosing_scope() {
     // The else block's `return` drops the local declared before the `let`,
     // the same drop a plain `return` makes, before the caller prints.
-    assert_compiles_and_runs(
-        "tests/fixtures/let_else_drops.kp",
-        "guard\n0\n-1\nguard\n3\n33\n",
-    );
+    assert_fixture_runs("tests/fixtures/let_else_drops.kp");
 }
 
 #[test]
@@ -251,10 +215,7 @@ pub(crate) fn an_else_if_let_behind_a_plain_if_compiles() {
     // internal error rather than a program. The chain starts with a plain
     // `if`, a payload-free variant and a link whose pattern misses are all
     // here.
-    assert_compiles_and_runs(
-        "tests/fixtures/else_if_let.kp",
-        "3\n0\n5\n0\n1\n3\n1\n7\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/else_if_let.kp");
 }
 
 // ---------------------------------------------------------------------------
@@ -263,18 +224,12 @@ pub(crate) fn an_else_if_let_behind_a_plain_if_compiles() {
 
 #[test]
 pub(crate) fn try_propagates_a_failure_out_of_the_enclosing_function() {
-    assert_compiles_and_runs(
-        "tests/fixtures/try_operator.kp",
-        "2\n1\n-3\n4\n-1\n3\n-3\n",
-    );
+    assert_fixture_runs("tests/fixtures/try_operator.kp");
 }
 
 #[test]
 pub(crate) fn option_and_result_ship_as_stdlib_modules() {
-    assert_compiles_and_runs(
-        "tests/fixtures/stdlib_option_result.kp",
-        "true\nfalse\n2\nfalse\n-1\ntrue\n1\n1\ntrue\n-1\n0\n2\nodd\ntrue\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/stdlib_option_result.kp");
 }
 
 #[test]
@@ -291,10 +246,7 @@ pub(crate) fn try_frees_the_frame_it_returns_from() {
     // success paths (freed exactly once) and the failure paths (freed at the
     // `?`); the AddressSanitizer gate below is what proves the second half,
     // because a leak prints nothing.
-    assert_compiles_and_runs(
-        "tests/fixtures/try_drops_frame.kp",
-        "9\n-2\n6\n-2\n14\n-2\n4\n-1\n-2\n7\n9\n-2\n",
-    );
+    assert_fixture_runs("tests/fixtures/try_drops_frame.kp");
 }
 
 #[test]
@@ -305,10 +257,7 @@ pub(crate) fn a_propagated_failure_frees_the_frame_it_leaves() {
     // fixture is the same mechanism without the closure. The printed values pin
     // the success arm; the valgrind sweep is what proves the failure arm frees,
     // because a leak prints nothing.
-    assert_compiles_and_runs(
-        "tests/fixtures/try_frame_drops.kp",
-        "9\n-1\n6\n-1\n14\n-1\n-1\n7\n6\n-1\n",
-    );
+    assert_fixture_runs("tests/fixtures/try_frame_drops.kp");
 }
 
 #[test]
@@ -319,7 +268,7 @@ pub(crate) fn a_one_eightbyte_try_payload_builds_without_a_destination() {
     // about a three-byte `datac`. `Result<D3, u8>` is eight bytes in total, so
     // its success payload fits `rax` and the program must build, while a
     // genuinely wider payload keeps the refusal.
-    assert_compiles_and_runs("tests/fixtures/try_narrow_payload.kp", "6\n9\n");
+    assert_fixture_runs("tests/fixtures/try_narrow_payload.kp");
 }
 
 #[test]
@@ -346,57 +295,42 @@ pub(crate) fn try_misuse_is_rejected() {
 
 #[test]
 pub(crate) fn a_generic_datac_and_enum_are_monomorphized_per_use_site() {
-    assert_compiles_and_runs(
-        "tests/fixtures/generic_type_basic.kp",
-        "3\n3\nthree\n5\n9\n6\n7\n0\n19\n",
-    );
+    assert_fixture_runs("tests/fixtures/generic_type_basic.kp");
 }
 
 #[test]
 pub(crate) fn a_generic_instantiation_owns_and_drops_like_any_other_type() {
-    assert_compiles_and_runs("tests/fixtures/generic_owned.kp", "5\n0\n2\n");
+    assert_fixture_runs("tests/fixtures/generic_owned.kp");
 }
 
 #[test]
 pub(crate) fn a_generic_type_can_be_recursive_through_a_box() {
-    assert_compiles_and_runs("tests/fixtures/generic_recursive.kp", "6\none\ntwo\n0\n9\n");
+    assert_fixture_runs("tests/fixtures/generic_recursive.kp");
 }
 
 #[test]
 pub(crate) fn a_generic_function_is_instantiated_per_call_site() {
-    assert_compiles_and_runs(
-        "tests/fixtures/generic_function_basic.kp",
-        "5\ntrue\n2.500000\ntext\n3\nonce\n1\n9\n",
-    );
+    assert_fixture_runs("tests/fixtures/generic_function_basic.kp");
 }
 
 #[test]
 pub(crate) fn a_generic_function_works_over_an_owned_type() {
-    assert_compiles_and_runs(
-        "tests/fixtures/generic_function_owned.kp",
-        "true\nfalse\ntrue\ntrue\n5\n",
-    );
+    assert_fixture_runs("tests/fixtures/generic_function_owned.kp");
 }
 
 #[test]
 pub(crate) fn a_method_on_a_generic_type_is_instantiated_per_receiver() {
-    assert_compiles_and_runs(
-        "tests/fixtures/generic_method_basic.kp",
-        "1\n3\n2\n3\n9\n7\n4\n",
-    );
+    assert_fixture_runs("tests/fixtures/generic_method_basic.kp");
 }
 
 #[test]
 pub(crate) fn explicit_type_arguments_are_written_at_the_call() {
-    assert_compiles_and_runs(
-        "tests/fixtures/generic_explicit_args.kp",
-        "1\none\n7\n0\n5\ntext\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/generic_explicit_args.kp");
 }
 
 #[test]
 pub(crate) fn nested_generic_constructions_infer_from_their_arguments() {
-    assert_compiles_and_runs("tests/fixtures/generic_nested_inference.kp", "1\n2\n3\n");
+    assert_fixture_runs("tests/fixtures/generic_nested_inference.kp");
 }
 
 #[test]

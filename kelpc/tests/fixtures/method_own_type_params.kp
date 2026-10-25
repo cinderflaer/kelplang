@@ -26,3 +26,10 @@ fun main() {
     print(r.a)
     print(r.b)
 }
+// stdout-begin
+// stdout: 3
+// stdout: true
+// stdout: true
+// stdout: 2
+// stdout: 2
+// stdout: 7

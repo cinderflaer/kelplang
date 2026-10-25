@@ -45,3 +45,9 @@ fun main() {
     print(sum)
     print(keep.len().to_i32())
 }
+// stdout-begin
+// stdout: 4
+// stdout: 10
+// stdout: 1
+// stdout: 999000
+// stdout: 1

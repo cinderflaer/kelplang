@@ -18,3 +18,7 @@ fun main() {
     val no = choose(flag = false)
     print(no)
 }
+// stdout-begin
+// stdout: second
+// stdout: else
+// stdout: first

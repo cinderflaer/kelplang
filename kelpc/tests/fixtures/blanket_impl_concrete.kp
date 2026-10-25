@@ -30,3 +30,6 @@ fun main() {
     val p = Point(x = 3, y = 4)
     print(p.tag())
 }
+// stdout-begin
+// stdout: 700
+// stdout: 3400

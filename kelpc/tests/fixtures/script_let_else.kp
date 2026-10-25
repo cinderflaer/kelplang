@@ -11,3 +11,6 @@ maybe() => Pick = Yes(value = 4)
 let Yes(n) = maybe() else { return }
 print(n)
 print(n + 1)
+// stdout-begin
+// stdout: 4
+// stdout: 5

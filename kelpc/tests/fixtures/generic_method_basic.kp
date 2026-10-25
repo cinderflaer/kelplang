@@ -37,3 +37,11 @@ fun main() {
     val name = Pair(first = String.from_str(s = "abcd"), second = String.from_str(s = "b"))
     print(name.first_len())
 }
+// stdout-begin
+// stdout: 1
+// stdout: 3
+// stdout: 2
+// stdout: 3
+// stdout: 9
+// stdout: 7
+// stdout: 4

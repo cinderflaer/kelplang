@@ -399,3 +399,5 @@ fun main() {
 
     print("differing cases: ${bad}")
 }
+// stdout-begin
+// stdout: differing cases: 0

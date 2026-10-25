@@ -24,3 +24,7 @@ fun main() {
     val c = Circle(r = 4.0)
     print(through_named(&c))
 }
+// stdout-begin
+// stdout: circle
+// stdout: a shape
+// stdout: 16.000000

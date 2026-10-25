@@ -13,3 +13,10 @@ fun main() {
     val e = Bytes.empty()
     print(e.len())
 }
+// stdout-begin
+// stdout: 5
+// stdout: 104
+// stdout: Hello
+// stdout: Hello
+// stdout: false
+// stdout: 0

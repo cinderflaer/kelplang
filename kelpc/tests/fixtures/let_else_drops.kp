@@ -26,3 +26,10 @@ fun main() {
     print(check(id = 0))
     print(check(id = 3))
 }
+// stdout-begin
+// stdout: guard
+// stdout: 0
+// stdout: -1
+// stdout: guard
+// stdout: 3
+// stdout: 33

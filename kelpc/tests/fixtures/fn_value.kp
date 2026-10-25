@@ -93,3 +93,19 @@ fun main() {
     val m = math.sqrt
     print(m(16.0))
 }
+// stdout-begin
+// stdout: 42
+// stdout: 10
+// stdout: 12
+// stdout: 12
+// stdout: 4
+// stdout: 2
+// stdout: 12
+// stdout: 18
+// stdout: 27
+// stdout: 22
+// stdout: 0
+// stdout: 2
+// stdout: 4
+// stdout: 30
+// stdout: 4.000000

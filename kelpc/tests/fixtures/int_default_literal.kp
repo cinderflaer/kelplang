@@ -16,3 +16,9 @@ fun main() {
     val u: u8 = 255
     print(u)
 }
+// stdout-begin
+// stdout: 3000000000
+// stdout: 10
+// stdout: 4294967296
+// stdout: 2147483647
+// stdout: 255

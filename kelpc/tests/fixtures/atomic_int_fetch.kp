@@ -43,3 +43,26 @@ fun main() {
     print(plain.fetch_or(value = 4294967294, order = atomic.Ordering.SeqCst))
     print(plain.load(order = atomic.Ordering.SeqCst))
 }
+// stdout-begin
+// stdout: 200
+// stdout: 200
+// stdout: 210
+// stdout: 205
+// stdout: 192
+// stdout: 195
+// stdout: 194
+// stdout: 1
+// stdout: 40001
+// stdout: -3
+// stdout: -3
+// stdout: -3
+// stdout: -2
+// stdout: 9000000000
+// stdout: 8999999999
+// stdout: 0
+// stdout: 1000000
+// stdout: 1000001
+// stdout: 0
+// stdout: -8
+// stdout: 1
+// stdout: 4294967295

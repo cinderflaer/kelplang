@@ -39,3 +39,18 @@ fun main() {
     print(nan <= 1.0)
     print(nan >= 1.0)
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: false
+// stdout: false
+// stdout: false
+// stdout: false

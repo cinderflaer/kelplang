@@ -25,3 +25,9 @@ fun main() {
     print("4 bytes=${Bytes.from_str("by")} len=${named.len()}")
     print("5 two buffers=${str.to_upper("ab")}${String.from_str("cd")}")
 }
+// stdout-begin
+// stdout: 1 owned=one scalar=7 float=1.500000
+// stdout: 2 borrowed=named after=9
+// stdout: 3 view=bcd tail=42
+// stdout: 4 bytes=by len=5
+// stdout: 5 two buffers=ABcd

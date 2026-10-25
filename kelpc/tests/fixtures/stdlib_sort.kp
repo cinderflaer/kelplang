@@ -33,3 +33,17 @@ fun main() {
     empty.reverse()
     print(empty.len())
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 3
+// stdout: 1
+// stdout: true
+// stdout: false
+// stdout: 2
+// stdout: 3
+// stdout: 3
+// stdout: false
+// stdout: true
+// stdout: 0

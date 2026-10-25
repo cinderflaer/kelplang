@@ -35,3 +35,7 @@ fun main() {
     give_up(tx)
     describe(rx.recv_timeout(20000))
 }
+// stdout-begin
+// stdout: timeout
+// stdout: 99
+// stdout: closed

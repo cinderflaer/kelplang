@@ -37,3 +37,15 @@ fun main() {
     print(option.is_none(o = big.try_to_i32()))
     print(option.is_some(o = big.try_to_u64()))
 }
+// stdout-begin
+// stdout: 6
+// stdout: -4
+// stdout: -3
+// stdout: 7
+// stdout: -1
+// stdout: 1
+// stdout: -7
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true

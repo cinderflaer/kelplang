@@ -54,3 +54,6 @@ fun main() {
         Err(e) -> print(e.message)
     }
 }
+// stdout-begin
+// stdout: 300
+// stdout: 1470

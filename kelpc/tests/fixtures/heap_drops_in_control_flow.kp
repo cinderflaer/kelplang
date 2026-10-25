@@ -27,3 +27,9 @@ fun main() {
     }
     print(size)
 }
+// stdout-begin
+// stdout: loop
+// stdout: loop
+// stdout: extra
+// stdout: keep
+// stdout: 5

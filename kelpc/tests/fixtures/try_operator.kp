@@ -72,3 +72,11 @@ fun main() {
     print(res_len(r = plus_half(n = 4)))
     print(res_len(r = plus_half(n = 5)))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 1
+// stdout: -3
+// stdout: 4
+// stdout: -1
+// stdout: 3
+// stdout: -3

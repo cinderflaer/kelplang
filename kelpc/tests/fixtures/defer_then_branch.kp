@@ -12,3 +12,9 @@ fun main() {
     print(f(c = true))
     print(f(c = false))
 }
+// stdout-begin
+// stdout: then
+// stdout: out
+// stdout: 1
+// stdout: out
+// stdout: 2

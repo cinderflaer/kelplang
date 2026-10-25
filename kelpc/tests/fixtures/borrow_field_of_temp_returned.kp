@@ -8,3 +8,5 @@ fun main() {
     val s = mkName().name.as_str()
     print(s)
 }
+// stdout-begin
+// stdout: x

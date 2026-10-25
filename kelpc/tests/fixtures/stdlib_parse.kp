@@ -52,3 +52,27 @@ fun main() {
     print(str.char_at("abc", 9))
     print(str.char_count("héllo"))
 }
+// stdout-begin
+// stdout: true
+// stdout: 123
+// stdout: true
+// stdout: -9223372036854775808
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: 1
+// stdout: 2
+// stdout: 0
+// stdout: true
+// stdout: 18446744073709551615
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: 250.000000
+// stdout: true
+// stdout: 104
+// stdout: 233
+// stdout: 3
+// stdout: 0
+// stdout: 5

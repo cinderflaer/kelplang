@@ -6,3 +6,6 @@ fun main() {
     val d: f32 = c.to_f32()
     print(d * 2)
 }
+// stdout-begin
+// stdout: 2.500000
+// stdout: 4.500000

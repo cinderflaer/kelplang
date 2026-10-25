@@ -24,3 +24,8 @@ fun main() {
     }
     print(names.len())
 }
+// stdout-begin
+// stdout: 0
+// stdout: 10
+// stdout: 20
+// stdout: 3

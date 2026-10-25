@@ -20,3 +20,7 @@ fun main() {
         Err(e) -> print(e.message)
     }
 }
+// stdout-begin
+// stdout: 3
+// stdout: 5
+// stdout: 3

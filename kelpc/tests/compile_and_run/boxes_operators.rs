@@ -7,10 +7,7 @@ use super::*;
 
 #[test]
 pub(crate) fn a_box_holds_a_value_or_nothing() {
-    assert_compiles_and_runs(
-        "tests/fixtures/box_basic.kp",
-        "true\n7\nfalse\n9\ntrue\nhi\n5\n2\n1\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/box_basic.kp");
 }
 
 // Manual memory blocks, slice 1 (decision 139). The checker parses `block name: T { ... }`
@@ -18,7 +15,7 @@ pub(crate) fn a_box_holds_a_value_or_nothing() {
 
 #[test]
 pub(crate) fn block_stays_an_ordinary_name_outside_a_block_introducer() {
-    assert_compiles_and_runs("tests/fixtures/block_names_stay_ordinary.kp", "5\n8\n3\n");
+    assert_fixture_runs("tests/fixtures/block_names_stay_ordinary.kp");
 }
 
 #[test]
@@ -149,7 +146,7 @@ pub(crate) fn a_block_element_holds_scalar_fields_only() {
 pub(crate) fn a_block_region_runs_and_releases_on_every_exit() {
     // The end of a block, a loop, a `return`, a `?` that leaves the function,
     // and a `defer` in the caller (decision 139, step 4).
-    assert_compiles_and_runs("tests/fixtures/block_region_runs.kp", "5\n3\n7\n0\n1\n2\n5\n");
+    assert_fixture_runs("tests/fixtures/block_region_runs.kp");
 }
 
 #[test]
@@ -157,14 +154,14 @@ pub(crate) fn a_block_and_shared_pool_code_share_one_file() {
     // Decision 139, step 6: shared-pool code and one block side by side, with no
     // mode line. The loop creates and frees a thousand blocks, and the list that
     // lives in shared-pool memory is intact afterwards.
-    assert_compiles_and_runs("tests/fixtures/block_end_to_end.kp", "4\n10\n1\n999000\n1\n");
+    assert_fixture_runs("tests/fixtures/block_end_to_end.kp");
 }
 
 #[test]
 pub(crate) fn a_block_box_is_read_through_get() {
     // `cell.get().value` reads a field of the element, which stays in its block
     // (design section 5). The zeroed element is 0, so the result is the argument.
-    assert_compiles_and_runs("tests/fixtures/block_box_get_reads_field.kp", "7\n");
+    assert_fixture_runs("tests/fixtures/block_box_get_reads_field.kp");
 }
 
 #[test]
@@ -184,15 +181,12 @@ pub(crate) fn a_block_holds_one_box() {
 pub(crate) fn a_datac_can_be_recursive_through_a_box() {
     // The linked list: `next` is an owned pointer, `Box.empty()` terminates
     // it, and the whole chain is freed recursively (also under ASAN).
-    assert_compiles_and_runs(
-        "tests/fixtures/box_recursive.kp",
-        "6\n3\n3\n2\n1\n203\n19906\n198\ntrue\n198\n",
-    );
+    assert_fixture_runs("tests/fixtures/box_recursive.kp");
 }
 
 #[test]
 pub(crate) fn a_datac_can_be_recursive_through_a_list_and_mutually_recursive_through_boxes() {
-    assert_compiles_and_runs("tests/fixtures/recursive_datac.kp", "113\n2\n100\nl1\nl1\nb1\n");
+    assert_fixture_runs("tests/fixtures/recursive_datac.kp");
 }
 
 #[test]
@@ -212,26 +206,17 @@ pub(crate) fn a_partial_move_takes_an_owned_field_and_leaves_the_rest() {
     // frees the field that stayed, so both this fixture and
     // `partial_move_conditional` are in the AddressSanitizer and valgrind
     // gates: a double free or a leak fails there.
-    assert_compiles_and_runs(
-        "tests/fixtures/partial_move_field.kp",
-        "kept\n1\n",
-    );
+    assert_fixture_runs("tests/fixtures/partial_move_field.kp");
 }
 
 #[test]
 pub(crate) fn a_partial_move_on_one_branch_still_frees_once_on_both() {
-    assert_compiles_and_runs(
-        "tests/fixtures/partial_move_conditional.kp",
-        "a\n1\nb\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/partial_move_conditional.kp");
 }
 
 #[test]
 pub(crate) fn a_field_is_owned_again_after_a_fresh_value_is_assigned_to_it() {
-    assert_compiles_and_runs(
-        "tests/fixtures/partial_move_reassign.kp",
-        "1\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/partial_move_reassign.kp");
 }
 
 #[test]
@@ -240,10 +225,7 @@ pub(crate) fn a_move_parameter_is_an_owned_local_for_a_partial_move() {
     // out of it by value takes the field out the same way a `val` binding
     // does. The callee frees the fields that stayed, so a double free of the
     // moved buffer fails here and under valgrind.
-    assert_compiles_and_runs(
-        "tests/fixtures/partial_move_move_param.kp",
-        "taken\n1\n",
-    );
+    assert_fixture_runs("tests/fixtures/partial_move_move_param.kp");
 }
 
 #[test]
@@ -289,10 +271,7 @@ pub(crate) fn a_partial_move_takes_an_owned_enum_payload_and_leaves_the_rest() {
     // this fixture is in the AddressSanitizer and valgrind gates: a double free
     // or a leak fails there. A payload that stayed is still readable, and the
     // first case moves it out of a `move` parameter.
-    assert_compiles_and_runs(
-        "tests/fixtures/partial_move_enum_payload_owned.kp",
-        "moved\nkept\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/partial_move_enum_payload_owned.kp");
 }
 
 #[test]
@@ -324,10 +303,7 @@ pub(crate) fn the_owned_option_payload_comes_out_with_unwrap() {
     // `expect` and `unwrap_or` take the option with `move`, so an owned payload
     // is read out of the enum by value. The payload's slot is cleared at that
     // read, so this is in the AddressSanitizer and valgrind gates.
-    assert_compiles_and_runs(
-        "tests/fixtures/option_unwrap_owned.kp",
-        "hello\nnone\nexpected\nheld\nstaged\n",
-    );
+    assert_fixture_runs("tests/fixtures/option_unwrap_owned.kp");
 }
 
 #[test]
@@ -335,25 +311,19 @@ pub(crate) fn a_result_combinator_hands_an_owned_payload_back() {
     // `result.map`/`map_err` take the result with `move`, so the side they
     // rebuild may be owned: `map` moves a `datac` error into the fresh `Err`
     // and `map_err` moves an owned `String` into the fresh `Ok`.
-    assert_compiles_and_runs(
-        "tests/fixtures/result_map_owned.kp",
-        "5\ntrue\ntrue\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/result_map_owned.kp");
 }
 
 #[test]
 pub(crate) fn an_owned_field_in_a_box_can_be_taken_and_set() {
-    assert_compiles_and_runs("tests/fixtures/box_field_take.kp", "1\ntrue\n1\n2\n");
+    assert_fixture_runs("tests/fixtures/box_field_take.kp");
 }
 
 #[test]
 pub(crate) fn box_owned_elements_are_freed_once_when_replaced_or_taken() {
     // A `set` on a full box frees the `String`/`Bytes` the slot held, and a
     // `take` moves the value out to a second owner without a second free.
-    assert_compiles_and_runs(
-        "tests/fixtures/box_owned_elements.kp",
-        "false\nhello\nworld\ntrue\nworld\ntrue\nfalse\nalpha\nbeta\nbeta\ntrue\n3\n5\ndefgh\ntrue\ndefgh\n104\n4\n5\n9\ntrue\n5\n3\n6\n2\n103\n4956\n98\n195\ntrue\nfalse\n98\n103\n4956\n",
-    );
+    assert_fixture_runs("tests/fixtures/box_owned_elements.kp");
 }
 
 #[test]
@@ -383,15 +353,12 @@ pub(crate) fn reaching_into_an_empty_box_panics() {
 
 #[test]
 pub(crate) fn a_datac_can_be_a_list_element() {
-    assert_compiles_and_runs("tests/fixtures/list_datac_element.kp", "2\nspades\n2\nspades\n");
+    assert_fixture_runs("tests/fixtures/list_datac_element.kp");
 }
 
 #[test]
 pub(crate) fn a_map_stores_keys_and_returns_insertion_order() {
-    assert_compiles_and_runs(
-        "tests/fixtures/map_basic.kp",
-        "0\ntrue\n3\ntrue\nfalse\n2\n99\n22\n1\n2\ntwo three \n2\n0\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_basic.kp");
 }
 
 #[test]
@@ -399,15 +366,12 @@ pub(crate) fn a_map_of_owned_values_borrows_clones_and_moves() {
     // The value is inline in the entry, the key is an owned `String`, and
     // `get_or`/`remove`/`values` all transfer or clone it; ASAN re-runs this
     // fixture (see `heap_fixtures_are_double_free_and_leak_clean`).
-    assert_compiles_and_runs(
-        "tests/fixtures/map_owned.kp",
-        "2\ntwo\ntwo\nfallback\nTWO\none\n1\nbeta\nTWO\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_owned.kp");
 }
 
 #[test]
 pub(crate) fn a_map_holds_datac_values_and_can_live_in_a_datac_field() {
-    assert_compiles_and_runs("tests/fixtures/map_datac.kp", "30\n2\n3\n1\n");
+    assert_fixture_runs("tests/fixtures/map_datac.kp");
 }
 
 #[test]
@@ -418,10 +382,7 @@ pub(crate) fn a_map_deep_copies_a_datac_value_out_through_get_or_and_values() {
     // map that it takes out of a list. The value owns a `String`, so a shallow
     // copy would print the right text and then double-free the buffer; ASAN
     // re-runs this fixture (see `heap_fixtures_are_double_free_and_leak_clean`).
-    assert_compiles_and_runs(
-        "tests/fixtures/map_datac_value_clone.kp",
-        "alpha\n10\nnone\n0\n2\nalpha\n10\nbeta\n20\nalpha\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_datac_value_clone.kp");
 }
 
 #[test]
@@ -432,10 +393,7 @@ pub(crate) fn a_map_cannot_hold_a_container_or_be_created_without_a_value_type()
 
 #[test]
 pub(crate) fn a_map_key_can_be_a_scalar_and_the_shorthand_still_means_string() {
-    assert_compiles_and_runs(
-        "tests/fixtures/map_key_types.kp",
-        "2\n99\ntrue\nfalse\n0\n2\n1\n1\n10\n2\nyes\nno\n70\n2\n9\nfalse\n2\n6\nbb\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_key_types.kp");
 }
 
 #[test]
@@ -461,18 +419,12 @@ pub(crate) fn a_datac_whose_fields_are_keyable_is_a_map_key() {
     // A-6: the compiler derives the key's hash and equality for a `datac` the
     // same way it derives its order and its deep copy, so no comparator and no
     // trait is involved.
-    assert_compiles_and_runs(
-        "tests/fixtures/map_datac_key.kp",
-        "1\n10\nfalse\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_datac_key.kp");
 }
 
 #[test]
 pub(crate) fn a_datac_map_key_is_cloned_in_overwritten_and_removed() {
-    assert_compiles_and_runs(
-        "tests/fixtures/map_datac_key_ok.kp",
-        "2\n99\n20\nfalse\ntrue\n2\n1\n2\n99\n1\nfalse\n31\n7\n29\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_datac_key_ok.kp");
 }
 
 #[test]
@@ -480,10 +432,7 @@ pub(crate) fn a_datac_map_key_may_own_a_string_field() {
     // The `String` field is hashed byte-wise and compared length-aware, and the
     // entry owns a deep copy of the key, so ASAN re-runs this fixture (see
     // `heap_fixtures_are_double_free_and_leak_clean`).
-    assert_compiles_and_runs(
-        "tests/fixtures/map_nested_datac_key.kp",
-        "2\n10\nfalse\n20\n10\n1\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_nested_datac_key.kp");
 }
 
 #[test]
@@ -492,10 +441,7 @@ pub(crate) fn a_datac_that_declares_hash_and_eq_is_a_map_key() {
     // float is never keyable (`nan != nan`), so `Sample` is a type the
     // keyability fixpoint refuses and the map reaches the two declared methods
     // instead of a derived hash and equality.
-    assert_compiles_and_runs(
-        "tests/fixtures/map_declared_key.kp",
-        "2\n10\n20\nfalse\n2\n99\n2\nalpha\n1.500000\n20\n1\ntrue\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_declared_key.kp");
 }
 
 #[test]
@@ -513,10 +459,7 @@ pub(crate) fn a_datac_with_derived_eq_and_hash_is_a_map_key() {
     // `String`, `bool`, `char` and `i32` fields are the key, and `==` uses the
     // same derived `eq`. The last line is the removed entry's value and then
     // the map's length, and the probe with `on = false` finds nothing.
-    assert_compiles_and_runs(
-        "tests/fixtures/derive_map_key_datac.kp",
-        "2\n10\nfalse\n2\n99\nfalse\n99\n1\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/derive_map_key_datac.kp");
 }
 
 #[test]
@@ -524,10 +467,7 @@ pub(crate) fn a_derived_pair_gives_the_hand_written_eq_results() {
     // lang-derive-eq (issue #291): the derived `eq` agrees with the hand-written
     // pair it replaces for every row, and equal values hash equally. Expected
     // rows: equal pairs are `true`, a differing id or name is `false`.
-    assert_compiles_and_runs(
-        "tests/fixtures/derive_pair_matches_hand_written.kp",
-        "true\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/derive_pair_matches_hand_written.kp");
 }
 
 #[test]
@@ -570,10 +510,7 @@ pub(crate) fn a_datac_and_an_enum_with_derived_text_print_their_constructor_shap
     // `to_text`, a template and `print` all give the constructor shape. A unit
     // variant is its name, a datac with no fields is `Name()`, and a nested value
     // uses its own text form.
-    assert_compiles_and_runs(
-        "tests/fixtures/derive_text_datac_enum.kp",
-        "Point(3, ab, true)\nBlank()\nCircle(2)\nEmpty\nFrame(Circle(2))\nCircle(7) and Point(3, ab, true)\n",
-    );
+    assert_fixture_runs("tests/fixtures/derive_text_datac_enum.kp");
 }
 
 #[test]
@@ -593,39 +530,27 @@ pub(crate) fn a_datac_that_declares_eq_gets_the_equality_operator() {
     // `eq` alone enough for the operator. The fixture also pins that each
     // operand is one evaluation, left to right, and that a borrow against an
     // owned value works.
-    assert_compiles_and_runs(
-        "tests/fixtures/eq_operator_datac.kp",
-        "true\ntrue\nfalse\ntrue\ntrue\n3\n3\nfalse\n4\n4\nfalse\nguard\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/eq_operator_datac.kp");
 }
 
 #[test]
 pub(crate) fn an_enum_that_declares_eq_gets_the_equality_operator() {
     // H-5: the rule is the same for an `enum`.
-    assert_compiles_and_runs(
-        "tests/fixtures/eq_operator_enum.kp",
-        "true\ntrue\ntrue\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/eq_operator_enum.kp");
 }
 
 #[test]
 pub(crate) fn a_view_compares_with_a_view_and_a_str() {
     // H-5: `View` against `View` and `View` against `str` lower to the builtin
     // `View.eq`, which compares the bytes and the lengths.
-    assert_compiles_and_runs(
-        "tests/fixtures/eq_operator_view.kp",
-        "true\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/eq_operator_view.kp");
 }
 
 #[test]
 pub(crate) fn a_lone_eq_declares_the_operator_and_is_not_a_map_key() {
     // A-12 + H-5: `eq` alone gives `==`/`!=` and leaves the type a *derived*
     // `Map` key (both halves are still what a declared key needs).
-    assert_compiles_and_runs(
-        "tests/fixtures/map_key_pair_only_eq.kp",
-        "true\ntrue\ntrue\n2\n20\n",
-    );
+    assert_fixture_runs("tests/fixtures/map_key_pair_only_eq.kp");
 }
 
 #[test]
@@ -664,52 +589,34 @@ pub(crate) fn the_equality_operator_is_refused_without_a_declared_eq() {
 
 #[test]
 pub(crate) fn the_arithmetic_operators_lower_to_std_ops_methods() {
-    assert_compiles_and_runs(
-        "tests/fixtures/ops_arithmetic.kp",
-        "4\n6\n-1\n0\n-1\n-2\n3\n8\n4\n0\n1\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/ops_arithmetic.kp");
 }
 
 #[test]
 pub(crate) fn ord_gives_the_order_operators_and_a_hand_written_sort_works() {
-    assert_compiles_and_runs(
-        "tests/fixtures/ops_ord.kp",
-        "true\nfalse\nfalse\ntrue\n1\n9\n2\n0\n2\n1\n",
-    );
+    assert_fixture_runs("tests/fixtures/ops_ord.kp");
 }
 
 #[test]
 pub(crate) fn display_lets_a_value_into_a_template_and_print_and_nests() {
-    assert_compiles_and_runs(
-        "tests/fixtures/ops_display.kp",
-        "v = (3, 4)\n(3, 4)\n3\nline = (3, 4) -> (5, 6)\n(3, 4) -> (5, 6)\n(3, 4) -> (5, 6)\n",
-    );
+    assert_fixture_runs("tests/fixtures/ops_display.kp");
 }
 
 #[test]
 pub(crate) fn compound_assignment_on_a_user_type_is_the_add_then_assign_desugar() {
-    assert_compiles_and_runs(
-        "tests/fixtures/ops_compound_assign.kp",
-        "4\n6\n1\n2\n3\n8\n4\n5\n",
-    );
+    assert_fixture_runs("tests/fixtures/ops_compound_assign.kp");
 }
 
 #[test]
 pub(crate) fn every_operand_of_an_overloaded_operator_is_evaluated_once_left_to_right() {
-    assert_compiles_and_runs(
-        "tests/fixtures/ops_operands_once.kp",
-        "1\n2\n3\n3\n4\ntrue\n5\n6\n7\n4\n",
-    );
+    assert_fixture_runs("tests/fixtures/ops_operands_once.kp");
 }
 
 #[test]
 pub(crate) fn an_operator_resolves_on_a_bounded_generic_type_parameter() {
     // A generic body is checked once per instantiation, so `T` is the concrete
     // `Vec2` when `a + b` and `a < b` are lowered.
-    assert_compiles_and_runs(
-        "tests/fixtures/ops_generic.kp",
-        "4\n7\ntrue\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/ops_generic.kp");
 }
 
 #[test]

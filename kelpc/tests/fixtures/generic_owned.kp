@@ -27,3 +27,7 @@ fun main() {
     xs.push(Option.None)
     print(xs.len())
 }
+// stdout-begin
+// stdout: 5
+// stdout: 0
+// stdout: 2

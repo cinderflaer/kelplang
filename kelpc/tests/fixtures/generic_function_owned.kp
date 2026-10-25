@@ -31,3 +31,9 @@ fun main() {
     print(is_some(o = d))
     print(describe(o = d))
 }
+// stdout-begin
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: 5

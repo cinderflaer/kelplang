@@ -6,10 +6,7 @@ use super::*;
 /// A call with and without the argument, positionally and by name.
 #[test]
 pub(crate) fn a_call_may_leave_out_an_argument_that_has_a_default() {
-    assert_compiles_and_runs(
-        "tests/fixtures/default_args.kp",
-        "6\n20\n10\n1/0/none\n1/0/some\n1/7/none\n1/7/x\ntrue\nfalse\n3.14\n3.1416\n",
-    );
+    assert_fixture_runs("tests/fixtures/default_args.kp");
 }
 
 /// A default that is an expression is refused, and the refusal names the rule.

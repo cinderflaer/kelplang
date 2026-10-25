@@ -8,7 +8,7 @@ use super::*;
 /// mix for one type.
 #[test]
 pub(crate) fn a_method_written_inside_its_datac_block_runs_like_one_written_after_it() {
-    assert_compiles_and_runs("tests/fixtures/datac_block_methods.kp", "6\n12\n1\n3\n4\n");
+    assert_fixture_runs("tests/fixtures/datac_block_methods.kp");
 }
 
 /// The `fun` keyword is refused inside the block, with the form without it named.

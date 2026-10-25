@@ -40,3 +40,7 @@ fun main() {
     }
     print(total)
 }
+// stdout-begin
+// stdout: 4
+// stdout: 4
+// stdout: 51

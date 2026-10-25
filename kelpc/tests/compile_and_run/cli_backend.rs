@@ -257,10 +257,7 @@ pub(crate) fn the_oracle_environment_variable_is_gone() {
 /// names the binding the new one shadows, so it reads the one already in scope.
 #[test]
 pub(crate) fn a_local_rebinding_shadows_the_earlier_binding() {
-    assert_compiles_and_runs(
-        "tests/fixtures/shadowed_local_in_one_block.kp",
-        "a=2\ns=two\np=3,4\ncards=1 7\ninner=2\nouter=1\n",
-    );
+    assert_fixture_runs("tests/fixtures/shadowed_local_in_one_block.kp");
 }
 
 /// BUG-mW3tZ: a `Unit` value may be bound. The local is zero-sized, so it gets
@@ -271,7 +268,7 @@ pub(crate) fn a_local_rebinding_shadows_the_earlier_binding() {
 /// generic case below is the reason the binding is allowed at all.
 #[test]
 pub(crate) fn a_unit_valued_call_can_be_bound_to_a_local() {
-    assert_compiles_and_runs("tests/fixtures/unit_val_binding.kp", "1\n");
+    assert_fixture_runs("tests/fixtures/unit_val_binding.kp");
 }
 
 /// A generic function instantiated at `unit`: the instantiation takes the value
@@ -280,8 +277,5 @@ pub(crate) fn a_unit_valued_call_can_be_bound_to_a_local() {
 /// either backend's machine signature.
 #[test]
 pub(crate) fn a_generic_instantiated_at_unit_can_be_bound_and_passed_on() {
-    assert_compiles_and_runs(
-        "tests/fixtures/unit_val_generic_binding.kp",
-        "1\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/unit_val_generic_binding.kp");
 }

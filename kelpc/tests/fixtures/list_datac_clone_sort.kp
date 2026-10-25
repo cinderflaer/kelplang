@@ -59,3 +59,16 @@ fun main() {
     }
     print(marks_copy.len())
 }
+// stdout-begin
+// stdout: 3
+// stdout: b
+// stdout: a
+// stdout: 1
+// stdout: 3
+// stdout: b
+// stdout: 2
+// stdout: a
+// stdout: empty
+// stdout: a
+// stdout: b
+// stdout: 3

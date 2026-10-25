@@ -19,3 +19,5 @@ fun main() {
     }
     print(s.count)
 }
+// stdout-begin
+// stdout: 2

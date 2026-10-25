@@ -9,3 +9,6 @@ fun main() {
     show()
     print("pd=$label")
 }
+// stdout-begin
+// stdout: local=inner
+// stdout: pd=outer

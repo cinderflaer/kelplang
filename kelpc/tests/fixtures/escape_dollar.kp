@@ -9,3 +9,7 @@ fun main() {
     print(str.len(s))
     print(s)
 }
+// stdout-begin
+// stdout: 36
+// stdout: 21
+// stdout: $KELPC is unset, ${x}

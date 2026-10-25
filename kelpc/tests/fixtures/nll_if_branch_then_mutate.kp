@@ -14,3 +14,6 @@ fun main() {
     names.push(String.from_str("beta"))
     print(names.len())
 }
+// stdout-begin
+// stdout: alpha
+// stdout: 2

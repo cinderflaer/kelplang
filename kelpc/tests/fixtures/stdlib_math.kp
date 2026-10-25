@@ -16,3 +16,16 @@ fun main() {
     print(math.is_finite(x = 1.0))
     print(math.is_nan(x = 0.0))
 }
+// stdout-begin
+// stdout: 3.141593
+// stdout: 6.283185
+// stdout: 7
+// stdout: 7.500000
+// stdout: 3
+// stdout: 9
+// stdout: 10
+// stdout: 1.414214
+// stdout: 2.000000
+// stdout: -1.000000
+// stdout: true
+// stdout: false

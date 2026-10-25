@@ -27,3 +27,6 @@ fun main() {
     print(describe(c))
     print(chained(c))
 }
+// stdout-begin
+// stdout: 12
+// stdout: 21

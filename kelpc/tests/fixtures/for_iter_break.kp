@@ -34,3 +34,13 @@ fun main() {
     }
     print(even_sum)
 }
+// stdout-begin
+// stdout: 0
+// stdout: 1
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 5
+// stdout: 8
+// stdout: 13
+// stdout: 20

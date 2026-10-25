@@ -13,3 +13,6 @@ fun main() {
     }
     print(option.unwrap(o = c(3)))
 }
+// stdout-begin
+// stdout: 4
+// stdout: out

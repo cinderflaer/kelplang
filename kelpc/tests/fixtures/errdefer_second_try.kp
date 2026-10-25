@@ -32,3 +32,7 @@ fun main() {
         Err(_) -> print("err")
     }
 }
+// stdout-begin
+// stdout: 3
+// stdout: 1
+// stdout: err

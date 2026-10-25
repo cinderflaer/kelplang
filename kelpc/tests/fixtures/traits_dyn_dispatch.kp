@@ -38,3 +38,7 @@ fun main() {
     }
     print(total)
 }
+// stdout-begin
+// stdout: circle
+// stdout: square
+// stdout: 21.000000

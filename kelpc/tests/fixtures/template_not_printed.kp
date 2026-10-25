@@ -4,3 +4,5 @@ fun main() {
     val s = "hi $name"
     print(s)
 }
+// stdout-begin
+// stdout: hi x

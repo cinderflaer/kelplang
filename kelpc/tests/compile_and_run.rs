@@ -116,6 +116,40 @@ fn assert_compiles_and_runs_with_stderr(
     );
 }
 
+/// Reads the expected stdout of a fixture from its trailer: the lines after the
+/// last `// stdout-begin` line, each one a `// stdout:` comment. The text after
+/// `// stdout: ` is one output line (a bare `// stdout:` is an empty line), and
+/// the expected stdout is each line followed by a newline. A fixture with no
+/// output has `// stdout-begin` and nothing after it.
+fn parse_stdout_trailer(text: &str) -> String {
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    if lines.last() == Some(&"") {
+        lines.pop();
+    }
+    let begin = lines
+        .iter()
+        .rposition(|l| *l == "// stdout-begin")
+        .unwrap_or_else(|| panic!("no // stdout-begin trailer in the fixture"));
+    let mut out = String::new();
+    for line in &lines[begin + 1..] {
+        let rest = line.strip_prefix("// stdout:").unwrap_or_else(|| {
+            panic!("a line after // stdout-begin is not a // stdout: line: {line:?}")
+        });
+        out.push_str(rest.strip_prefix(' ').unwrap_or(rest));
+        out.push('\n');
+    }
+    out
+}
+
+/// Compiles the fixture `source`, runs it, and asserts its stdout equals the
+/// expected output in the fixture's `// stdout-begin` trailer.
+fn assert_fixture_runs(source: &str) {
+    let text = std::fs::read_to_string(fixture(source))
+        .unwrap_or_else(|e| panic!("could not read fixture '{source}': {e}"));
+    let expected = parse_stdout_trailer(&text);
+    assert_compiles_and_runs(source, &expected);
+}
+
 /// Asserts that `kelpc build` rejects `source` (a compile error is expected).
 fn assert_rejected(source: &str) {
     let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
@@ -183,17 +217,17 @@ fn assert_rejected_with(source: &str, needle: &str) {
 
 #[test]
 fn hello_prints_greeting() {
-    assert_compiles_and_runs("tests/fixtures/examples/hello.kp", "hello, world\n");
+    assert_fixture_runs("tests/fixtures/examples/hello.kp");
 }
 
 #[test]
 fn fib_computes_correctly() {
-    assert_compiles_and_runs("tests/fixtures/examples/fib.kp", "55\n");
+    assert_fixture_runs("tests/fixtures/examples/fib.kp");
 }
 
 #[test]
 fn if_expression_classifies_correctly() {
-    assert_compiles_and_runs("tests/fixtures/if_expr.kp", "-1\n0\n1\n");
+    assert_fixture_runs("tests/fixtures/if_expr.kp");
 }
 
 #[test]
@@ -203,17 +237,17 @@ fn type_mismatch_is_rejected() {
 
 #[test]
 fn datac_fields_and_mutation_work() {
-    assert_compiles_and_runs("tests/fixtures/datac_basic.kp", "3\n4\n25\n11\n");
+    assert_fixture_runs("tests/fixtures/datac_basic.kp");
 }
 
 #[test]
 fn while_loop_accumulates_correctly() {
-    assert_compiles_and_runs("tests/fixtures/while_accumulator.kp", "55\n");
+    assert_fixture_runs("tests/fixtures/while_accumulator.kp");
 }
 
 #[test]
 fn nested_while_keeps_the_outer_accumulator_live() {
-    assert_compiles_and_runs("tests/fixtures/nested_while_registers.kp", "66\n");
+    assert_fixture_runs("tests/fixtures/nested_while_registers.kp");
 }
 
 #[test]
@@ -228,20 +262,17 @@ fn assignment_to_val_field_is_rejected() {
 
 #[test]
 fn when_desugars_to_if_else_chain() {
-    assert_compiles_and_runs("tests/fixtures/when_expr.kp", "pos\nneg\nzero\n");
+    assert_fixture_runs("tests/fixtures/when_expr.kp");
 }
 
 #[test]
 fn named_and_positional_args_match_correctly() {
-    assert_compiles_and_runs("tests/fixtures/named_args.kp", "7\n7\n7\n");
+    assert_fixture_runs("tests/fixtures/named_args.kp");
 }
 
 #[test]
 fn field_shorthand_builds_the_same_values_as_the_named_form() {
-    assert_compiles_and_runs(
-        "tests/fixtures/field_shorthand.kp",
-        "example\n8080\n3\n7\n9\n1\n2.500000\n",
-    );
+    assert_fixture_runs("tests/fixtures/field_shorthand.kp");
 }
 
 #[test]
@@ -266,17 +297,17 @@ fn double_move_in_loop_is_rejected() {
 
 #[test]
 fn move_then_reinit_is_allowed() {
-    assert_compiles_and_runs("tests/fixtures/move_then_reinit.kp", "3\n3\n7\n");
+    assert_fixture_runs("tests/fixtures/move_then_reinit.kp");
 }
 
 #[test]
 fn field_read_does_not_move_the_container() {
-    assert_compiles_and_runs("tests/fixtures/field_read_does_not_move.kp", "3\n4\n7\n");
+    assert_fixture_runs("tests/fixtures/field_read_does_not_move.kp");
 }
 
 #[test]
 fn borrow_basic_shared_and_exclusive_work() {
-    assert_compiles_and_runs("tests/fixtures/borrow_basic.kp", "1\n3\n2\n");
+    assert_fixture_runs("tests/fixtures/borrow_basic.kp");
 }
 
 #[test]
@@ -315,18 +346,9 @@ fn moving_a_borrowed_value_is_rejected() {
 /// ones keep it live with a later use.
 #[test]
 fn a_bound_borrow_ends_at_its_last_use() {
-    assert_compiles_and_runs(
-        "tests/fixtures/nll_get_then_push.kp",
-        "alpha\n3\n",
-    );
-    assert_compiles_and_runs(
-        "tests/fixtures/nll_if_branch_then_mutate.kp",
-        "alpha\n2\n",
-    );
-    assert_compiles_and_runs(
-        "tests/fixtures/nll_last_use_before_loop.kp",
-        "alpha\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/nll_get_then_push.kp");
+    assert_fixture_runs("tests/fixtures/nll_if_branch_then_mutate.kp");
+    assert_fixture_runs("tests/fixtures/nll_last_use_before_loop.kp");
 }
 
 #[test]
@@ -365,15 +387,9 @@ fn a_live_borrow_still_refuses_its_owners_mutation() {
 /// moved root, or a root only one arm of an `if` assigned.
 #[test]
 fn a_reference_binding_remembers_its_root() {
-    assert_compiles_and_runs(
-        "tests/fixtures/cursor_walks_a_box_list.kp",
-        "2000\n1999001\n",
-    );
-    assert_compiles_and_runs("tests/fixtures/cursor_over_a_list_by_index.kp", "60\n");
-    assert_compiles_and_runs(
-        "tests/fixtures/cursor_retarget_releases_the_old_owner.kp",
-        "2\n10\n",
-    );
+    assert_fixture_runs("tests/fixtures/cursor_walks_a_box_list.kp");
+    assert_fixture_runs("tests/fixtures/cursor_over_a_list_by_index.kp");
+    assert_fixture_runs("tests/fixtures/cursor_retarget_releases_the_old_owner.kp");
 }
 
 #[test]
@@ -420,7 +436,7 @@ fn an_unsound_cursor_use_is_still_refused() {
 
 #[test]
 fn receiver_methods_resolve_and_mutate_through_self() {
-    assert_compiles_and_runs("tests/fixtures/receiver_methods.kp", "12.566360\n28.274310\n");
+    assert_fixture_runs("tests/fixtures/receiver_methods.kp");
 }
 
 #[test]
@@ -732,10 +748,7 @@ mod std_default_names;
 // arm still carries its reason.
 #[test]
 fn result_of_unit_issue_223_spellings_build_match_and_propagate() {
-    assert_compiles_and_runs(
-        "tests/fixtures/result_unit_issue_223.kp",
-        "ok\nfailed\nok\nfailed\nunit ok\nunit failed\n",
-    );
+    assert_fixture_runs("tests/fixtures/result_unit_issue_223.kp");
 }
 
 #[test]
@@ -748,12 +761,12 @@ fn unit_spelled_as_empty_parens_is_still_refused_as_a_tuple_element() {
 // is refused without one.
 #[test]
 fn expression_body_infers_its_return_type_issue_280() {
-    assert_compiles_and_runs("tests/fixtures/expr_body_infers_return.kp", "5\n16\n");
+    assert_fixture_runs("tests/fixtures/expr_body_infers_return.kp");
 }
 
 #[test]
 fn expression_body_calls_another_inferred_body_issue_280() {
-    assert_compiles_and_runs("tests/fixtures/expr_body_infers_through_callees.kp", "6\n");
+    assert_fixture_runs("tests/fixtures/expr_body_infers_through_callees.kp");
 }
 
 #[test]
@@ -763,7 +776,7 @@ fn recursive_expression_body_without_a_type_is_refused_issue_280() {
 
 #[test]
 fn recursive_expression_body_with_a_type_builds_issue_280() {
-    assert_compiles_and_runs("tests/fixtures/expr_body_recursive_with_type.kp", "120\n");
+    assert_fixture_runs("tests/fixtures/expr_body_recursive_with_type.kp");
 }
 
 #[test]
@@ -783,7 +796,7 @@ fn borrowing_expression_body_without_a_type_is_refused_issue_280() {
 
 #[test]
 fn expression_method_body_infers_and_calls_an_inferred_method_issue_280() {
-    assert_compiles_and_runs("tests/fixtures/expr_body_method_infers.kp", "24\n");
+    assert_fixture_runs("tests/fixtures/expr_body_method_infers.kp");
 }
 
 #[test]
@@ -794,4 +807,21 @@ fn recursive_expression_method_without_a_type_is_refused_issue_280() {
 #[test]
 fn public_expression_body_cannot_infer_a_private_type_issue_280() {
     assert_rejected_naming("tests/fixtures/expr_body_pub_private_type.kp", &["Hidden", "=> T"], &[]);
+}
+
+#[test]
+fn trailer_parser_reads_each_output_line() {
+    let text = "fun main() {}\n// stdout-begin\n// stdout: hello\n// stdout:  two\n// stdout:\n";
+    assert_eq!(parse_stdout_trailer(text), "hello\n two\n\n");
+}
+
+#[test]
+fn trailer_parser_reads_an_empty_stdout() {
+    assert_eq!(parse_stdout_trailer("fun main() {}\n// stdout-begin\n"), "");
+}
+
+#[test]
+#[should_panic(expected = "no // stdout-begin")]
+fn trailer_parser_rejects_a_fixture_without_one() {
+    parse_stdout_trailer("fun main() {}\n");
 }

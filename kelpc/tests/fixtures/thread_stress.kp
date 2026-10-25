@@ -44,3 +44,5 @@ fun main() {
     val r7 = thread.join(t7)
     print(counter.load(order = atomic.Ordering.SeqCst))
 }
+// stdout-begin
+// stdout: 8000

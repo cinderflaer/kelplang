@@ -30,3 +30,12 @@ fun main() {
     m.insert(1, V2(a = 5.5))
     print(m.get(1).a)
 }
+// stdout-begin
+// stdout: 1.500000
+// stdout: 2.500000
+// stdout: 2.500000
+// stdout: 3.500000
+// stdout: 4.500000
+// stdout: 4.500000
+// stdout: 3.500000
+// stdout: 5.500000

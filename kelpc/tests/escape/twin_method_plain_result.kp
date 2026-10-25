@@ -9,3 +9,6 @@ fun main() {
     print(empty)
     print(c.v)
 }
+// stdout-begin
+// stdout: false
+// stdout: 3

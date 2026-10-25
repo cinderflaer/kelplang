@@ -17,3 +17,6 @@ fun main() {
     s.count += 100
     print(s.count)
 }
+// stdout-begin
+// stdout: 13
+// stdout: 113

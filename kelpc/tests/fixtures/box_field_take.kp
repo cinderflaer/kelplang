@@ -18,3 +18,8 @@ fun main() {
     bag.xs.set(again)
     print(bag.xs.get().len())
 }
+// stdout-begin
+// stdout: 1
+// stdout: true
+// stdout: 1
+// stdout: 2

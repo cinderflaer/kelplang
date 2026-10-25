@@ -54,3 +54,22 @@ fun main() {
     val big: i64 = 'z'
     print(big)
 }
+// stdout-begin
+// stdout: 34
+// stdout: 48
+// stdout: 53
+// stdout: 10
+// stdout: 9
+// stdout: 92
+// stdout: 39
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: 122

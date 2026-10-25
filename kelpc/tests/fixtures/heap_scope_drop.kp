@@ -7,3 +7,6 @@ fun main() {
     }
     print("after")
 }
+// stdout-begin
+// stdout: first
+// stdout: after

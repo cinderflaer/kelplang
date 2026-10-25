@@ -25,3 +25,6 @@ fun main() {
     print(p.total())
     print(counted(x = p.first))
 }
+// stdout-begin
+// stdout: 7
+// stdout: 3

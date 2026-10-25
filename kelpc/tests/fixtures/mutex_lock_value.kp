@@ -8,3 +8,7 @@ fun main() {
     print(m.lock { v -> *v * 2 })
     print(m.into_inner())
 }
+// stdout-begin
+// stdout: 8
+// stdout: 14
+// stdout: 7

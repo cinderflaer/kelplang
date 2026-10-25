@@ -29,3 +29,15 @@ fun main() {
     s.push(120)
     print(s)
 }
+// stdout-begin
+// stdout: 0
+// stdout: hi
+// stdout: hi there
+// stdout: 8
+// stdout: hi there!
+// stdout: 9
+// stdout: 0
+// stdout: true
+// stdout: 0
+// stdout: true
+// stdout: x

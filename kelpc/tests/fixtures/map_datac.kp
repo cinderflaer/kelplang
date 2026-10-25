@@ -37,3 +37,8 @@ fun main() {
     print(taken.a)
     print(pairs.len())
 }
+// stdout-begin
+// stdout: 30
+// stdout: 2
+// stdout: 3
+// stdout: 1

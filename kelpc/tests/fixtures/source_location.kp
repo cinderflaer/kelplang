@@ -5,3 +5,6 @@ fun main() {
     print(source.line())
     print(str.len(source.file()) > 0)
 }
+// stdout-begin
+// stdout: 5
+// stdout: true

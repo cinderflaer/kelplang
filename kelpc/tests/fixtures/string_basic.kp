@@ -21,3 +21,13 @@ fun main() {
     print(e.is_empty())
     print(e.len())
 }
+// stdout-begin
+// stdout: 6
+// stdout: 5
+// stdout: false
+// stdout: héllo
+// stdout: héllo
+// stdout: 6
+// stdout: héllo
+// stdout: true
+// stdout: 0

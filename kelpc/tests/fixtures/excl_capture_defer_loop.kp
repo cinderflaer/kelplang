@@ -20,3 +20,6 @@ fun main() {
     }
     print(s.log.len())
 }
+// stdout-begin
+// stdout: 3
+// stdout: 30

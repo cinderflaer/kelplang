@@ -25,3 +25,7 @@ fun main() {
     print(pick(flag = true))
     print(pick(flag = false))
 }
+// stdout-begin
+// stdout: live
+// stdout: fresh
+// stdout: fresh

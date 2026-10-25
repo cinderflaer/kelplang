@@ -42,3 +42,19 @@ fun main() {
     row("", 0, "", 0)
     row("kelp", 1, "kelp!", 1)
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: true

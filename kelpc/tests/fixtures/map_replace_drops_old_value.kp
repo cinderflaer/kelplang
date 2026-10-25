@@ -54,3 +54,17 @@ fun main() {
     print(vs.get(0).as_str())
     print(vs.get(1).as_str())
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2
+// stdout: ONE
+// stdout: 2
+// stdout: 1
+// stdout: TWO
+// stdout: 2
+// stdout: TWO
+// stdout: two again
+// stdout: 2
+// stdout: 2
+// stdout: 1
+// stdout: two again

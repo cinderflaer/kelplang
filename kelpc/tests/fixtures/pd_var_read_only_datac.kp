@@ -15,3 +15,7 @@ fun main() {
     describe(cfg)
     print(cfg.name)
 }
+// stdout-begin
+// stdout: api
+// stdout: 3
+// stdout: api

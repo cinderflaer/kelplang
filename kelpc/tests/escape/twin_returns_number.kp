@@ -9,3 +9,5 @@ fun count(n: i32) => i32 {
 fun main() {
     print(count(4))
 }
+// stdout-begin
+// stdout: 5

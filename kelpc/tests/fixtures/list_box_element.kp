@@ -24,3 +24,13 @@ fun main() {
     texts.clear()
     print(texts.len())
 }
+// stdout-begin
+// stdout: 2
+// stdout: 7
+// stdout: true
+// stdout: 9
+// stdout: 9
+// stdout: hi
+// stdout: true
+// stdout: there
+// stdout: 0

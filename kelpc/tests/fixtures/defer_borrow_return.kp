@@ -21,3 +21,6 @@ fun main() {
     val a = J.S(x = String.from_str(s = "hello"))
     print(as_str(v = a))
 }
+// stdout-begin
+// stdout: as_str-out
+// stdout: hello

@@ -30,3 +30,7 @@ fun main() {
     val s = String.from_str("hi")
     print(label_of(s))
 }
+// stdout-begin
+// stdout: 20
+// stdout: 36
+// stdout: a string

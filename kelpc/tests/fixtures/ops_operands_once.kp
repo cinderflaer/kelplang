@@ -41,3 +41,14 @@ fun main() {
     val chain = mk(tag = 5) + mk(tag = 6) - mk(tag = 7)
     print(chain.x)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 3
+// stdout: 4
+// stdout: true
+// stdout: 5
+// stdout: 6
+// stdout: 7
+// stdout: 4

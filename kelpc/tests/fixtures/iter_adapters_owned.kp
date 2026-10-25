@@ -19,3 +19,10 @@ fun main() {
         print(s.len())
     }
 }
+// stdout-begin
+// stdout: 3
+// stdout: 5
+// stdout: 0
+// stdout: 1
+// stdout: 1
+// stdout: 2

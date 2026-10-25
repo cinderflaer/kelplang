@@ -78,3 +78,10 @@ fun main() {
     print(n)
     print(5)
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: 5
+// stdout: 9
+// stdout: 42
+// stdout: 5

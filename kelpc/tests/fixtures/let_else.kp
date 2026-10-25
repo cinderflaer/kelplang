@@ -63,3 +63,12 @@ fun main() {
     print(width(t = Token.Blank))
     print(total(ids = [1, 0, 2, 0]))
 }
+// stdout-begin
+// stdout: 40
+// stdout: 80
+// stdout: -1
+// stdout: 2.000000
+// stdout: 0.000000
+// stdout: 4
+// stdout: 0
+// stdout: 30

@@ -29,3 +29,8 @@ fun main() {
     print(c.summary())
     print(c.tag())
 }
+// stdout-begin
+// stdout: 9
+// stdout: 9
+// stdout: 18
+// stdout: 5

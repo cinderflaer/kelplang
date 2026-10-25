@@ -26,3 +26,7 @@ fun main() {
     print(hi)
     print(hi - lo)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 9
+// stdout: 8

@@ -56,3 +56,9 @@ fun main() {
     print(accumulate(y, 3, 4))
     print(y)
 }
+// stdout-begin
+// stdout: 13
+// stdout: 30
+// stdout: 30
+// stdout: 12
+// stdout: 20

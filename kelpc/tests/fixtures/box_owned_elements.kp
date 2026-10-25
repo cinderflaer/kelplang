@@ -105,3 +105,38 @@ fun main() {
     print(depth(list))
     print(sum_list(list))
 }
+// stdout-begin
+// stdout: false
+// stdout: hello
+// stdout: world
+// stdout: true
+// stdout: world
+// stdout: true
+// stdout: false
+// stdout: alpha
+// stdout: beta
+// stdout: beta
+// stdout: true
+// stdout: 3
+// stdout: 5
+// stdout: defgh
+// stdout: true
+// stdout: defgh
+// stdout: 104
+// stdout: 4
+// stdout: 5
+// stdout: 9
+// stdout: true
+// stdout: 5
+// stdout: 3
+// stdout: 6
+// stdout: 2
+// stdout: 103
+// stdout: 4956
+// stdout: 98
+// stdout: 195
+// stdout: true
+// stdout: false
+// stdout: 98
+// stdout: 103
+// stdout: 4956

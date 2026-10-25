@@ -22,3 +22,7 @@ fun main() {
     b.total += a.total
     print(b.total)
 }
+// stdout-begin
+// stdout: 63
+// stdout: 2
+// stdout: 2

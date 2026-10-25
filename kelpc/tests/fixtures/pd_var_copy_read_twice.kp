@@ -10,3 +10,6 @@ fun main() {
     counter = 10
     print(add(counter, counter))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 20

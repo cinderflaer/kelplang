@@ -22,3 +22,6 @@ fun main() {
     }
     print(ready)
 }
+// stdout-begin
+// stdout: -1
+// stdout: 4

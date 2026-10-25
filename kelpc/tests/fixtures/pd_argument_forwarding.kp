@@ -67,3 +67,13 @@ fun main() {
     print(failures)
     print(tally.n)
 }
+// stdout-begin
+// stdout: ok
+// stdout: forwarded
+// stdout: bc
+// stdout: forwarded
+// stdout: bc
+// stdout: direct
+// stdout: FAIL
+// stdout: 2
+// stdout: 2

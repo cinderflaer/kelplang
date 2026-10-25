@@ -26,3 +26,10 @@ fun main() {
     print(area_of(empty))
     print(b.len())
 }
+// stdout-begin
+// stdout: true
+// stdout: 12.000000
+// stdout: 0
+// stdout: false
+// stdout: 12.000000
+// stdout: 0

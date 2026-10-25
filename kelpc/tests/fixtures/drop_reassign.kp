@@ -13,3 +13,9 @@ fun main() {
     a = Leaf(tag = 2)
     print("after")
 }
+// stdout-begin
+// stdout: leaf
+// stdout: 1
+// stdout: after
+// stdout: leaf
+// stdout: 2

@@ -36,3 +36,12 @@ fun main() {
     print(xs.len())
     print(xs.get(i = 0))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2
+// stdout: 5
+// stdout: 10
+// stdout: 20
+// stdout: 3
+// stdout: 3
+// stdout: 1

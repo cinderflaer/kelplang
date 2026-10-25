@@ -116,3 +116,5 @@ fun main() {
     e(st, ncdeep.as_str(), "nesting is too deep (limit 100) @300")
     print("cases: ${st.run}, failed: ${st.bad}")
 }
+// stdout-begin
+// stdout: cases: 45, failed: 0

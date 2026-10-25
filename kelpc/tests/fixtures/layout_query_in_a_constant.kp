@@ -13,3 +13,8 @@ fun main() {
     print(offset_of<Holder>("b"))
     print(size_of<Holder>())
 }
+// stdout-begin
+// stdout: 8
+// stdout: 4
+// stdout: 4
+// stdout: 8

@@ -60,3 +60,18 @@ fun main() {
     // A literal on the right of a non-literal still takes the left's type.
     print(mask + 1)
 }
+// stdout-begin
+// stdout: true
+// stdout: 4
+// stdout: 4
+// stdout: 3000000005
+// stdout: 3000000005
+// stdout: -2
+// stdout: -2
+// stdout: false
+// stdout: 240
+// stdout: 240
+// stdout: positive
+// stdout: 55
+// stdout: 55
+// stdout: 241

@@ -7,3 +7,6 @@ fun main() {
     print(f(1))
     print(k)
 }
+// stdout-begin
+// stdout: 10
+// stdout: 10

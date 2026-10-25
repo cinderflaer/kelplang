@@ -22,3 +22,10 @@ fun main() {
     print(Ptr.from_fn(c).addr() != 0)
     print(Ptr.from_fn(sign).addr() != 0)
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true

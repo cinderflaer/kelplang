@@ -27,3 +27,14 @@ fun main() {
     abs.push(String.from_str("x"))
     print(path.join_all(abs))
 }
+// stdout-begin
+// stdout: archive.tar
+// stdout: Makefile
+// stdout: .bashrc
+// stdout: true
+// stdout: false
+// stdout: 2
+// stdout: a
+// stdout: b
+// stdout: /a/b/c
+// stdout: /etc/x

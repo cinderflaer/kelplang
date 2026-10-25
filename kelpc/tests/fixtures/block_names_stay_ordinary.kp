@@ -14,3 +14,7 @@ fun main() {
     val other: i32 = 3
     print(other)
 }
+// stdout-begin
+// stdout: 5
+// stdout: 8
+// stdout: 3

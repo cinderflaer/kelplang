@@ -10,3 +10,6 @@ fun main() {
     print(made.len())
     print(made)
 }
+// stdout-begin
+// stdout: 5
+// stdout: hello

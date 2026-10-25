@@ -15,3 +15,6 @@ fun take(a: move String) {
 fun main() {
     take(String.from_str("param"))
 }
+// stdout-begin
+// stdout: param
+// stdout: body

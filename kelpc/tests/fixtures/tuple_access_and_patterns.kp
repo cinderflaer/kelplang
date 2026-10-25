@@ -38,3 +38,14 @@ fun main() {
     }
     print(r)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 2
+// stdout: 12
+// stdout: 8
+// stdout: 5
+// stdout: 40
+// stdout: 0
+// stdout: 3

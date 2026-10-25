@@ -45,3 +45,14 @@ fun main() {
     print(word())
     print("w=${word()}")
 }
+// stdout-begin
+// stdout: 2.500000
+// stdout: 0.250000
+// stdout: 0.125000
+// stdout: n=7 half=2.500000 ok=false s=kelp
+// stdout: 2.500000 0.250000
+// stdout: 18446744073709551616.000000
+// stdout: 9223372036854775808.000000
+// stdout: 9223372036854775808.000000
+// stdout: kelp
+// stdout: w=kelp

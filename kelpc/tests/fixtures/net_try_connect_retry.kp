@@ -28,3 +28,11 @@ fun main() {
     }
     print("gave up")
 }
+// stdout-begin
+// stdout: attempt 1: net.connect: connection failed
+// stdout:   errno 111: Connection refused
+// stdout: attempt 2: net.connect: connection failed
+// stdout:   errno 111: Connection refused
+// stdout: attempt 3: net.connect: connection failed
+// stdout:   errno 111: Connection refused
+// stdout: gave up

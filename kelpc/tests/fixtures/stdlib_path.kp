@@ -13,3 +13,9 @@ fun main() {
     print(path.is_absolute("/x"))
     print(path.is_absolute("x"))
 }
+// stdout-begin
+// stdout: /tmp/x.txt
+// stdout: /tmp/x.txt
+// stdout: /abs
+// stdout: true
+// stdout: false

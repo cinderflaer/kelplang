@@ -8,17 +8,14 @@ use super::*;
 pub(crate) fn a_move_parameter_takes_ownership_of_its_argument() {
     // Also in the AddressSanitizer list: every buffer here is freed exactly
     // once, by whichever function owns it when the scope ends.
-    assert_compiles_and_runs("tests/fixtures/move_param.kp", "5\n4\n7\n4\n4\n2\n");
+    assert_fixture_runs("tests/fixtures/move_param.kp");
 }
 
 #[test]
 pub(crate) fn a_moved_parameter_is_dropped_on_every_path_out() {
     // The tail, an early `return`, and a `return` inside a loop. Also in the
     // AddressSanitizer list, so a missed drop is a leak.
-    assert_compiles_and_runs(
-        "tests/fixtures/move_param_return.kp",
-        "4\ntrue\n3\nlong\n5\n",
-    );
+    assert_fixture_runs("tests/fixtures/move_param_return.kp");
 }
 
 #[test]
@@ -28,10 +25,7 @@ pub(crate) fn a_move_parameter_and_the_body_local_beside_it_are_both_freed() {
     // was written over the block's own, so the body local stayed in no drop
     // set at all. valgrind reported its buffer as definitely lost, on both
     // backends; both buffers are freed now.
-    assert_compiles_and_runs(
-        "tests/fixtures/move_param_and_body_local.kp",
-        "param\nbody\n",
-    );
+    assert_fixture_runs("tests/fixtures/move_param_and_body_local.kp");
 }
 
 #[test]
@@ -41,10 +35,7 @@ pub(crate) fn a_body_local_shadowing_a_move_parameter_leaves_no_buffer_behind() 
     // local's buffer while the local's own drop had been overwritten, so
     // exactly one of the two leaked whichever way it went. The parameter's drop
     // names the parameter and the local's names the local, so both are freed.
-    assert_compiles_and_runs(
-        "tests/fixtures/move_param_shadowed_by_a_local.kp",
-        "param\nbody\n",
-    );
+    assert_fixture_runs("tests/fixtures/move_param_shadowed_by_a_local.kp");
 }
 
 #[test]
@@ -102,10 +93,7 @@ pub(crate) fn move_parameter_misuse_is_rejected() {
 #[test]
 pub(crate) fn a_function_name_is_a_value_and_a_value_is_callable() {
     // Also in the AddressSanitizer list (the `move` callback frees a buffer).
-    assert_compiles_and_runs(
-        "tests/fixtures/fn_value.kp",
-        "42\n10\n12\n12\n4\n2\n12\n18\n27\n22\n0\n2\n4\n30\n4.000000\n",
-    );
+    assert_fixture_runs("tests/fixtures/fn_value.kp");
 }
 
 #[test]
@@ -193,17 +181,14 @@ pub(crate) fn a_fun_literal_is_a_function_value() {
     // handed. Covers a literal passed directly, a block body, a nested
     // literal, a literal in a `datac` field, a literal returned from a
     // function, and `?` propagating against the literal's own return type.
-    assert_compiles_and_runs(
-        "tests/fixtures/fn_literal.kp",
-        "42\n6\n7\n4\n31\n9\n12\ntrue\n4\n",
-    );
+    assert_fixture_runs("tests/fixtures/fn_literal.kp");
 }
 
 #[test]
 pub(crate) fn a_fun_literal_captures_rather_than_failing() {
     // Phase E replaced the "cannot capture yet" refusal: a name from the
     // enclosing scope is now the thing that makes the literal a closure.
-    assert_compiles_and_runs("tests/fixtures/fn_literal_capture.kp", "10\n10\n");
+    assert_fixture_runs("tests/fixtures/fn_literal_capture.kp");
 }
 
 #[test]
@@ -214,10 +199,7 @@ pub(crate) fn function_values_and_closures_need_no_stdlib() {
     // `std.mem.alloc_raw`, which is the runtime slice. A function value as a
     // local, a parameter, a return value and a `datac` field; a capturing
     // closure as a `Box` element, a `move` parameter and a field of its own.
-    assert_compiles_and_runs(
-        "tests/fixtures/fn_value_plain.kp",
-        "42\n12\n18\n21\n20\n6\n7\n",
-    );
+    assert_fixture_runs("tests/fixtures/fn_value_plain.kp");
 }
 
 #[test]
@@ -225,10 +207,7 @@ pub(crate) fn a_plain_function_value_is_widened_into_a_closure() {
     // Which of the two widening shapes is used depends on whether the compiler
     // knows which function the value is: a named one gets a shim and allocates
     // nothing, one chosen at the call gets a heap environment and a thunk.
-    assert_compiles_and_runs(
-        "tests/fixtures/closure_value_widening.kp",
-        "6\n11\n9\n101\n",
-    );
+    assert_fixture_runs("tests/fixtures/closure_value_widening.kp");
 }
 
 #[test]
@@ -237,7 +216,7 @@ pub(crate) fn a_two_field_environment_reads_and_drops_each_capture_at_its_own_of
     // the corpus. `a` is an `i32` at offset 0, `b` an `i64` C pads to 8 and `s`
     // an owned `String` at 16, so a packed field walk reads the wrong bytes,
     // and the printed number names all three fields.
-    assert_compiles_and_runs("tests/fixtures/closure_two_captures.kp", "3711\n7\n11\n");
+    assert_fixture_runs("tests/fixtures/closure_two_captures.kp");
 }
 
 #[test]
@@ -246,7 +225,7 @@ pub(crate) fn an_indirect_call_numbers_the_environment_after_a_mem_class_return_
     // *and* carries an environment, so both take a register in the same
     // integer file, the hidden return pointer first. Numbering the environment
     // `ARG64[0]` would hand it the return pointer instead.
-    assert_compiles_and_runs("tests/fixtures/closure_env_wide_ret.kp", "4\n5\n6\n");
+    assert_fixture_runs("tests/fixtures/closure_env_wide_ret.kp");
 }
 
 #[test]
@@ -292,19 +271,13 @@ pub(crate) fn fun_literal_misuse_is_rejected() {
 #[test]
 pub(crate) fn option_and_result_combinators_take_callbacks() {
     // Also in the AddressSanitizer list: `map` builds owned `String`s.
-    assert_compiles_and_runs(
-        "tests/fixtures/stdlib_combinators.kp",
-        "5\nHELLO\n2\ntrue\n7\n7\n42\n105\n4\n11\n4\n",
-    );
+    assert_fixture_runs("tests/fixtures/stdlib_combinators.kp");
 }
 
 #[test]
 pub(crate) fn list_callbacks_work_over_copy_and_owned_elements() {
     // Also in the AddressSanitizer list.
-    assert_compiles_and_runs(
-        "tests/fixtures/stdlib_list_callbacks.kp",
-        "6\n2\n123\ntrue\ntrue\n2\n2\n4\n1\ntrue\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/stdlib_list_callbacks.kp");
 }
 
 #[test]
@@ -333,10 +306,7 @@ pub(crate) fn a_closure_carries_its_environment() {
     // capturing literal passed to a closure parameter and to a `move` one, a
     // closure returned out of the frame that made it, one in a `datac` field,
     // one in a `Box`, and an inner literal calling a closure the frame holds.
-    assert_compiles_and_runs(
-        "tests/fixtures/closure_basic.kp",
-        "11\n10\n3\n30\n-6\n14\n15\n42\n13\n5\n11\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/closure_basic.kp");
 }
 
 #[test]
@@ -346,10 +316,7 @@ pub(crate) fn a_closure_parameter_may_borrow_a_module_declared_type() {
     // forward-declared struct tag there rather than with `Item`'s typedef
     // name. Naming the typedef name made `cc` reject any callback API over a
     // module's own type.
-    assert_compiles_and_runs(
-        "tests/fixtures/closure_datac_borrow_param.kp",
-        "1\n",
-    );
+    assert_fixture_runs("tests/fixtures/closure_datac_borrow_param.kp");
 }
 
 #[test]
@@ -372,10 +339,7 @@ pub(crate) fn a_closure_is_dropped_where_its_binding_dies() {
     // Also in the AddressSanitizer list: a missed drop is a leak and a second
     // one a double free. Covers the three drop points, the end of a block, an
     // early `return`, and once per loop iteration.
-    assert_compiles_and_runs(
-        "tests/fixtures/closure_move.kp",
-        "5\n7\n0\n10\n11\n12\n",
-    );
+    assert_fixture_runs("tests/fixtures/closure_move.kp");
 }
 
 #[test]
@@ -387,10 +351,7 @@ pub(crate) fn the_stdlib_callbacks_take_closures() {
     // allocation), a function value whose identity is known only at the call
     // (widened into a one-field environment), and the same widening through
     // `option` and `result`.
-    assert_compiles_and_runs(
-        "tests/fixtures/stdlib_closure_callbacks.kp",
-        "3\n9\ntrue\nv=1v=2v=3\n2\ntrue\n4\n107\n5\n12\n",
-    );
+    assert_fixture_runs("tests/fixtures/stdlib_closure_callbacks.kp");
 }
 
 #[test]

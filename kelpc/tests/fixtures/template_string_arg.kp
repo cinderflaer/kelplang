@@ -8,3 +8,6 @@ fun main() {
     show("count=${n}")
     show("${n} items")
 }
+// stdout-begin
+// stdout: [count=3]
+// stdout: [3 items]

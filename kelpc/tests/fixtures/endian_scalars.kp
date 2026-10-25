@@ -59,3 +59,27 @@ fun main() {
     // catch a bswap that dropped or duplicated a byte.
     print(fmt.hex(uw.swap_bytes().swap_bytes().to_u64())) // 102030405060708
 }
+// stdout-begin
+// stdout: 3412
+// stdout: 78563412
+// stdout: 807060504030201
+// stdout: 78563412
+// stdout: 807060504030201
+// stdout: -16777217
+// stdout: 78563412
+// stdout: 12345678
+// stdout: 78563412
+// stdout: 12345678
+// stdout: 3412
+// stdout: 1234
+// stdout: 3412
+// stdout: 1234
+// stdout: 807060504030201
+// stdout: 102030405060708
+// stdout: 807060504030201
+// stdout: 102030405060708
+// stdout: 807060504030201
+// stdout: 102030405060708
+// stdout: 807060504030201
+// stdout: 807060504030201
+// stdout: 102030405060708

@@ -86,3 +86,16 @@ fun main() {
     one.sort()
     print(one.get(0))
 }
+// stdout-begin
+// stdout: true
+// stdout: 5000
+// stdout: true
+// stdout: 5000
+// stdout: true
+// stdout: 5000
+// stdout: true
+// stdout: 15
+// stdout: true
+// stdout: 17
+// stdout: 0
+// stdout: 7

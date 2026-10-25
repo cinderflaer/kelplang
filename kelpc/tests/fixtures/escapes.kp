@@ -15,3 +15,10 @@ fun main() {
     print(str.byte("\\", 0))
     print(str.byte("\"", 0))
 }
+// stdout-begin
+// stdout: 13
+// stdout: 2
+// stdout: 10
+// stdout: 9
+// stdout: 92
+// stdout: 34

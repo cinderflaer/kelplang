@@ -46,3 +46,15 @@ fun main() {
     print(list.any(names, fun(s: &String) => bool = str.starts_with(s.as_str(), "cd")))
     print(names.len())
 }
+// stdout-begin
+// stdout: 6
+// stdout: 2
+// stdout: 123
+// stdout: true
+// stdout: true
+// stdout: 2
+// stdout: 2
+// stdout: 4
+// stdout: 1
+// stdout: true
+// stdout: 2

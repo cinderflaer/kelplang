@@ -9,3 +9,6 @@ fun main() {
     val n = 3
     twice { print(n) }
 }
+// stdout-begin
+// stdout: 3
+// stdout: 3

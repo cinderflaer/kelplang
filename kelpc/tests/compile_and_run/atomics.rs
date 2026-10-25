@@ -11,40 +11,28 @@ use super::*;
 /// atomic mutates through.
 #[test]
 pub(crate) fn an_atomic_counter_matches_a_plain_integer_and_a_compare_exchange_loop_converges() {
-    assert_compiles_and_runs(
-        "tests/fixtures/atomic_counter.kp",
-        "100\n0\n100\n200\n200\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/atomic_counter.kp");
 }
 
 /// Every `fetch_*` over the widths an emitter can get wrong, each returning the
 /// value that was there and leaving the new one behind.
 #[test]
 pub(crate) fn the_atomic_fetch_operations_report_the_value_that_was_there() {
-    assert_compiles_and_runs(
-        "tests/fixtures/atomic_int_fetch.kp",
-        "200\n200\n210\n205\n192\n195\n194\n1\n40001\n-3\n-3\n-3\n-2\n9000000000\n8999999999\n0\n1000000\n1000001\n0\n-8\n1\n4294967295\n",
-    );
+    assert_fixture_runs("tests/fixtures/atomic_int_fetch.kp");
 }
 
 /// `AtomicBool` has new/load/store/swap/compare_exchange and no arithmetic, and
 /// a test-and-set through a `pd val` flag lets exactly one attempt see `false`.
 #[test]
 pub(crate) fn an_atomic_bool_has_no_arithmetic_and_a_test_and_set_wins_once() {
-    assert_compiles_and_runs(
-        "tests/fixtures/atomic_bool.kp",
-        "true\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/atomic_bool.kp");
 }
 
 /// The `Err` half of `compare_exchange` carries the value that was actually
 /// there, and a failed exchange leaves the cell alone.
 #[test]
 pub(crate) fn a_failed_compare_exchange_reports_the_value_that_was_there() {
-    assert_compiles_and_runs(
-        "tests/fixtures/atomic_cas_err.kp",
-        "5\n5\n5\n8\n",
-    );
+    assert_fixture_runs("tests/fixtures/atomic_cas_err.kp");
 }
 
 /// The ordering slot is a real argument of a real enum, so naming an ordering
@@ -105,7 +93,7 @@ pub(crate) fn an_atomic_cannot_be_a_map_value_or_a_box_or_array_element() {
 /// instruction.
 #[test]
 pub(crate) fn a_thread_fence_compiles_runs_and_changes_no_stdout() {
-    assert_compiles_and_runs("tests/fixtures/thread_fence.kp", "0\n0\n7\n0\n");
+    assert_fixture_runs("tests/fixtures/thread_fence.kp");
 }
 
 /// The instruction `thread.fence` lowers to, in the artifact the backend wrote:
@@ -203,7 +191,7 @@ pub(crate) fn a_moved_value_that_carries_a_borrow_is_still_refused() {
 /// the one borrow that crosses to a worker, and stage C1 lowers the call.
 #[test]
 pub(crate) fn a_shared_pd_atomic_is_the_one_borrow_that_crosses() {
-    assert_compiles_and_runs("tests/fixtures/thread_spawn_pd_atomic.kp", "1\n");
+    assert_fixture_runs("tests/fixtures/thread_spawn_pd_atomic.kp");
 }
 
 /// The accepted shapes: a declared `fun`, a capturing closure, and a handle
@@ -211,9 +199,9 @@ pub(crate) fn a_shared_pd_atomic_is_the_one_borrow_that_crosses() {
 /// all of them, so each builds and runs.
 #[test]
 pub(crate) fn an_accepted_spawn_or_join_builds_and_runs() {
-    assert_compiles_and_runs("tests/fixtures/thread_spawn_accepted.kp", "42\n");
-    assert_compiles_and_runs("tests/fixtures/thread_spawn_closure.kp", "42\n");
-    assert_compiles_and_runs("tests/fixtures/thread_join_accepted.kp", "1\n");
+    assert_fixture_runs("tests/fixtures/thread_spawn_accepted.kp");
+    assert_fixture_runs("tests/fixtures/thread_spawn_closure.kp");
+    assert_fixture_runs("tests/fixtures/thread_join_accepted.kp");
 }
 
 /// The stress gate (MK9 section 7): eight workers, each doing a thousand
@@ -223,7 +211,7 @@ pub(crate) fn an_accepted_spawn_or_join_builds_and_runs() {
 /// cannot catch.
 #[test]
 pub(crate) fn a_thread_stress_gate_produces_the_exact_total() {
-    assert_compiles_and_runs("tests/fixtures/thread_stress.kp", "8000\n");
+    assert_fixture_runs("tests/fixtures/thread_stress.kp");
 }
 
 /// B-5's mutex stress gate: eight workers, each taking the lock a thousand
@@ -231,7 +219,7 @@ pub(crate) fn a_thread_stress_gate_produces_the_exact_total() {
 /// as a total other than 8000.
 #[test]
 pub(crate) fn a_mutex_stress_gate_produces_the_exact_total() {
-    assert_compiles_and_runs("tests/fixtures/mutex_stress.kp", "8000\n");
+    assert_fixture_runs("tests/fixtures/mutex_stress.kp");
 }
 
 /// B-5: a `Mutex<List<i32>>` shared across four workers, each pushing through
@@ -239,15 +227,15 @@ pub(crate) fn a_mutex_stress_gate_produces_the_exact_total() {
 /// record, so the whole list is dropped when the mutex dies.
 #[test]
 pub(crate) fn a_mutex_guards_a_list_pushed_from_several_workers() {
-    assert_compiles_and_runs("tests/fixtures/mutex_list_push.kp", "40\n");
+    assert_fixture_runs("tests/fixtures/mutex_list_push.kp");
 }
 
 /// B-5: `m.lock { v -> ... }` evaluates to the block's tail, and `into_inner`
 /// consumes the mutex and hands the guarded value out.
 #[test]
 pub(crate) fn a_mutex_block_value_is_returned_and_into_inner_consumes_the_mutex() {
-    assert_compiles_and_runs("tests/fixtures/mutex_lock_value.kp", "8\n14\n7\n");
-    assert_compiles_and_runs("tests/fixtures/mutex_into_inner.kp", "2\n41\n");
+    assert_fixture_runs("tests/fixtures/mutex_lock_value.kp");
+    assert_fixture_runs("tests/fixtures/mutex_into_inner.kp");
 }
 
 /// B-5: a `return` inside a lock block ends the block, the runtime releases
@@ -256,8 +244,8 @@ pub(crate) fn a_mutex_block_value_is_returned_and_into_inner_consumes_the_mutex(
 /// deadlock if the first leaked the lock proves it.
 #[test]
 pub(crate) fn a_return_inside_a_lock_block_releases_the_mutex() {
-    assert_compiles_and_runs("tests/fixtures/mutex_lock_return.kp", "2\n");
-    assert_compiles_and_runs("tests/fixtures/mutex_lock_try.kp", "10\n");
+    assert_fixture_runs("tests/fixtures/mutex_lock_return.kp");
+    assert_fixture_runs("tests/fixtures/mutex_lock_try.kp");
 }
 
 /// B-5: a worker's panic poisons the mutex through the runtime's cleanup
@@ -272,7 +260,7 @@ pub(crate) fn a_panic_inside_a_lock_block_poisons_the_mutex() {
 /// (`thread_spawn_var_field.kp`).
 #[test]
 pub(crate) fn a_shared_pd_mutex_crosses_to_a_worker() {
-    assert_compiles_and_runs("tests/fixtures/mutex_spawn_borrow.kp", "1\n");
+    assert_fixture_runs("tests/fixtures/mutex_spawn_borrow.kp");
 }
 
 /// B-5: the block's `v` cannot escape. Returning it is a type mismatch, and
@@ -304,15 +292,15 @@ pub(crate) fn a_freestanding_mutex_is_refused() {
 /// `RwLock`: read/write blocks, `try_*` returning `Option`, and `into_inner`.
 #[test]
 pub(crate) fn an_rwlock_returns_block_values_and_takes_try_and_into_inner() {
-    assert_compiles_and_runs("tests/fixtures/rwlock_basic.kp", "8\n10\n10\n");
-    assert_compiles_and_runs("tests/fixtures/rwlock_try.kp", "1\ntrue\n1\ntrue\n5\n");
+    assert_fixture_runs("tests/fixtures/rwlock_basic.kp");
+    assert_fixture_runs("tests/fixtures/rwlock_try.kp");
 }
 
 /// A `&RwLock<T>` of a `pd` global crosses to a worker, the `Sync` half of the
 /// crossing rule.
 #[test]
 pub(crate) fn a_shared_pd_rwlock_crosses_to_a_worker() {
-    assert_compiles_and_runs("tests/fixtures/rwlock_spawn_borrow.kp", "1\n");
+    assert_fixture_runs("tests/fixtures/rwlock_spawn_borrow.kp");
 }
 
 /// Two readers hold the lock at once, and a writer already waiting goes before
@@ -320,7 +308,7 @@ pub(crate) fn a_shared_pd_rwlock_crosses_to_a_worker() {
 /// no sleep is used as proof.
 #[test]
 pub(crate) fn readers_overlap_and_a_waiting_writer_goes_first() {
-    assert_compiles_and_runs("tests/fixtures/rwlock_concurrent.kp", "true\n1\n");
+    assert_fixture_runs("tests/fixtures/rwlock_concurrent.kp");
 }
 
 /// A worker's panic inside `write` poisons the rwlock; a later `write` panics.
@@ -333,10 +321,7 @@ pub(crate) fn a_panic_inside_a_write_poisons_the_rwlock() {
 /// later `read` succeeds and the value is unchanged.
 #[test]
 pub(crate) fn a_panic_inside_a_read_releases_without_poisoning() {
-    assert_compiles_and_runs(
-        "tests/fixtures/rwlock_read_releases.kp",
-        "worker failed\n7\n",
-    );
+    assert_fixture_runs("tests/fixtures/rwlock_read_releases.kp");
 }
 
 /// The rwlock block's borrow cannot escape: returning it is a type mismatch,
@@ -367,8 +352,8 @@ pub(crate) fn a_freestanding_rwlock_is_refused() {
 /// the deadline and `Some` once the predicate is false.
 #[test]
 pub(crate) fn a_condvar_handshake_wakes_a_waiter() {
-    assert_compiles_and_runs("tests/fixtures/condvar_handshake.kp", "42\n");
-    assert_compiles_and_runs("tests/fixtures/condvar_timeout.kp", "true\n7\n");
+    assert_fixture_runs("tests/fixtures/condvar_handshake.kp");
+    assert_fixture_runs("tests/fixtures/condvar_timeout.kp");
 }
 
 /// A freestanding build refuses `Condvar`.
@@ -385,7 +370,7 @@ pub(crate) fn a_freestanding_condvar_is_refused() {
 /// into a mutex from inside a scoped block.
 #[test]
 pub(crate) fn a_shared_mutex_handle_and_a_swap() {
-    assert_compiles_and_runs("tests/fixtures/mutex_share_swap.kp", "6\n6\n40\na\n0\n");
+    assert_fixture_runs("tests/fixtures/mutex_share_swap.kp");
 }
 
 /// Channels (`std/sync`): four producers feed one consumer through a bounded
@@ -393,75 +378,72 @@ pub(crate) fn a_shared_mutex_handle_and_a_swap() {
 /// A Sender or Receiver may cross into a worker (decision 125).
 #[test]
 pub(crate) fn a_bounded_channel_carries_four_producers_to_one_consumer() {
-    assert_compiles_and_runs("tests/fixtures/chan_bounded_mpsc.kp", "1000\n124500\n");
+    assert_fixture_runs("tests/fixtures/chan_bounded_mpsc.kp");
 }
 
 /// Closing in both directions: every sender gone drains then fails, a clone
 /// keeps the channel open, and a send to a dropped receiver gets the value back.
 #[test]
 pub(crate) fn a_channel_closes_when_its_senders_or_its_receiver_drop() {
-    assert_compiles_and_runs(
-        "tests/fixtures/chan_close.kp",
-        "6\n1\n2\n3\n-1\nopen\nclosed\nback\n",
-    );
+    assert_fixture_runs("tests/fixtures/chan_close.kp");
 }
 
 /// A rendezvous send completes only when a receive takes its value; a receiver
 /// that leaves while the sender is parked hands the value back.
 #[test]
 pub(crate) fn a_rendezvous_send_completes_only_when_a_receive_takes_it() {
-    assert_compiles_and_runs("tests/fixtures/chan_rendezvous.kp", "blocked\n7\ndone\nhanded back\n");
+    assert_fixture_runs("tests/fixtures/chan_rendezvous.kp");
 }
 
 /// `select2` answers with the one ready case, and a closed empty channel is ready too.
 #[test]
 pub(crate) fn a_select_takes_whichever_channel_is_ready() {
-    assert_compiles_and_runs("tests/fixtures/chan_select.kp", "1\n5\n1\n6\n0\nclosed\n");
+    assert_fixture_runs("tests/fixtures/chan_select.kp");
 }
 
 /// The select engine under the `select` form: a receive case finds nothing, a send case
 /// queues its value, the receive case takes it, and a timed wait ends at its deadline.
 #[test]
 pub(crate) fn a_select_engine_polls_sends_and_times_out() {
-    assert_compiles_and_runs("tests/fixtures/chan_select_engine.kp", "false\ntrue\ntrue\n7\ntimed out\n");
+    assert_fixture_runs("tests/fixtures/chan_select_engine.kp");
 }
 
 /// The `select` form over receive cases: the first ready case in source order wins,
 /// a closed and empty channel runs the `closed` arm, and a timeout runs when nothing is ready.
 #[test]
 pub(crate) fn a_select_takes_the_first_ready_receive_arm_closed_or_timeout() {
-    assert_compiles_and_runs("tests/fixtures/chan_select_arms.kp", "5\n-1\n-2\n");
+    assert_fixture_runs("tests/fixtures/chan_select_arms.kp");
 }
 
 /// A send arm is ready while its channel has room, and a full channel is not.
 #[test]
 pub(crate) fn a_select_send_arm_sends_when_the_channel_has_room() {
-    assert_compiles_and_runs("tests/fixtures/chan_select_send.kp", "sent\n7\nreceived\n");
+    assert_fixture_runs("tests/fixtures/chan_select_send.kp");
 }
 
 /// A `default` arm runs at once when nothing is ready, and a ready receive arm wins otherwise.
 #[test]
 pub(crate) fn a_select_default_arm_runs_when_nothing_is_ready() {
-    assert_compiles_and_runs("tests/fixtures/chan_select_default.kp", "-1\n4\n");
+    assert_fixture_runs("tests/fixtures/chan_select_default.kp");
 }
 
 /// A send arm on a zero-capacity channel completes only once a receiver is blocked on it.
 #[test]
 pub(crate) fn a_select_send_on_a_rendezvous_waits_for_a_receiver() {
-    assert_compiles_and_runs("tests/fixtures/chan_select_rendezvous.kp", "no receiver\nsent\n10\n");
+    assert_fixture_runs("tests/fixtures/chan_select_rendezvous.kp");
 }
 
 /// A select in a loop blocks between values from two producer threads and reads all six.
 #[test]
 pub(crate) fn a_select_in_a_loop_reads_two_producers_until_done() {
-    assert_compiles_and_runs("tests/fixtures/chan_select_loop.kp", "66\n");
+    assert_fixture_runs("tests/fixtures/chan_select_loop.kp");
 }
 
 /// A worker that panics inside a select arm releases its cases and its sender, so the
 /// receiver on that sender's channel sees it closed.
 #[test]
 pub(crate) fn a_select_worker_that_panics_releases_its_sender() {
-    assert_compiles_and_runs("tests/fixtures/chan_select_panic.kp", "closed\npanicked\n");
+    assert_fixture_runs("tests/fixtures/chan_select_panic.kp");
 }
 
 /// A panicking worker's select frees its waiter on the panic path, both for a
@@ -492,7 +474,7 @@ pub(crate) fn a_select_sending_one_value_in_two_cases_is_refused_by_name() {
 /// `select3` with nothing ready waits for the one channel that sends.
 #[test]
 pub(crate) fn a_select_with_no_ready_case_blocks_until_one_is() {
-    assert_compiles_and_runs("tests/fixtures/chan_select_blocks.kp", "2\n42\n");
+    assert_fixture_runs("tests/fixtures/chan_select_blocks.kp");
 }
 
 /// A select over channels of two element types is refused.
@@ -507,7 +489,7 @@ pub(crate) fn a_select_over_two_element_types_is_refused() {
 /// `recv_timeout` times out, takes a late value, and reports a closed channel.
 #[test]
 pub(crate) fn a_channel_recv_timeout_times_out_and_then_receives() {
-    assert_compiles_and_runs("tests/fixtures/chan_recv_timeout.kp", "timeout\n99\nclosed\n");
+    assert_fixture_runs("tests/fixtures/chan_recv_timeout.kp");
 }
 
 /// A zero-capacity bounded channel is a named panic.
@@ -536,13 +518,13 @@ pub(crate) fn a_freestanding_channel_is_refused() {
 /// The thread pool (`std/pool`): 1000 jobs on four workers with a sum check.
 #[test]
 pub(crate) fn a_pool_runs_a_thousand_jobs() {
-    assert_compiles_and_runs("tests/fixtures/pool_sum.kp", "499500\n0\n");
+    assert_fixture_runs("tests/fixtures/pool_sum.kp");
 }
 
 /// A panicking job is counted and its worker survives to run the rest.
 #[test]
 pub(crate) fn a_pool_counts_a_panicking_job_and_keeps_its_worker() {
-    assert_compiles_and_runs("tests/fixtures/pool_panics.kp", "27\n4\n5\n");
+    assert_fixture_runs("tests/fixtures/pool_panics.kp");
 }
 
 /// Dropping a pool joins it, an idle or twice-joined pool shuts down, and jobs
@@ -572,14 +554,14 @@ pub(crate) fn a_closure_value_is_refused_as_a_thread_argument() {
 
 #[test]
 pub(crate) fn a_worker_that_panics_closes_the_sender_it_was_given() {
-    assert_compiles_and_runs("tests/fixtures/thread_arg_sender_panic.kp", "1\nclosed\nworker gives up\n");
+    assert_fixture_runs("tests/fixtures/thread_arg_sender_panic.kp");
 }
 
 /// A Sender that is a temporary in a call argument is still owned when a later
 /// argument panics, so the worker's frame drops it and the receiver sees `Closed`.
 #[test]
 pub(crate) fn a_temporary_sender_in_an_argument_closes_when_a_later_argument_panics() {
-    assert_compiles_and_runs("tests/fixtures/thread_arg_temp_panic.kp", "closed\nboom\n");
+    assert_fixture_runs("tests/fixtures/thread_arg_temp_panic.kp");
 }
 
 /// Decision 127: a `fun` literal written directly as the `thread.spawn` entry may
@@ -587,21 +569,21 @@ pub(crate) fn a_temporary_sender_in_an_argument_closes_when_a_later_argument_pan
 /// worker returns, so main's receive loop ends.
 #[test]
 pub(crate) fn a_closure_entry_may_capture_a_sender() {
-    assert_compiles_and_runs("tests/fixtures/closure_sender_send.kp", "5\n15\n");
+    assert_fixture_runs("tests/fixtures/closure_sender_send.kp");
 }
 
 /// Decision 127: a closure entry may capture a Mutex handle; the worker fills the
 /// list and main reads the same list after join.
 #[test]
 pub(crate) fn a_closure_entry_may_capture_a_mutex() {
-    assert_compiles_and_runs("tests/fixtures/closure_mutex_list.kp", "1000\nitem-999\n");
+    assert_fixture_runs("tests/fixtures/closure_mutex_list.kp");
 }
 
 /// Decision 127 and the drop-on-panic guarantee: a worker whose closure environment
 /// holds a Sender and then panics still closes the channel, through the env drop.
 #[test]
 pub(crate) fn a_closure_entry_that_panics_still_closes_its_sender() {
-    assert_compiles_and_runs("tests/fixtures/closure_sender_panic.kp", "1\nclosed\nworker gives up\n");
+    assert_fixture_runs("tests/fixtures/closure_sender_panic.kp");
 }
 
 /// The planner's risk note: the worker panics while holding a captured Mutex, which
@@ -609,27 +591,27 @@ pub(crate) fn a_closure_entry_that_panics_still_closes_its_sender() {
 /// must close the channel without locking the poisoned Mutex.
 #[test]
 pub(crate) fn a_closure_entry_that_poisons_a_captured_mutex_still_closes_its_sender() {
-    assert_compiles_and_runs("tests/fixtures/closure_mutex_poison.kp", "1\nclosed\nworker gives up\n");
+    assert_fixture_runs("tests/fixtures/closure_mutex_poison.kp");
 }
 
 /// Three producers send 300 Strings through a bounded channel of two; the count and
 /// the byte total (3 * 490) come out exact.
 #[test]
 pub(crate) fn a_channel_of_strings_carries_three_producers() {
-    assert_compiles_and_runs("tests/fixtures/chan_string_producers.kp", "300\n1470\n");
+    assert_fixture_runs("tests/fixtures/chan_string_producers.kp");
 }
 
 /// A worker holds the other handle to a `Mutex<List<String>>` and fills the list; main
 /// reads the same list after join.
 #[test]
 pub(crate) fn a_mutex_list_is_shared_with_a_worker() {
-    assert_compiles_and_runs("tests/fixtures/mutex_list_worker.kp", "1000\nitem-999\n");
+    assert_fixture_runs("tests/fixtures/mutex_list_worker.kp");
 }
 
 /// A pool of three workers pushes 300 strings onto a `pd` mutex-guarded list.
 #[test]
 pub(crate) fn a_pool_fills_a_shared_list_of_strings() {
-    assert_compiles_and_runs("tests/fixtures/pool_gate_strings.kp", "300\n1\n");
+    assert_fixture_runs("tests/fixtures/pool_gate_strings.kp");
 }
 
 /// A freestanding build refuses the pool module by name.
@@ -647,58 +629,49 @@ pub(crate) fn a_freestanding_pool_is_refused() {
 /// do about it (MK9 section 2).
 #[test]
 pub(crate) fn a_panicking_worker_is_seen_as_an_error_by_its_joiner() {
-    assert_compiles_and_runs(
-        "tests/fixtures/thread_panic.kp",
-        "worker exploded\n0\n42\n",
-    );
+    assert_fixture_runs("tests/fixtures/thread_panic.kp");
 }
 
 /// Tidepool step 1 (issue 233): a panicking worker runs the user `Drop` of each
 /// owned local, newest first, before its joiner sees the panic.
 #[test]
 pub(crate) fn a_panicking_worker_drops_its_owned_locals_newest_first() {
-    assert_compiles_and_runs("tests/fixtures/panic_drop_order.kp", "drop\n2\ndrop\n1\nboom\n");
+    assert_fixture_runs("tests/fixtures/panic_drop_order.kp");
 }
 
 /// Tidepool step 1 (issue 233): a value moved out on one branch is not dropped
 /// again on the panic path; the branch that does not move keeps both drops.
 #[test]
 pub(crate) fn a_value_moved_out_on_one_branch_is_not_dropped_twice_on_panic() {
-    assert_compiles_and_runs(
-        "tests/fixtures/panic_drop_moved.kp",
-        "drop\n2\ndrop\n1\nboom\nkeep\ndrop\n2\ndrop\n1\nboom\n",
-    );
+    assert_fixture_runs("tests/fixtures/panic_drop_moved.kp");
 }
 
 /// Tidepool step 1 (issue 233): a file held by a worker's owned wrapper is closed
 /// on panic, because the wrapper's user `Drop` closes it.
 #[test]
 pub(crate) fn a_file_held_by_a_panicking_worker_is_closed_by_its_wrapper() {
-    assert_compiles_and_runs("tests/fixtures/panic_drop_handle.kp", "closed\nboom\n");
+    assert_fixture_runs("tests/fixtures/panic_drop_handle.kp");
 }
 
 /// Tidepool step 4 (issue 233): a user `Drop` value is a thread argument. The
 /// worker's frame drops it on panic, and the worker's drop runs once on return.
 #[test]
 pub(crate) fn a_user_drop_value_passed_to_a_worker_is_dropped_by_the_worker() {
-    assert_compiles_and_runs(
-        "tests/fixtures/panic_drop_arg.kp",
-        "drop\n5\nboom\nok\ndrop\n6\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/panic_drop_arg.kp");
 }
 
 /// Tidepool step 2 (issue 234): each thread has its own copy of a `tl`, starting
 /// from its literal, so the workers count without a lock and main keeps its own.
 #[test]
 pub(crate) fn thread_local_copies_are_per_thread() {
-    assert_compiles_and_runs("tests/fixtures/tl_per_thread.kp", "1000\n1000\n0\n5\n");
+    assert_fixture_runs("tests/fixtures/tl_per_thread.kp");
 }
 
 /// Tidepool step 2 (issue 234): a worker's copy starts from the literal on first
 /// access, whatever the main thread has stored in its own copy.
 #[test]
 pub(crate) fn a_worker_reads_its_own_copy_from_the_literal() {
-    assert_compiles_and_runs("tests/fixtures/tl_lazy_init.kp", "3\n5\n3\n");
+    assert_fixture_runs("tests/fixtures/tl_lazy_init.kp");
 }
 
 /// Tidepool step 2 (issue 234): eight workers increment their own copies 100000
@@ -735,7 +708,7 @@ pub(crate) fn a_thread_local_initializer_that_is_not_a_literal_is_refused() {
 /// `Ok` variant now lays out payload-less rather than refusing `unit`.
 #[test]
 pub(crate) fn a_worker_that_returns_unit_can_be_joined() {
-    assert_compiles_and_runs("tests/fixtures/thread_join_unit.kp", "1\njoined\n");
+    assert_fixture_runs("tests/fixtures/thread_join_unit.kp");
 }
 
 /// `MISSING-r7Wqb`'s general case: a `Result<unit, E>` written by hand, with
@@ -743,7 +716,7 @@ pub(crate) fn a_worker_that_returns_unit_can_be_joined() {
 /// value expression for its side effect even though nothing is stored.
 #[test]
 pub(crate) fn a_hand_written_result_of_unit_lays_out_and_runs() {
-    assert_compiles_and_runs("tests/fixtures/result_unit_payload.kp", "ok\n1\n7\n");
+    assert_fixture_runs("tests/fixtures/result_unit_payload.kp");
 }
 
 /// MK9-S3-M1 stage C2: `thread.sleep_ms` sleeps the calling thread (main or a
@@ -752,8 +725,8 @@ pub(crate) fn a_hand_written_result_of_unit_lays_out_and_runs() {
 /// and a worker it spawned.
 #[test]
 pub(crate) fn thread_sleep_ms_and_current_id_work_on_both_threads() {
-    assert_compiles_and_runs("tests/fixtures/thread_sleep.kp", "42\n");
-    assert_compiles_and_runs("tests/fixtures/thread_current_id.kp", "true\nfalse\n");
+    assert_fixture_runs("tests/fixtures/thread_sleep.kp");
+    assert_fixture_runs("tests/fixtures/thread_current_id.kp");
 }
 
 /// perf-env-cache: `env.has`/`env.get`/`env.set`/`env.unset` from three
@@ -767,7 +740,7 @@ pub(crate) fn thread_sleep_ms_and_current_id_work_on_both_threads() {
 /// threads interleave.
 #[test]
 pub(crate) fn env_reads_and_writes_from_several_threads_at_once_are_safe() {
-    assert_compiles_and_runs("tests/fixtures/env_thread_stress.kp", "true\ntrue\ntrue\n");
+    assert_fixture_runs("tests/fixtures/env_thread_stress.kp");
 }
 
 /// BUG-hT3wK: `str.byte` bounds-checks with a scan of `index + 1` bytes instead
@@ -775,7 +748,7 @@ pub(crate) fn env_reads_and_writes_from_several_threads_at_once_are_safe() {
 /// unchanged.
 #[test]
 pub(crate) fn str_byte_keeps_its_answers_and_bounds_at_the_edges() {
-    assert_compiles_and_runs("tests/fixtures/str_byte_edges.kp", "104\n111\n5\n0\n");
+    assert_fixture_runs("tests/fixtures/str_byte_edges.kp");
     assert_fixture_panics("str_byte_at_len", "str.byte: index out of bounds");
     assert_fixture_panics("str_byte_empty", "str.byte: index out of bounds");
 }
@@ -786,7 +759,7 @@ pub(crate) fn str_byte_keeps_its_answers_and_bounds_at_the_edges() {
 /// which runs this fixture under valgrind with every other one.
 #[test]
 pub(crate) fn env_table_rebuilds_do_not_disturb_concurrent_readers() {
-    assert_compiles_and_runs("tests/fixtures/env_thread_churn.kp", "200000\n200000\n3000\n3000\n");
+    assert_fixture_runs("tests/fixtures/env_thread_churn.kp");
 }
 
 /// `thread.join` consumes a `Thread<T>` and nothing else: a handle is the one

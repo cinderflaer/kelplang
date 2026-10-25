@@ -38,3 +38,8 @@ fun main() {
     val from_bag = &bag.items.get(i = 0).v
     print(*from_bag)
 }
+// stdout-begin
+// stdout: 42
+// stdout: forty-two
+// stdout: 43
+// stdout: 7

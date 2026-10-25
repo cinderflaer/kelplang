@@ -30,3 +30,7 @@ fun main() {
         Err(_) -> print("err")
     }
 }
+// stdout-begin
+// stdout: 8
+// stdout: cleanup
+// stdout: err

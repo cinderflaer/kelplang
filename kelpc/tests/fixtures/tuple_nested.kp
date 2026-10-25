@@ -17,3 +17,9 @@ fun main() {
     val ((_, high), _) = bits
     print(high)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 3
+// stdout: 11
+// stdout: 5
+// stdout: 3

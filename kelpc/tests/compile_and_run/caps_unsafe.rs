@@ -374,10 +374,7 @@ pub(crate) fn a_raw_pointer_allocates_writes_reads_volatile_and_frees() {
 /// the same address twice.
 #[test]
 pub(crate) fn a_function_address_is_a_checked_pointer() {
-    assert_compiles_and_runs(
-        "tests/fixtures/ptr_from_fn.kp",
-        "true\ntrue\ntrue\ntrue\ntrue\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/ptr_from_fn.kp");
 }
 
 /// A closure carries the environment its captures were moved into, so its code
@@ -441,39 +438,27 @@ pub(crate) fn a_pointer_to_an_owned_type_is_rejected() {
 
 #[test]
 pub(crate) fn a_packed_datac_has_the_c_layout_of_its_fields() {
-    assert_compiles_and_runs(
-        "tests/fixtures/repr_packed.kp",
-        "7\n1\n0\n1\n5\n7\n287454020\n21862\n",
-    );
+    assert_fixture_runs("tests/fixtures/repr_packed.kp");
 }
 
 #[test]
 pub(crate) fn a_repr_c_datac_keeps_the_default_padded_layout() {
-    assert_compiles_and_runs(
-        "tests/fixtures/repr_c_padded.kp",
-        "12\n4\n0\n4\n8\n10\n8\n4\n4\n4\n8\n8\n8\n",
-    );
+    assert_fixture_runs("tests/fixtures/repr_c_padded.kp");
 }
 
 #[test]
 pub(crate) fn a_layout_query_folds_in_an_array_length_and_a_constant() {
-    assert_compiles_and_runs(
-        "tests/fixtures/layout_query_in_a_constant.kp",
-        "8\n4\n4\n8\n",
-    );
+    assert_fixture_runs("tests/fixtures/layout_query_in_a_constant.kp");
 }
 
 #[test]
 pub(crate) fn a_repr_align_datac_raises_its_own_and_an_embedded_type_s_alignment() {
-    assert_compiles_and_runs("tests/fixtures/repr_align.kp", "16\n16\n0\n8\n32\n16\n16\n");
+    assert_fixture_runs("tests/fixtures/repr_align.kp");
 }
 
 #[test]
 pub(crate) fn an_enum_round_trips_its_discriminants_through_to_int_and_from_int() {
-    assert_compiles_and_runs(
-        "tests/fixtures/enum_discriminant.kp",
-        "10\n2\n1\n10\n99\n1\n8\n8\n4\n-5\n-5\n4\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/enum_discriminant.kp");
 }
 
 #[test]
@@ -533,31 +518,14 @@ pub(crate) fn integer_byte_order_conversions_reverse_the_right_bytes() {
     // 23 hand-computed values: `0x12345678u32.swap_bytes()` is `0x78563412`,
     // `to_le` is the identity on this little-endian target, `to_be` is not, and
     // swapping twice is the identity.
-    assert_compiles_and_runs(
-        "tests/fixtures/endian_scalars.kp",
-        "3412\n78563412\n807060504030201\n78563412\n807060504030201\n-16777217\n\
-         78563412\n12345678\n78563412\n12345678\n\
-         3412\n1234\n3412\n1234\n\
-         807060504030201\n102030405060708\n807060504030201\n102030405060708\n\
-         807060504030201\n102030405060708\n807060504030201\n807060504030201\n102030405060708\n",
-    );
+    assert_fixture_runs("tests/fixtures/endian_scalars.kp");
 }
 
 #[test]
 pub(crate) fn a_wire_header_round_trips_through_both_byte_orders() {
     // A 10-byte header read field by field in both orders, then rebuilt with
     // `write_*` and compared byte for byte with the pushed one.
-    assert_compiles_and_runs(
-        "tests/fixtures/bytes_endian.kp",
-        "10\n4b50\n504b\n102\n201\ndeadbeef\nefbeadde\n1f90\n901f\n\
-         -559038737\n-272716322\n\
-         807060504030201\n102030405060708\n578437695752307201\n\
-         504b0102\n2014b50\n504b0102deadbeef\n1f90\ndeadbeef\n\
-         50 4b 01 02 de ad be ef 90 1f\ntrue\n\
-         11223344\n44332211\n102030405060708\n807060504030201\n\
-         102030405060708\n807060504030201\n-2\nfeffffff\n-1\nffffffff\n\
-         -2\n-72057594037927937\n-2\nfeffffffffffffff\n",
-    );
+    assert_fixture_runs("tests/fixtures/bytes_endian.kp");
 }
 
 #[test]

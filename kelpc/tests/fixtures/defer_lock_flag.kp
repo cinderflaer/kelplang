@@ -15,3 +15,7 @@ fun main() {
     print(locked())
     print(flag.load(order = atomic.Ordering.SeqCst))
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: false

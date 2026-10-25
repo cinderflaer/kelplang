@@ -22,3 +22,6 @@ fun main() {
     print(total.load(order = atomic.Ordering.SeqCst))
     print(p.panicked())
 }
+// stdout-begin
+// stdout: 499500
+// stdout: 0

@@ -25,3 +25,6 @@ fun main() {
     relay()
     print(st.n)
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2

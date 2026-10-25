@@ -136,3 +136,16 @@ fun main() {
     print(res_len(r = closure_frame(good = true)))
     print(res_len(r = closure_frame(good = false)))
 }
+// stdout-begin
+// stdout: 9
+// stdout: -2
+// stdout: 6
+// stdout: -2
+// stdout: 14
+// stdout: -2
+// stdout: 4
+// stdout: -1
+// stdout: -2
+// stdout: 7
+// stdout: 9
+// stdout: -2

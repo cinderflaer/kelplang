@@ -32,3 +32,14 @@ fun main() {
     m.clear()
     print(m.is_empty())
 }
+// stdout-begin
+// stdout: 2
+// stdout: two
+// stdout: two
+// stdout: fallback
+// stdout: TWO
+// stdout: one
+// stdout: 1
+// stdout: beta
+// stdout: TWO
+// stdout: true

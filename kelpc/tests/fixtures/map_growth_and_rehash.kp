@@ -44,3 +44,36 @@ fun main() {
         j += 1
     }
 }
+// stdout-begin
+// stdout: 23
+// stdout: 220
+// stdout: 50
+// stdout: 60
+// stdout: 70
+// stdout: 80
+// stdout: 90
+// stdout: 100
+// stdout: 17
+// stdout: false
+// stdout: 18
+// stdout: true
+// stdout: 1000
+// stdout: 18
+// stdout: 0
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 4
+// stdout: 11
+// stdout: 12
+// stdout: 13
+// stdout: 14
+// stdout: 15
+// stdout: 16
+// stdout: 17
+// stdout: 18
+// stdout: 19
+// stdout: 20
+// stdout: 21
+// stdout: 22
+// stdout: 100

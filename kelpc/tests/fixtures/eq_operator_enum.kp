@@ -23,3 +23,8 @@ fun main() {
     print(K.B == K.B)
     print(K.A(v = 1) == K.A(v = 2))
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false

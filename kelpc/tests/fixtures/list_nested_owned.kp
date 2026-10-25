@@ -41,3 +41,12 @@ fun main() {
     }
     print("done")
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2
+// stdout: beta
+// stdout: gamma
+// stdout: beta
+// stdout: true
+// stdout: 2
+// stdout: done

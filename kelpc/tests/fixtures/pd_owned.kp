@@ -10,3 +10,6 @@ fun main() {
     show()
     print(banner)
 }
+// stdout-begin
+// stdout: == x ==
+// stdout: == x ==

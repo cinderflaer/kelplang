@@ -112,3 +112,26 @@ fun main() {
     }
     print(option.is_none(o = pick(n = 900)))
 }
+// stdout-begin
+// stdout: 255
+// stdout: true
+// stdout: true
+// stdout: 7
+// stdout: -2147483648
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: 7
+// stdout: true
+// stdout: true
+// stdout: 255
+// stdout: true
+// stdout: true
+// stdout: 7
+// stdout: 5
+// stdout: 5
+// stdout: 2
+// stdout: 255
+// stdout: none
+// stdout: 9
+// stdout: true

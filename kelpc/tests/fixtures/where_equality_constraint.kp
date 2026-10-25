@@ -25,3 +25,6 @@ fun main() {
     print(total(iter.range(1, 4)))
     print(first_plus(iter.range(0, 3), 100))
 }
+// stdout-begin
+// stdout: 12
+// stdout: 103

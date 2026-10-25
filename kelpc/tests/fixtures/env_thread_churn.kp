@@ -66,3 +66,8 @@ fun main() {
         Err(e) -> print(e.message)
     }
 }
+// stdout-begin
+// stdout: 200000
+// stdout: 200000
+// stdout: 3000
+// stdout: 3000

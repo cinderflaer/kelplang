@@ -8,7 +8,7 @@ use super::*;
 /// bound with `int` needs no conversion. The output is unchanged.
 #[test]
 pub(crate) fn index_and_length_functions_take_and_return_int() {
-    assert_compiles_and_runs("tests/fixtures/index_len_is_int.kp", "3\n20\n2\n3\ntrue\n");
+    assert_fixture_runs("tests/fixtures/index_len_is_int.kp");
 }
 
 /// A `usize` passed where an index is asked for is refused, and the message

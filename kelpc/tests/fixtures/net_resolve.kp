@@ -13,3 +13,7 @@ fun main() {
     val named = net.resolve("localhost")
     print(named.len() > 0)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 127.0.0.1
+// stdout: true

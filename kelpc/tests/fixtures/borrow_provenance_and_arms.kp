@@ -98,3 +98,13 @@ fun main() {
     val q = P(text = "y", n = 3)
     print(q.check())
 }
+// stdout-begin
+// stdout: hello
+// stdout: true
+// stdout: false
+// stdout: false
+// stdout: hello
+// stdout: none
+// stdout: 42
+// stdout: true
+// stdout: false

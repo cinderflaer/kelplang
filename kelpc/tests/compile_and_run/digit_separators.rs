@@ -7,10 +7,7 @@ use super::*;
 
 #[test]
 fn digit_separators_read_the_same_value_as_the_plain_literal() {
-    assert_compiles_and_runs(
-        "tests/fixtures/digit_separators.kp",
-        "true\n1000000\ntrue\n268435456\n65535\n170\ntrue\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/digit_separators.kp");
 }
 
 #[test]

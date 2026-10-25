@@ -34,3 +34,8 @@ fun main() {
     // The borrows released with the call, so `s` is still usable here.
     print(s.title)
 }
+// stdout-begin
+// stdout: row
+// stdout: row
+// stdout: 203
+// stdout: row

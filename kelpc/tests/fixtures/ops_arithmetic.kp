@@ -60,3 +60,16 @@ fun main() {
     print(a.x)
     print(b.x)
 }
+// stdout-begin
+// stdout: 4
+// stdout: 6
+// stdout: -1
+// stdout: 0
+// stdout: -1
+// stdout: -2
+// stdout: 3
+// stdout: 8
+// stdout: 4
+// stdout: 0
+// stdout: 1
+// stdout: 3

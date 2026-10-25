@@ -31,3 +31,17 @@ fun main() {
     words.reverse()
     print(words.get(0))
 }
+// stdout-begin
+// stdout: apple
+// stdout: fig
+// stdout: pear
+// stdout: true
+// stdout: false
+// stdout: 2
+// stdout: fig
+// stdout: 4
+// stdout: fig
+// stdout: apple
+// stdout: fig
+// stdout: 3
+// stdout: pear

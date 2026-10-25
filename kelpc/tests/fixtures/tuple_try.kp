@@ -35,3 +35,7 @@ fun main() {
         Err(e) -> print(e)
     }
 }
+// stdout-begin
+// stdout: 5
+// stdout: 6
+// stdout: negative

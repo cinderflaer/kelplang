@@ -53,3 +53,16 @@ fun main() {
     print(big % m)
     print(0 - big % m)
 }
+// stdout-begin
+// stdout: 1
+// stdout: -1
+// stdout: 1
+// stdout: -1
+// stdout: 6
+// stdout: 3
+// stdout: 4
+// stdout: 15
+// stdout: 2
+// stdout: 535
+// stdout: 999993014
+// stdout: -999993014

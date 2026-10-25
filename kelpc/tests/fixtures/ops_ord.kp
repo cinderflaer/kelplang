@@ -58,3 +58,14 @@ fun main() {
     print(c.major)
     print(c.minor)
 }
+// stdout-begin
+// stdout: true
+// stdout: false
+// stdout: false
+// stdout: true
+// stdout: 1
+// stdout: 9
+// stdout: 2
+// stdout: 0
+// stdout: 2
+// stdout: 1

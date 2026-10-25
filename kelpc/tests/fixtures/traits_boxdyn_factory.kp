@@ -36,3 +36,8 @@ fun main() {
     print(a.area())
     print(b.area())
 }
+// stdout-begin
+// stdout: circle
+// stdout: square
+// stdout: 12.000000
+// stdout: 9.000000

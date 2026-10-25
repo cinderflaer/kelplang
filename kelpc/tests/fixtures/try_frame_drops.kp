@@ -107,3 +107,14 @@ fun main() {
     print(opt_value(o = option_frame(n = 1)))
     print(opt_value(o = option_frame(n = -1)))
 }
+// stdout-begin
+// stdout: 9
+// stdout: -1
+// stdout: 6
+// stdout: -1
+// stdout: 14
+// stdout: -1
+// stdout: -1
+// stdout: 7
+// stdout: 6
+// stdout: -1

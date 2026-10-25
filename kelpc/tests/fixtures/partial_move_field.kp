@@ -12,3 +12,6 @@ fun main() {
     print(bag.name)
     print(xs.get(0))
 }
+// stdout-begin
+// stdout: kept
+// stdout: 1

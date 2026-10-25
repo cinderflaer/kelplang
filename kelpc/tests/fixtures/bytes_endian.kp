@@ -117,3 +117,39 @@ fun main() {
     print(m.read_i64_be(4)) // -2
     print(fmt.hex(m.read_u64_le(4))) // feffffffffffffff
 }
+// stdout-begin
+// stdout: 10
+// stdout: 4b50
+// stdout: 504b
+// stdout: 102
+// stdout: 201
+// stdout: deadbeef
+// stdout: efbeadde
+// stdout: 1f90
+// stdout: 901f
+// stdout: -559038737
+// stdout: -272716322
+// stdout: 807060504030201
+// stdout: 102030405060708
+// stdout: 578437695752307201
+// stdout: 504b0102
+// stdout: 2014b50
+// stdout: 504b0102deadbeef
+// stdout: 1f90
+// stdout: deadbeef
+// stdout: 50 4b 01 02 de ad be ef 90 1f
+// stdout: true
+// stdout: 11223344
+// stdout: 44332211
+// stdout: 102030405060708
+// stdout: 807060504030201
+// stdout: 102030405060708
+// stdout: 807060504030201
+// stdout: -2
+// stdout: feffffff
+// stdout: -1
+// stdout: ffffffff
+// stdout: -2
+// stdout: -72057594037927937
+// stdout: -2
+// stdout: feffffffffffffff

@@ -5,3 +5,5 @@ fun main() {
     val label = Label(text = source, view = source.as_str())
     print(label.view)
 }
+// stdout-begin
+// stdout: label

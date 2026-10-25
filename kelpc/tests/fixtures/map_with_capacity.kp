@@ -42,3 +42,17 @@ fun main() {
     big.insert(9, 99)
     print(big.get(9))
 }
+// stdout-begin
+// stdout: 200
+// stdout: 597
+// stdout: false
+// stdout: 70
+// stdout: 1
+// stdout: 20
+// stdout: 10
+// stdout: false
+// stdout: 30
+// stdout: 200
+// stdout: 0
+// stdout: 199
+// stdout: 99

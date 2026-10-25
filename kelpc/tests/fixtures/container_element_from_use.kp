@@ -37,3 +37,9 @@ fun main() {
     print("${count(from_arg)}")
     print("${empty_of().len()}")
 }
+// stdout-begin
+// stdout: 4 6
+// stdout: 2 8
+// stdout: 9
+// stdout: 0
+// stdout: 0

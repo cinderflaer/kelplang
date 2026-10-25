@@ -48,3 +48,15 @@ fun main() {
     val one = List.of(7)
     print(one.get(0))
 }
+// stdout-begin
+// stdout: 2
+// stdout: alpha beta 
+// stdout: beta
+// stdout: 1
+// stdout: true
+// stdout: 2
+// stdout: 3
+// stdout: 9
+// stdout: 3
+// stdout: 0
+// stdout: 7

@@ -47,3 +47,17 @@ fun main() {
     }
     print(n)
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: 3
+// stdout: 3
+// stdout: false
+// stdout: 4
+// stdout: 4
+// stdout: false
+// stdout: guard
+// stdout: 3

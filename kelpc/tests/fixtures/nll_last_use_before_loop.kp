@@ -17,3 +17,6 @@ fun main() {
     }
     print(names.len())
 }
+// stdout-begin
+// stdout: alpha
+// stdout: 3

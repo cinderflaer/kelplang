@@ -16,3 +16,8 @@ fun main() {
     print(top.rank)
     print(top.suit)
 }
+// stdout-begin
+// stdout: 2
+// stdout: spades
+// stdout: 2
+// stdout: spades

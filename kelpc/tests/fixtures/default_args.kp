@@ -23,3 +23,15 @@ fun main() {
     print(fmt.float(3.14159))
     print(fmt.float(3.14159, 4))
 }
+// stdout-begin
+// stdout: 6
+// stdout: 20
+// stdout: 10
+// stdout: 1/0/none
+// stdout: 1/0/some
+// stdout: 1/7/none
+// stdout: 1/7/x
+// stdout: true
+// stdout: false
+// stdout: 3.14
+// stdout: 3.1416

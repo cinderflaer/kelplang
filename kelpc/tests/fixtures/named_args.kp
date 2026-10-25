@@ -5,3 +5,7 @@ fun main() {
     print(sub(a = 10, b = 3))
     print(sub(b = 3, a = 10))
 }
+// stdout-begin
+// stdout: 7
+// stdout: 7
+// stdout: 7

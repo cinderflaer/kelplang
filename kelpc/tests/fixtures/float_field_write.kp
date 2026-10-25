@@ -25,3 +25,10 @@ fun main() {
     print(c.id)
     print(c.r)
 }
+// stdout-begin
+// stdout: 3
+// stdout: 2.000000
+// stdout: 3
+// stdout: 4.000000
+// stdout: 9
+// stdout: 4.250000

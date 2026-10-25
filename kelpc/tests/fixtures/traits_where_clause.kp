@@ -6,3 +6,4 @@ trait Shape {
 fun f<T>(x: &T) => i32 where T: Shape = 0
 
 fun main() { }
+// stdout-begin

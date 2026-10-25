@@ -24,3 +24,9 @@ fun main() {
     print(taken.remove(0))
     print(names.lock { l -> l.len() })
 }
+// stdout-begin
+// stdout: 6
+// stdout: 6
+// stdout: 40
+// stdout: a
+// stdout: 0

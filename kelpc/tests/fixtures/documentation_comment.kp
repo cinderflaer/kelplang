@@ -7,3 +7,5 @@ datac Point(val x: i32)
 fun main() {
     print(Point(x = 7).x)
 }
+// stdout-begin
+// stdout: 7

@@ -28,3 +28,6 @@ fun main() {
     print(walked)
     print(sum)
 }
+// stdout-begin
+// stdout: 2000
+// stdout: 1999001

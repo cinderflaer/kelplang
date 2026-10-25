@@ -57,3 +57,9 @@ fun main() {
         Blank -> print(0)
     }
 }
+// stdout-begin
+// stdout: 4
+// stdout: 4
+// stdout: 4
+// stdout: 4
+// stdout: 8

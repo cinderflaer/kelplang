@@ -8,3 +8,5 @@ fun main() {
     val view = make().text.as_str()
     print(view)
 }
+// stdout-begin
+// stdout: hello

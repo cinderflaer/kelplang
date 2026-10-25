@@ -9,3 +9,8 @@ fun main() {
         print(x)
     }
 }
+// stdout-begin
+// stdout: 1
+// stdout: iter-end
+// stdout: 2
+// stdout: iter-end

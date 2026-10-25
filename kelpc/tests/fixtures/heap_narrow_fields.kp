@@ -83,3 +83,20 @@ fun main() {
     print(whole3(v = z3.get().n))
     print(z3.get().n.c.to_i64())
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2
+// stdout: 302
+// stdout: 23
+// stdout: 40302
+// stdout: 432
+// stdout: 5040302
+// stdout: 5
+// stdout: 605040302
+// stdout: 6
+// stdout: 8070605040302
+// stdout: 8
+// stdout: 42
+// stdout: 42
+// stdout: 80706
+// stdout: 8

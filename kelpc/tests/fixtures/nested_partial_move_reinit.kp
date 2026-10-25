@@ -9,3 +9,6 @@ fun main() {
     print(old)
     print(p.name.text)
 }
+// stdout-begin
+// stdout: old
+// stdout: new

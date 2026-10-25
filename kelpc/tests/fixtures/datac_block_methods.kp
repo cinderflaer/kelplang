@@ -37,3 +37,9 @@ fun main() {
     print(p.firstOr(9))
     print(p.keep(4))
 }
+// stdout-begin
+// stdout: 6
+// stdout: 12
+// stdout: 1
+// stdout: 3
+// stdout: 4

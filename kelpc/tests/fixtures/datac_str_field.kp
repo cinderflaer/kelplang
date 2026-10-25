@@ -7,3 +7,5 @@ fun main() {
     val u = User(name = "x")
     print(u.name)
 }
+// stdout-begin
+// stdout: x

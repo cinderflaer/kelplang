@@ -17,3 +17,7 @@ fun main() {
     run(s)
     print(s.count)
 }
+// stdout-begin
+// stdout: 4
+// stdout: 4
+// stdout: 5

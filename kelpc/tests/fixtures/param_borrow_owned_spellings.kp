@@ -31,3 +31,12 @@ fun main() {
     print(bytes_plain(b))
     print(bytes_ref(b))
 }
+// stdout-begin
+// stdout: 7
+// stdout: 7
+// stdout: 7
+// stdout: 4
+// stdout: 4
+// stdout: 4
+// stdout: 3
+// stdout: 3

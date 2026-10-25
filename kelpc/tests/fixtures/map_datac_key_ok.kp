@@ -37,3 +37,19 @@ fun main() {
     print(m.get(key = Point(x = 29, y = 58)))
     print(m.has(key = Point(x = 40, y = 80)))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 99
+// stdout: 20
+// stdout: false
+// stdout: true
+// stdout: 2
+// stdout: 1
+// stdout: 2
+// stdout: 99
+// stdout: 1
+// stdout: false
+// stdout: 31
+// stdout: 7
+// stdout: 29
+// stdout: false

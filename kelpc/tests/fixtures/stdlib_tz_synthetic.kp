@@ -457,3 +457,8 @@ fun main() {
     corrupt_cases(st)
     print("cases: ${st.run}, failed: ${st.bad}")
 }
+// stdout-begin
+// stdout: gap: gap
+// stdout: ambiguous: ambiguous 1730611800 1730615400
+// stdout: one: one 1710052200
+// stdout: cases: 116, failed: 0

@@ -330,7 +330,7 @@ pub(crate) fn percpu_section_alignment(line: &str) -> u64 {
 /// the same program to the same output.
 #[test]
 pub(crate) fn a_section_clause_places_code_and_data_without_changing_the_result() {
-    assert_compiles_and_runs("tests/fixtures/section_attribute.kp", "41\n");
+    assert_fixture_runs("tests/fixtures/section_attribute.kp");
 }
 
 /// `print` is `printf`, and a freestanding build has no libc: the front end

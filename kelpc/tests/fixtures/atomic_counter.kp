@@ -57,3 +57,10 @@ fun main() {
     print(counter.swap(value = 0, order = atomic.Ordering.SeqCst))
     print(counter.load(order = atomic.Ordering.SeqCst))
 }
+// stdout-begin
+// stdout: 100
+// stdout: 0
+// stdout: 100
+// stdout: 200
+// stdout: 200
+// stdout: 0

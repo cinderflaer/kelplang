@@ -11,3 +11,8 @@ fun main() {
     print(m.has(key = Point(x = 9, y = 9)))
     print(m.has(key = Point(x = 1, y = 3)))
 }
+// stdout-begin
+// stdout: 1
+// stdout: 10
+// stdout: false
+// stdout: false

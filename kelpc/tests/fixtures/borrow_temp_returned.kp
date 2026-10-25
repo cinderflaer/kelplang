@@ -6,3 +6,5 @@ fun main() {
     val s = String.from_str("x").as_str()
     print(s)
 }
+// stdout-begin
+// stdout: x

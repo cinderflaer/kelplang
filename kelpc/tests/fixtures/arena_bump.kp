@@ -37,3 +37,18 @@ fun main() {
     print(again.addr() == p0.addr())
     print(again.is_null())
 }
+// stdout-begin
+// stdout: false
+// stdout: false
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: 0
+// stdout: true
+// stdout: false

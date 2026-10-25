@@ -13,3 +13,8 @@ fun main() {
     print(v)
     print(f())
 }
+// stdout-begin
+// stdout: block-out
+// stdout: text
+// stdout: f-out
+// stdout: 5

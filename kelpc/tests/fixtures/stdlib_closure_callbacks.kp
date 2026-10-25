@@ -65,3 +65,14 @@ fun main() {
     print(result.unwrap_err(r = result.map_err(r = err, f = fun(e: &i32) => i32 = e * limit)))
     print(result.expect(r = result.map(r = ok, f = fun(x: &i32) => i32 = x * factor), message = "unreachable"))
 }
+// stdout-begin
+// stdout: 3
+// stdout: 9
+// stdout: true
+// stdout: v=1v=2v=3
+// stdout: 2
+// stdout: true
+// stdout: 4
+// stdout: 107
+// stdout: 5
+// stdout: 12

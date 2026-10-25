@@ -21,3 +21,5 @@ fun consume(h: move Thread<i64>) {
 fun main() {
     print(1)
 }
+// stdout-begin
+// stdout: 1

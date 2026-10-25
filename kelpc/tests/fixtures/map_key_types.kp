@@ -51,3 +51,23 @@ fun main() {
     var lk: List<String> = legacy.keys()
     print(lk.get(i = 1).as_str())
 }
+// stdout-begin
+// stdout: 2
+// stdout: 99
+// stdout: true
+// stdout: false
+// stdout: 0
+// stdout: 2
+// stdout: 1
+// stdout: 1
+// stdout: 10
+// stdout: 2
+// stdout: yes
+// stdout: no
+// stdout: 70
+// stdout: 2
+// stdout: 9
+// stdout: false
+// stdout: 2
+// stdout: 6
+// stdout: bb

@@ -137,3 +137,24 @@ fun main() {
     print(narrow(a = h.small))
     print(eight(e = h.mid))
 }
+// stdout-begin
+// stdout: 5
+// stdout: 17
+// stdout: -1
+// stdout: 41
+// stdout: -2
+// stdout: 14
+// stdout: 15
+// stdout: -3
+// stdout: 17
+// stdout: 1
+// stdout: -1
+// stdout: 20
+// stdout: -2
+// stdout: 404
+// stdout: 0
+// stdout: 202
+// stdout: 0
+// stdout: 116
+// stdout: 2
+// stdout: 5

@@ -37,3 +37,14 @@ fun main() {
     p = &two
     print(p.a)
 }
+// stdout-begin
+// stdout: true
+// stdout: 7
+// stdout: false
+// stdout: 9
+// stdout: true
+// stdout: hi
+// stdout: 5
+// stdout: 2
+// stdout: 1
+// stdout: 3

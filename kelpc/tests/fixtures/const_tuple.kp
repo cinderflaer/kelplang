@@ -14,3 +14,11 @@ fun main() {
         print(a * b)
     }
 }
+// stdout-begin
+// stdout: 1
+// stdout: 3
+// stdout: 7
+// stdout: true
+// stdout: 14
+// stdout: 2
+// stdout: 98

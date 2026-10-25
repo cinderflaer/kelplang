@@ -11,3 +11,7 @@ fun main() {
     print(a)
     print(b)
 }
+// stdout-begin
+// stdout: 42
+// stdout: 42
+// stdout: 42

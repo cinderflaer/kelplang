@@ -8,3 +8,7 @@ fun main() {
     val s = t.1.0
     print(s.len())
 }
+// stdout-begin
+// stdout: 7
+// stdout: 9
+// stdout: 2

@@ -13,3 +13,6 @@ fun main() {
     names.push(String.from_str("gamma"))
     print(names.len())
 }
+// stdout-begin
+// stdout: alpha
+// stdout: 3

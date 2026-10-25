@@ -9,3 +9,6 @@ fun main() {
     val a = sys.arch()
     print(str.eq(a, "x86_64") || str.eq(a, "aarch64"))
 }
+// stdout-begin
+// stdout: linux
+// stdout: true

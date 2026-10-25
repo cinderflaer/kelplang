@@ -24,3 +24,6 @@ fun main() {
     val nested: Pair<Pair<i32, i32>, i32> = Pair(a = Pair(a = 3, b = 4), b = 5)
     print(show(nested))
 }
+// stdout-begin
+// stdout: 12
+// stdout: 345

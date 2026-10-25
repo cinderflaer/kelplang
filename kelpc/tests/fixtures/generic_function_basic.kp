@@ -33,3 +33,12 @@ fun main() {
     val p = Pair(first = 4, second = 5)
     print(sum_of(p = p))
 }
+// stdout-begin
+// stdout: 5
+// stdout: true
+// stdout: 2.500000
+// stdout: text
+// stdout: 3
+// stdout: once
+// stdout: 1
+// stdout: 9

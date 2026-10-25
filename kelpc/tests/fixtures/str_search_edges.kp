@@ -51,3 +51,35 @@ fun main() {
     print(r.len())
     print(str.replace(tail, "ab", "-").len())
 }
+// stdout-begin
+// stdout: 4
+// stdout: 0
+// stdout: none
+// stdout: 0
+// stdout: none
+// stdout: 0
+// stdout: 2
+// stdout: 2
+// stdout: 7
+// stdout: 0
+// stdout: 2
+// stdout: 0
+// stdout: none
+// stdout: none
+// stdout: 999
+// stdout: none
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: a+b+c
+// stdout: ba
+// stdout: abc
+// stdout:
+// stdout: hello
+// stdout:
+// stdout: xyz
+// stdout: ab
+// stdout: 3000
+// stdout: 1000

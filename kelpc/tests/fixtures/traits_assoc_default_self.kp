@@ -22,3 +22,6 @@ fun main() {
     print(o.tag())
     print(o.show())
 }
+// stdout-begin
+// stdout: 107
+// stdout: 107

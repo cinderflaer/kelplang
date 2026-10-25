@@ -20,3 +20,5 @@ fun grid_sum(rows: i32, cols: i32) => i32 {
 fun main() {
     print(grid_sum(3, 4))
 }
+// stdout-begin
+// stdout: 66

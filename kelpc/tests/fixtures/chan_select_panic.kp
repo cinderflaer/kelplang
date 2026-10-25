@@ -62,3 +62,6 @@ fun main() {
         Err(_) -> {}
     }
 }
+// stdout-begin
+// stdout: closed
+// stdout: panicked

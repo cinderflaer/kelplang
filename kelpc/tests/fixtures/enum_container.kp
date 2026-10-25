@@ -48,3 +48,10 @@ fun main() {
     }
     print(label(ts.remove(i = 0)))
 }
+// stdout-begin
+// stdout: 12.000000
+// stdout: 0.000000
+// stdout: 4
+// stdout: 12
+// stdout: 0
+// stdout: 4

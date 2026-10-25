@@ -16,3 +16,6 @@ fun main() {
     print(bags.other.len())
     print(bags.other.get(i = 0))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 7

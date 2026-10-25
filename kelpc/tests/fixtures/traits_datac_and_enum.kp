@@ -68,3 +68,14 @@ fun main() {
     val d = Figure.Dot
     print(area_of(d))
 }
+// stdout-begin
+// stdout: 12.000000
+// stdout: 27.000000
+// stdout: 27.000000
+// stdout: circle
+// stdout: true
+// stdout: 9.000000
+// stdout: 18.000000
+// stdout: 2
+// stdout: 9.000000
+// stdout: 0.000000

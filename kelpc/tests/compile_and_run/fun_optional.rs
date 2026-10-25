@@ -6,7 +6,7 @@ use super::*;
 /// run the same as the written form, and the two forms mix in one file.
 #[test]
 pub(crate) fn a_top_level_function_may_leave_out_fun() {
-    assert_compiles_and_runs("tests/fixtures/fun_optional.kp", "2\n4\n4\n8\n0\n5\n");
+    assert_fixture_runs("tests/fixtures/fun_optional.kp");
 }
 
 /// A `pub` top-level function keeps `fun`, and the refusal names the spelling.

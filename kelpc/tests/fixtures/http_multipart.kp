@@ -17,3 +17,23 @@ fun main() {
     print(req.headers.get(0).value)
     print(req.method)
 }
+// stdout-begin
+// stdout: multipart/form-data; boundary=xXboundaryXx
+// stdout: --xXboundaryXx\r
+// stdout: Content-Disposition: form-data; name="content"\r
+// stdout: \r
+// stdout: hello\r
+// stdout: --xXboundaryXx\r
+// stdout: Content-Disposition: form-data; name="a%22b%0D%0AX: y"\r
+// stdout: \r
+// stdout: v\r
+// stdout: --xXboundaryXx\r
+// stdout: Content-Disposition: form-data; name="file"; filename="n%22ote.txt"\r
+// stdout: Content-Type: text/plain\r
+// stdout: \r
+// stdout: line1
+// stdout: line2\r
+// stdout: --xXboundaryXx--\r
+// stdout:
+// stdout: multipart/form-data; boundary=xXboundaryXx
+// stdout: POST

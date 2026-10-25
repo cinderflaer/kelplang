@@ -10,3 +10,7 @@ fun main() {
     }
     print(total)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 3

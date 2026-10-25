@@ -38,3 +38,10 @@ fun main() {
     }
     print(letters)
 }
+// stdout-begin
+// stdout: 5
+// stdout: 30
+// stdout: 5
+// stdout: 25
+// stdout: 6
+// stdout: 6

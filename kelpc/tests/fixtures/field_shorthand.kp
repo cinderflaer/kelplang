@@ -41,3 +41,11 @@ fun main() {
     }
     print(t)
 }
+// stdout-begin
+// stdout: example
+// stdout: 8080
+// stdout: 3
+// stdout: 7
+// stdout: 9
+// stdout: 1
+// stdout: 2.500000

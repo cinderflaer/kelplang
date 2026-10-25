@@ -44,3 +44,7 @@ fun main() {
         Err(_) -> print("closed")
     }
 }
+// stdout-begin
+// stdout: no receiver
+// stdout: sent
+// stdout: 10

@@ -64,3 +64,14 @@ fun main() {
     print(flag<true>() + flag<false>())
     print(Flag<true>(value = 5).value)
 }
+// stdout-begin
+// stdout: 3
+// stdout: 3
+// stdout: 6
+// stdout: 100
+// stdout: 7
+// stdout: 3
+// stdout: 0
+// stdout: 15
+// stdout: 1
+// stdout: 5

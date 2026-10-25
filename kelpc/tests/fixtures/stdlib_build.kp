@@ -21,3 +21,13 @@ fun main() {
     print(str.from_i64(result.unwrap(r = min)))
     print(str.from_u64(9))
 }
+// stdout-begin
+// stdout: foobar
+// stdout: a:b:c
+// stdout: aaa
+// stdout: 0
+// stdout: 145
+// stdout: -145
+// stdout: 18446744073709551615
+// stdout: -9223372036854775808
+// stdout: 9

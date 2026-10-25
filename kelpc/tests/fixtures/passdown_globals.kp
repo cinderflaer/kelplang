@@ -40,3 +40,11 @@ fun main() {
     show()
     print(origin.sum())
 }
+// stdout-begin
+// stdout: 10 20 0
+// stdout: 1 2 3
+// stdout: 10 20 2
+// stdout: 1 2 3
+// stdout: 10 20 12
+// stdout: 1 2 3
+// stdout: 3

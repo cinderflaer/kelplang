@@ -9,3 +9,7 @@ fun main() {
     print(p.x)
     print(consume(p))
 }
+// stdout-begin
+// stdout: 3
+// stdout: 3
+// stdout: 7

@@ -14,3 +14,11 @@ fun main() {
     print(align_of<Holder>())
     print(offset_of<Holder>("inner"))
 }
+// stdout-begin
+// stdout: 16
+// stdout: 16
+// stdout: 0
+// stdout: 8
+// stdout: 32
+// stdout: 16
+// stdout: 16

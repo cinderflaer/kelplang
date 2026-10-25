@@ -16,3 +16,9 @@ fun f(n: i32) => i32 {
 fun main() {
     print(f(n = 5))
 }
+// stdout-begin
+// stdout: loop-out
+// stdout: loop-out
+// stdout: loop-out
+// stdout: f-out
+// stdout: 20

@@ -16,3 +16,12 @@ fun main() {
     print(h.length)
     print(h.flags)
 }
+// stdout-begin
+// stdout: 7
+// stdout: 1
+// stdout: 0
+// stdout: 1
+// stdout: 5
+// stdout: 7
+// stdout: 287454020
+// stdout: 21862

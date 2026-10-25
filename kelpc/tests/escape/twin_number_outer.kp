@@ -12,3 +12,5 @@ fun main() {
     record(5, acc)
     print(acc.total)
 }
+// stdout-begin
+// stdout: 5

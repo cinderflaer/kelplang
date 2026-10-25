@@ -19,3 +19,6 @@ fun main() {
     print(e.code)
     print(build(n = 9).code)
 }
+// stdout-begin
+// stdout: 5
+// stdout: 9

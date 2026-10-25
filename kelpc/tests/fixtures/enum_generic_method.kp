@@ -20,3 +20,6 @@ fun main() {
     val p = o.map(fun(x: i32) => i64 = x.to_i64() * 10)
     print(when p { Has(v) -> v  No -> 0 })
 }
+// stdout-begin
+// stdout: true
+// stdout: 40

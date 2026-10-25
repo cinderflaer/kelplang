@@ -18,3 +18,8 @@ fun main() {
     print(data)
     print(data.is_empty())
 }
+// stdout-begin
+// stdout: 2
+// stdout: hi
+// stdout: Xi
+// stdout: false

@@ -27,3 +27,12 @@ fun main() {
     val total: f64 = 0.5 + n.to_f64() * 0.0
     print(total)
 }
+// stdout-begin
+// stdout: 16777217.000000
+// stdout: 16777216.000000
+// stdout: -7.000000
+// stdout: -3.500000
+// stdout: 200.000000
+// stdout: 200.000000
+// stdout: 3000000000.000000
+// stdout: 0.500000

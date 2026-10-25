@@ -12,3 +12,6 @@ fun main() {
     print(total)
     print(xs.len())
 }
+// stdout-begin
+// stdout: 12
+// stdout: 3

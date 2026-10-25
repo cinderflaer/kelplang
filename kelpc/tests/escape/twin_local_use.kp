@@ -8,3 +8,5 @@ fun twice(n: i32) => i32 {
 fun main() {
     print(twice(3))
 }
+// stdout-begin
+// stdout: 6

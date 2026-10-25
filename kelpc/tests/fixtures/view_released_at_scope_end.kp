@@ -11,3 +11,6 @@ fun main() {
     val moved = s
     print(moved)
 }
+// stdout-begin
+// stdout: hi
+// stdout: hi

@@ -24,3 +24,7 @@ fun main() {
     caller()
     print(hits)
 }
+// stdout-begin
+// stdout: 0
+// stdout: 2
+// stdout: 2

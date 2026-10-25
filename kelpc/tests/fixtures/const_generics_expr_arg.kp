@@ -19,3 +19,8 @@ fun main() {
     print(capacity<SIZE * 2>())
     print(capacity<twice(n = 4)>())
 }
+// stdout-begin
+// stdout: 6
+// stdout: 6
+// stdout: 6
+// stdout: 8

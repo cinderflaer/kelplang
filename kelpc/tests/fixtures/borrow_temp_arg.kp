@@ -11,3 +11,6 @@ fun main() {
     print(sum(Pair(a = 1, b = 2)))
     print(sum(Pair(a = 3, b = 4)) + sum(Pair(a = 5, b = 6)))
 }
+// stdout-begin
+// stdout: 3
+// stdout: 18

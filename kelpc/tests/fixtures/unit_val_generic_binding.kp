@@ -20,3 +20,6 @@ fun main() {
     val y: unit = x
     sink(u = y)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2

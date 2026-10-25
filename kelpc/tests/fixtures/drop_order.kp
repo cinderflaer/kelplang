@@ -19,3 +19,12 @@ fun main() {
     val l = Leaf(tag = 3)
     print("body")
 }
+// stdout-begin
+// stdout: body
+// stdout: leaf
+// stdout: 3
+// stdout: pair
+// stdout: leaf
+// stdout: 1
+// stdout: leaf
+// stdout: 2

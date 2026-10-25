@@ -9,3 +9,7 @@ fun main() {
     val edge: i32 = -2147483648
     print(edge)
 }
+// stdout-begin
+// stdout: 4294967295
+// stdout: 4294967295
+// stdout: -2147483648

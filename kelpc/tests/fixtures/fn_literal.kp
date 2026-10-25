@@ -61,3 +61,13 @@ fun main() {
     print(option.is_none(o = chain(1, 0)))
     print(option.expect(o = chain(9, 3), message = "unreachable"))
 }
+// stdout-begin
+// stdout: 42
+// stdout: 6
+// stdout: 7
+// stdout: 4
+// stdout: 31
+// stdout: 9
+// stdout: 12
+// stdout: true
+// stdout: 4

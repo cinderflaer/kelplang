@@ -62,3 +62,18 @@ fun main() {
     print(moved.inner.text)
     print("done")
 }
+// stdout-begin
+// stdout: alpha
+// stdout: 7
+// stdout: raw
+// stdout: nested
+// stdout: 7
+// stdout: after scope
+// stdout: beta
+// stdout: 9
+// stdout: more
+// stdout: deep
+// stdout: beta
+// stdout: 4
+// stdout: deep
+// stdout: done

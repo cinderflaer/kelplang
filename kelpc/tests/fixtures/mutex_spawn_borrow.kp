@@ -20,3 +20,5 @@ fun main() {
     val r = thread.join(t)
     print(counter.lock { v -> *v })
 }
+// stdout-begin
+// stdout: 1

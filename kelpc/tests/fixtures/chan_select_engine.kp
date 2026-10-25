@@ -21,3 +21,9 @@ fun main() {
     }
     print("timed out")
 }
+// stdout-begin
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: 7
+// stdout: timed out

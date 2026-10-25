@@ -16,3 +16,7 @@ fun main() {
     val r = &c
     print((*r).count)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 3
+// stdout: 2

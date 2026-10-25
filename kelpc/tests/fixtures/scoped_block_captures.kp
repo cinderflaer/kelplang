@@ -52,3 +52,9 @@ fun main() {
     borrowed_capture(State(a = 1000), xs)
     mut_capture()
 }
+// stdout-begin
+// stdout: 108
+// stdout: 109
+// stdout: 7
+// stdout: 2030
+// stdout: 5

@@ -25,3 +25,7 @@ fun main() {
         Err(err) -> print(err)
     }
 }
+// stdout-begin
+// stdout: ok
+// stdout: 1
+// stdout: 7

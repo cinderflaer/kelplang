@@ -32,3 +32,7 @@ fun main() {
         Err(e) -> print(e)
     }
 }
+// stdout-begin
+// stdout: ok
+// stdout: not positive
+// stdout: success

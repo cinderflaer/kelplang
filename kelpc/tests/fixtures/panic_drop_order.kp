@@ -24,3 +24,9 @@ fun main() {
         Err(e) -> print(e.message)
     }
 }
+// stdout-begin
+// stdout: drop
+// stdout: 2
+// stdout: drop
+// stdout: 1
+// stdout: boom

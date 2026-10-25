@@ -39,3 +39,10 @@ fun main() {
         i = i + 1
     }
 }
+// stdout-begin
+// stdout: 5
+// stdout: 7
+// stdout: 0
+// stdout: 10
+// stdout: 11
+// stdout: 12

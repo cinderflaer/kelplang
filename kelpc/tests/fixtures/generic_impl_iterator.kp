@@ -22,3 +22,6 @@ fun main() {
     print(n)
     print(iter.sum_i64(twice(iter.take(iter.range(1, 100), 3))))
 }
+// stdout-begin
+// stdout: 6
+// stdout: 6

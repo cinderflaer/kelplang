@@ -10,3 +10,5 @@ section(".kelp.text") fun add(a: i32, b: i32) => i32 = a + b
 fun main() {
     print(add(STEPS.get(i = 0), 40))
 }
+// stdout-begin
+// stdout: 41

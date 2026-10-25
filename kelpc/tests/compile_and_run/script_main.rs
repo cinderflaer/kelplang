@@ -6,13 +6,13 @@ use super::*;
 /// loop run in source order from the start of the program.
 #[test]
 pub(crate) fn a_file_of_top_level_statements_runs_as_main() {
-    assert_compiles_and_runs("tests/fixtures/script_main.kp", "start\n42\nhello, Kelp\n2\n0\n1\n2\n");
+    assert_fixture_runs("tests/fixtures/script_main.kp");
 }
 
 /// A top-level `let ... else` takes the statements after it as its rest.
 #[test]
 pub(crate) fn a_top_level_let_else_runs_the_rest_of_the_script() {
-    assert_compiles_and_runs("tests/fixtures/script_let_else.kp", "4\n5\n");
+    assert_fixture_runs("tests/fixtures/script_let_else.kp");
 }
 
 /// Statements and a `fun main` in one file are refused, and the refusal names both.

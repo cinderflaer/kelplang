@@ -8,3 +8,6 @@ fun main() {
     print(add(2, 3))
     print(square(4))
 }
+// stdout-begin
+// stdout: 5
+// stdout: 16

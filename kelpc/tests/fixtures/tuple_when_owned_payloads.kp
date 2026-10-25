@@ -13,3 +13,6 @@ fun main() {
     print(pick(option.Option.Some(value = String.from_str(s = "ab")), option.Option.Some(value = String.from_str(s = "cde"))))
     print(pick(option.Option.None, option.Option.Some(value = String.from_str(s = "cde"))))
 }
+// stdout-begin
+// stdout: 5
+// stdout: 300

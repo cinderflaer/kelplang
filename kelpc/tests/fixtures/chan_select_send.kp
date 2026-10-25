@@ -31,3 +31,7 @@ fun main() {
     }
     print(full)
 }
+// stdout-begin
+// stdout: sent
+// stdout: 7
+// stdout: received

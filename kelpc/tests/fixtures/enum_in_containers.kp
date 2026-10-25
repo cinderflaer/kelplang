@@ -95,3 +95,22 @@ fun main() {
     ys.clear()
     print(ys.len())
 }
+// stdout-begin
+// stdout: 2
+// stdout: 5
+// stdout: 0
+// stdout: 6
+// stdout: 0
+// stdout: 1
+// stdout: 5
+// stdout: 0
+// stdout: 0
+// stdout: 6
+// stdout: 0
+// stdout: 0
+// stdout: 4
+// stdout: 0
+// stdout: 5
+// stdout: 9
+// stdout: -1
+// stdout: 0

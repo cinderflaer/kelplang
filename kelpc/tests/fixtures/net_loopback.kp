@@ -21,3 +21,5 @@ fun main() {
     net.close(s)
     l.close()
 }
+// stdout-begin
+// stdout: hello

@@ -7,7 +7,7 @@ use super::*;
 /// that only reads self stays a shared borrow, and a shared caller can use it.
 #[test]
 pub(crate) fn a_method_that_writes_self_is_inferred_exclusive_without_mut() {
-    assert_compiles_and_runs("tests/fixtures/receiver_infer.kp", "2\n3\n6\n6\n6\n");
+    assert_fixture_runs("tests/fixtures/receiver_infer.kp");
 }
 
 /// A method inferred exclusive cannot be called through a shared borrow, and the

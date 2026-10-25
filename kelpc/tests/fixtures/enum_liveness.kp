@@ -109,3 +109,16 @@ fun main() {
     print(held(a = 3, b = 4, s = full))
     print(held(a = 6, b = 7, s = empty))
 }
+// stdout-begin
+// stdout: 21
+// stdout: 143
+// stdout: -13
+// stdout: 141
+// stdout: 42
+// stdout: -1
+// stdout: 185
+// stdout: 86
+// stdout: 297
+// stdout: -3
+// stdout: 226
+// stdout: 136

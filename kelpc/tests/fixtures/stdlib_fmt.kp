@@ -40,3 +40,29 @@ fun main() {
     print(fmt.human_size(1536))
     print(fmt.human_size(1099511627776))
 }
+// stdout-begin
+// stdout: 0
+// stdout: -1234
+// stdout: 4294967295
+// stdout: 3.142
+// stdout: 1.5
+// stdout: 0
+// stdout: ff
+// stdout: beef
+// stdout: 007
+// stdout: long
+// stdout: 7..
+// stdout: 61 62
+// stdout:
+// stdout: 007!
+// stdout: 0
+// stdout: 999
+// stdout: 1,000
+// stdout: 1,234,567
+// stdout: 18,446,744,073,709,551,615
+// stdout: -1,234,567
+// stdout: 0 B
+// stdout: 1023 B
+// stdout: 1.00 KiB
+// stdout: 1.50 KiB
+// stdout: 1.00 TiB

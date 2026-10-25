@@ -15,3 +15,15 @@ fun main() {
         print(i)
     }
 }
+// stdout-begin
+// stdout: 0
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 4
+// stdout: 0
+// stdout: 2
+// stdout: 4
+// stdout: 3
+// stdout: 2
+// stdout: 1

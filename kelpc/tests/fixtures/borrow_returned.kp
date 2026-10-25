@@ -39,3 +39,10 @@ fun main() {
     val b = Bytes.from_str("abc")
     print(buf(b).len())
 }
+// stdout-begin
+// stdout: 3,4
+// stdout: 3
+// stdout: 4
+// stdout: hello
+// stdout: 5
+// stdout: 3

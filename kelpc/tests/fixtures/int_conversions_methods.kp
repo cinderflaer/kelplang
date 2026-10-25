@@ -15,3 +15,10 @@ fun main() {
     val u: u8 = 200
     print(u.to_int() + 100)
 }
+// stdout-begin
+// stdout: 3000000000
+// stdout: 6000000000
+// stdout: 7
+// stdout: 8
+// stdout: 7
+// stdout: 300

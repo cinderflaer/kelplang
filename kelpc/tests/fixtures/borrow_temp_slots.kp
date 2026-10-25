@@ -50,3 +50,11 @@ fun main() {
     // A `MEMORY`-class temporary, borrowed rather than passed by value.
     print(quad_sum(Quad(a = 1, b = 2, c = 3)))
 }
+// stdout-begin
+// stdout: 3
+// stdout: 18
+// stdout: 15
+// stdout: 6
+// stdout: 30
+// stdout: 6
+// stdout: 6

@@ -37,3 +37,13 @@ fun main() {
     // the list.
     print(str.join(parts = copy, sep = "-"))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 3
+// stdout: 1
+// stdout: 9
+// stdout: 2
+// stdout: alpha
+// stdout: changed
+// stdout: 0
+// stdout: alpha-beta

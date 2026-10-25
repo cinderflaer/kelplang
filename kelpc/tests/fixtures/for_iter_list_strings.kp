@@ -9,3 +9,8 @@ fun main() {
     }
     print(names.len())
 }
+// stdout-begin
+// stdout: alpha
+// stdout: beta
+// stdout: gamma
+// stdout: 3

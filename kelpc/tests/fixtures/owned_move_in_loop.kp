@@ -25,3 +25,5 @@ fun main() {
     }
     print(words.get(0))
 }
+// stdout-begin
+// stdout: hi

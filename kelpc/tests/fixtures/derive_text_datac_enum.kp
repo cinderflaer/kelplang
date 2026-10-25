@@ -32,3 +32,10 @@ fun main() {
     print(Frame(s = c).to_text())
     print("${c7} and ${p}")
 }
+// stdout-begin
+// stdout: Point(3, ab, true)
+// stdout: Blank()
+// stdout: Circle(2)
+// stdout: Empty
+// stdout: Frame(Circle(2))
+// stdout: Circle(7) and Point(3, ab, true)

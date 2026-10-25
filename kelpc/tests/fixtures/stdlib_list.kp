@@ -24,3 +24,13 @@ fun main() {
     print(str.split(s = "x", sep = "").len())
     print(str.join(parts = List.of(String.from_str("solo")), sep = "-"))
 }
+// stdout-begin
+// stdout: 4
+// stdout: a|b||c
+// stdout: [a][b][][c]
+// stdout: 1
+// stdout: 1
+// stdout: 4
+// stdout: a-b--c
+// stdout: 1
+// stdout: solo

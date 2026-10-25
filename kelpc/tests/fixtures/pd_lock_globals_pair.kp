@@ -18,3 +18,7 @@ fun main() {
     print(other.lock { v -> *v })
     print(gate.read { v -> *v })
 }
+// stdout-begin
+// stdout: 10
+// stdout: 21
+// stdout: 32

@@ -41,3 +41,8 @@ fun main() {
     val l = label(3)
     print(l)
 }
+// stdout-begin
+// stdout: 4
+// stdout: 5
+// stdout: 30
+// stdout: xxx

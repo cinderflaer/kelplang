@@ -7,3 +7,5 @@ fun say(text: str) {
 fun main() {
     return say("said")
 }
+// stdout-begin
+// stdout: said

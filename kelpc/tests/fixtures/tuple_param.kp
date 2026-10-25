@@ -17,3 +17,7 @@ fun main() {
     print(sum((1, 2)))
     print(take((String.from_str("moved"), 7)))
 }
+// stdout-begin
+// stdout: 3
+// stdout: moved
+// stdout: 7

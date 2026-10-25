@@ -53,3 +53,5 @@ fun main() {
         Err(_) -> {}
     }
 }
+// stdout-begin
+// stdout: 66

@@ -49,3 +49,20 @@ fun main() {
     val neg: i32 = 0 - 8
     print(neg >> 1)
 }
+// stdout-begin
+// stdout: 8
+// stdout: 14
+// stdout: 6
+// stdout: 243
+// stdout: 16
+// stdout: 64
+// stdout: 32
+// stdout: false
+// stdout: true
+// stdout: 228
+// stdout: 184
+// stdout: 173
+// stdout: true
+// stdout: 1
+// stdout: -1
+// stdout: -4

@@ -559,7 +559,7 @@ pub(crate) fn carriage_return_is_an_escape_like_any_other() {
     // is not a string literal at all. Each escape is now pinned as a byte
     // value, so a change of meaning fails here rather than in a malformed
     // protocol on the wire.
-    assert_compiles_and_runs("tests/fixtures/escapes.kp", "13\n2\n10\n9\n92\n34\n");
+    assert_fixture_runs("tests/fixtures/escapes.kp");
 }
 
 #[test]
@@ -568,10 +568,7 @@ pub(crate) fn a_block_comment_spans_and_nests_and_an_escape_writes_several_lines
     // nests, and it may sit inline before a statement. The fixture also pins
     // one `print` writing two lines through `\n`, and `print!` with no
     // terminating newline.
-    assert_compiles_and_runs(
-        "tests/fixtures/block_comments.kp",
-        "first\nsecond\nno newline here\ndone\n",
-    );
+    assert_fixture_runs("tests/fixtures/block_comments.kp");
 }
 
 #[test]
@@ -579,12 +576,12 @@ pub(crate) fn a_documentation_comment_is_a_comment_to_the_compiler() {
     // `//!` starts a documentation block (`design/syntax.md (kelp wiki)` §2.1). The compiler
     // reads it as a comment, so the fixture has to build and run like any
     // other program; what is refused is the trailing spelling, below.
-    assert_compiles_and_runs("tests/fixtures/documentation_comment.kp", "7\n");
+    assert_fixture_runs("tests/fixtures/documentation_comment.kp");
 }
 
 #[test]
 pub(crate) fn source_location_is_the_kelp_call_site() {
-    assert_compiles_and_runs("tests/fixtures/source_location.kp", "5\ntrue\n");
+    assert_fixture_runs("tests/fixtures/source_location.kp");
 }
 
 #[test]
@@ -640,15 +637,12 @@ pub(crate) fn a_documentation_comment_after_code_is_rejected() {
 
 #[test]
 pub(crate) fn a_backslash_dollar_escape_writes_a_literal_dollar_sign() {
-    assert_compiles_and_runs(
-        "tests/fixtures/escape_dollar.kp",
-        "36\n21\n$KELPC is unset, ${x}\n",
-    );
+    assert_fixture_runs("tests/fixtures/escape_dollar.kp");
 }
 
 #[test]
 pub(crate) fn sys_reports_the_build_target() {
-    assert_compiles_and_runs("tests/fixtures/sys_target.kp", "linux\ntrue\n");
+    assert_fixture_runs("tests/fixtures/sys_target.kp");
 }
 
 #[test]

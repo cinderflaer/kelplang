@@ -11,3 +11,8 @@ fun main() {
     print!("no newline here")
     print("\ndone")
 }
+// stdout-begin
+// stdout: first
+// stdout: second
+// stdout: no newline here
+// stdout: done

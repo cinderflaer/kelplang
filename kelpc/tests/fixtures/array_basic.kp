@@ -23,3 +23,12 @@ fun main() {
         print(row.len())
     }
 }
+// stdout-begin
+// stdout: 3
+// stdout: 20
+// stdout: false
+// stdout: 7
+// stdout: 6
+// stdout: 2
+// stdout: 2
+// stdout: 2

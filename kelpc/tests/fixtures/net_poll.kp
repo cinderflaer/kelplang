@@ -31,3 +31,10 @@ fun main() {
     net.close(s)
     l.close()
 }
+// stdout-begin
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: now
+// stdout: true
+// stdout: true

@@ -15,3 +15,12 @@ fun main() {
     print(j)
     print(path.is_absolute(f))
 }
+// stdout-begin
+// stdout: notes.txt
+// stdout: txt
+// stdout: /tmp
+// stdout: bare.txt
+// stdout: txt
+// stdout:
+// stdout: /var/log
+// stdout: true

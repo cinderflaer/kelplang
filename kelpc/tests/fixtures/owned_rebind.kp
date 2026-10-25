@@ -33,3 +33,10 @@ fun main() {
     print(taken)
     print(p.n)
 }
+// stdout-begin
+// stdout: first
+// stdout: second
+// stdout: inner
+// stdout: outer
+// stdout: new
+// stdout: 2

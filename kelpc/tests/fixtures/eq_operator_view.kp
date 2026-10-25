@@ -15,3 +15,11 @@ fun main() {
     print(s.as_str() == v)
     print("the quick brown fox".view() != s.as_str())
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false

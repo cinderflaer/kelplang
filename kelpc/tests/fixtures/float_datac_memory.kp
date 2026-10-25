@@ -27,3 +27,9 @@ fun main() {
     print(b.name)
     print(b.r)
 }
+// stdout-begin
+// stdout: 6.500000
+// stdout: 5.000000
+// stdout: 2.500000
+// stdout: kelp
+// stdout: 2.500000

@@ -21,3 +21,5 @@ fun main() {
     val b = checked(&m, false)
     print(m.lock { v -> *v })
 }
+// stdout-begin
+// stdout: 10

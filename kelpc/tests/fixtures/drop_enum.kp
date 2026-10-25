@@ -22,3 +22,9 @@ fun main() {
     val e = MaybeLeaf.Empty
     print("body")
 }
+// stdout-begin
+// stdout: body
+// stdout: maybe
+// stdout: maybe
+// stdout: leaf
+// stdout: 1

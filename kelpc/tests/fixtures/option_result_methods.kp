@@ -12,3 +12,10 @@ fun main() {
     print(r.is_ok())
     print(r.is_err())
 }
+// stdout-begin
+// stdout: true
+// stdout: false
+// stdout: 5
+// stdout: 4
+// stdout: true
+// stdout: false

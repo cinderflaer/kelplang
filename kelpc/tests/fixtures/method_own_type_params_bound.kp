@@ -9,3 +9,5 @@ fun main() {
     b.add_named(Dog(id = 6))
     print(b.total)
 }
+// stdout-begin
+// stdout: 11

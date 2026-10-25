@@ -39,3 +39,8 @@ fun main() {
     }
     print(scratch)
 }
+// stdout-begin
+// stdout: 1000
+// stdout: 1000
+// stdout: 0
+// stdout: 5

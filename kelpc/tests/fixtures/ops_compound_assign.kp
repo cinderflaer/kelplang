@@ -42,3 +42,12 @@ fun main() {
     print(h.v.x)
     print(h.v.y)
 }
+// stdout-begin
+// stdout: 4
+// stdout: 6
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 8
+// stdout: 4
+// stdout: 5

@@ -32,3 +32,12 @@ fun main() {
     print(try_set())
     print(flag.load(order = atomic.Ordering.SeqCst))
 }
+// stdout-begin
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true

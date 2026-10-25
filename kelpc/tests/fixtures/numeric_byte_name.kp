@@ -19,3 +19,9 @@ fun main() {
         print("none")
     }
 }
+// stdout-begin
+// stdout: 200
+// stdout: 201
+// stdout: true
+// stdout: 200
+// stdout: none

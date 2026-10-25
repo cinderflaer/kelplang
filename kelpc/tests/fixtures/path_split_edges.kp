@@ -31,3 +31,23 @@ fun main() {
     print(parts.get(1999).as_str())
     print(parts.get(1999).len())
 }
+// stdout-begin
+// stdout: 2
+// stdout: a
+// stdout: b
+// stdout: 0
+// stdout: 0
+// stdout: 0
+// stdout: 1
+// stdout: a
+// stdout: 2
+// stdout: é
+// stdout: ü
+// stdout: 3
+// stdout: a
+// stdout: b
+// stdout: c
+// stdout: 2000
+// stdout: comp
+// stdout: comp
+// stdout: 4

@@ -26,3 +26,9 @@ fun main() {
     b.push(*a)
     print(s.items.len())
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2
+// stdout: 12
+// stdout: 3
+// stdout: 4

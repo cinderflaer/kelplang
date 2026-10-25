@@ -7,3 +7,5 @@ fun total<T, U>(a: &T, b: &U) => i32 where T: Named, U: Named {
 fun main() {
     print(total(Dog(id = 1), Dog(id = 2)))
 }
+// stdout-begin
+// stdout: 3

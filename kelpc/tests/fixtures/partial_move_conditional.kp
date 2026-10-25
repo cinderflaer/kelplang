@@ -22,3 +22,8 @@ fun main() {
     print(take_it(bag = Bag(xs = List.of(1), name = String.from_str("a")), take = true))
     print(take_it(bag = Bag(xs = List.of(2), name = String.from_str("b")), take = false))
 }
+// stdout-begin
+// stdout: a
+// stdout: 1
+// stdout: b
+// stdout: 2

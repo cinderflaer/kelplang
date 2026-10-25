@@ -37,3 +37,6 @@ fun main() {
         print(v.get(v.len() - 1))
     }
 }
+// stdout-begin
+// stdout: 1000
+// stdout: item-999

@@ -19,3 +19,5 @@ fun main() {
         Err(_) -> print(0)
     }
 }
+// stdout-begin
+// stdout: 7

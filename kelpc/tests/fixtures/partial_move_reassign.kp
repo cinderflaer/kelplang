@@ -11,3 +11,6 @@ fun main() {
     bag.xs = List.of(2)
     print(bag.xs.get(0))
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2

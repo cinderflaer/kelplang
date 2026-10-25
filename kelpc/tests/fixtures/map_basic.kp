@@ -35,3 +35,18 @@ fun main() {
     print(m.len())
     print(m.is_empty())
 }
+// stdout-begin
+// stdout: 0
+// stdout: true
+// stdout: 3
+// stdout: true
+// stdout: false
+// stdout: 2
+// stdout: 99
+// stdout: 22
+// stdout: 1
+// stdout: 2
+// stdout: two three 
+// stdout: 2
+// stdout: 0
+// stdout: true

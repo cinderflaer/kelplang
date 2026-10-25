@@ -12,3 +12,5 @@ pd val names = List.of(String.from_str("kelp"))
 fun main() {
     print("ok")
 }
+// stdout-begin
+// stdout: ok

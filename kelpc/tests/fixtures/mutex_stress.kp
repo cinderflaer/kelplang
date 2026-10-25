@@ -38,3 +38,5 @@ fun main() {
     val r7 = thread.join(t7)
     print(counter.lock { v -> *v })
 }
+// stdout-begin
+// stdout: 8000

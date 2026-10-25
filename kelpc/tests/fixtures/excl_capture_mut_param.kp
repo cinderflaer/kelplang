@@ -19,3 +19,5 @@ fun main() {
     tally(c)
     print(c.hits)
 }
+// stdout-begin
+// stdout: 103

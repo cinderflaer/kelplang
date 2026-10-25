@@ -13,3 +13,6 @@ fun main() {
     print(before)
     print(c.area())
 }
+// stdout-begin
+// stdout: 12.566360
+// stdout: 28.274310

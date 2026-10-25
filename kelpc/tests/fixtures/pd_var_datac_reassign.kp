@@ -24,3 +24,6 @@ fun main() {
     rescale(a, b)
     print("${pair.a},${pair.b}")
 }
+// stdout-begin
+// stdout: 1,2
+// stdout: 3,6

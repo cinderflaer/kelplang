@@ -16,3 +16,10 @@ fun main() {
     val zu: int = 0
     print(iter.fold(iter.into_iter(words), zu, fun(a: &int, s: &String) => int = a + s.len()))
 }
+// stdout-begin
+// stdout: true
+// stdout: false
+// stdout: 10
+// stdout: 8
+// stdout: 7
+// stdout: 4

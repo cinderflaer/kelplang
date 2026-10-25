@@ -9,3 +9,4 @@ trait Shape {
 fun take(s: impl Shape) { }
 
 fun main() { }
+// stdout-begin

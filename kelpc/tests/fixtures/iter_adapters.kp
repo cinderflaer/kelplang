@@ -27,3 +27,20 @@ fun main() {
     print(words.len())
     print(iter.sum_i64(iter.map(iter.range(1, 4), fun(x: &i64) => i64 = x * x)))
 }
+// stdout-begin
+// stdout: 60
+// stdout: 80
+// stdout: 0
+// stdout: 10
+// stdout: 1
+// stdout: 11
+// stdout: 2
+// stdout: 12
+// stdout: 100
+// stdout: 102
+// stdout: 1
+// stdout: 2
+// stdout: 7
+// stdout: 8
+// stdout: 4
+// stdout: 14

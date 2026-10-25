@@ -11,3 +11,7 @@ fun main() {
     print(shout(name))
     print(str.len(name))
 }
+// stdout-begin
+// stdout: kelp
+// stdout: 4
+// stdout: 4

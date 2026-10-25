@@ -11,3 +11,10 @@ fun main() {
         print(xs.get(i.to_int()))
     }
 }
+// stdout-begin
+// stdout: 7
+// stdout: 10
+// stdout: 3
+// stdout: 0
+// stdout: 1
+// stdout: 2

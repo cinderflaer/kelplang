@@ -12,3 +12,7 @@ fun main() {
     bs.push(Box.of(5))
     print(bs.get(0).get())
 }
+// stdout-begin
+// stdout: 2
+// stdout: 2
+// stdout: 5

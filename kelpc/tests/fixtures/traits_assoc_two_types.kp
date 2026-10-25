@@ -28,3 +28,6 @@ fun main() {
     print(produce_of(a))
     print(produce_of(b))
 }
+// stdout-begin
+// stdout: 6
+// stdout: 12

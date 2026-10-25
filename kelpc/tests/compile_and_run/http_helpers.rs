@@ -446,7 +446,7 @@ pub(crate) fn polyp_v4_demo_prints_its_pinned_transcript() {
 
 #[test]
 pub(crate) fn a_while_true_loop_that_breaks_continues_after_the_loop() {
-    assert_compiles_and_runs("tests/fixtures/while_true_break.kp", "4\n5\n30\nxxx\n");
+    assert_fixture_runs("tests/fixtures/while_true_break.kp");
 }
 
 // Language-completeness 8: the interaction matrix of the traits, iterators, const
@@ -470,10 +470,7 @@ pub(crate) fn matrix_an_operator_trait_takes_no_type_argument() {
 
 #[test]
 pub(crate) fn matrix_a_user_iterator_runs_defers_per_iteration_and_on_return() {
-    assert_compiles_and_runs(
-        "tests/fixtures/matrix_iter_defer_return.kp",
-        "iter\niter\nleave\n4\niter\nleave\n-1\n",
-    );
+    assert_fixture_runs("tests/fixtures/matrix_iter_defer_return.kp");
 }
 
 #[test]
@@ -482,10 +479,7 @@ pub(crate) fn matrix_a_const_generic_type_is_not_an_iterator_but_a_cursor_walks_
         "tests/fixtures/matrix_iter_const_generic.kp",
         "implement the trait for a non-generic wrapper",
     );
-    assert_compiles_and_runs(
-        "tests/fixtures/matrix_iter_const_generic_ok.kp",
-        "15\n30\n4\n5\n6\n",
-    );
+    assert_fixture_runs("tests/fixtures/matrix_iter_const_generic_ok.kp");
 }
 
 #[test]
@@ -494,24 +488,18 @@ pub(crate) fn matrix_question_mark_inside_next_must_match_the_option_shape() {
         "tests/fixtures/matrix_from_try_in_next.kp",
         "match the value instead",
     );
-    assert_compiles_and_runs("tests/fixtures/matrix_from_try_ok.kp", "11\n21\n");
+    assert_fixture_runs("tests/fixtures/matrix_from_try_ok.kp");
 }
 
 #[test]
 pub(crate) fn matrix_display_works_through_a_generic_bound_and_a_template() {
-    assert_compiles_and_runs(
-        "tests/fixtures/matrix_display_generic.kp",
-        "<1,2>\n#9\n<1,2> <1,2>\n",
-    );
+    assert_fixture_runs("tests/fixtures/matrix_display_generic.kp");
 }
 
 #[test]
 pub(crate) fn matrix_ord_never_decides_map_key_identity() {
-    assert_compiles_and_runs("tests/fixtures/matrix_ord_map_key.kp", "2\n11\ntrue\n");
-    assert_compiles_and_runs(
-        "tests/fixtures/matrix_ord_only_key.kp",
-        "2\nfalse\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/matrix_ord_map_key.kp");
+    assert_fixture_runs("tests/fixtures/matrix_ord_only_key.kp");
 }
 
 /// Builds `fixture` with the default backend and returns the build and the run.

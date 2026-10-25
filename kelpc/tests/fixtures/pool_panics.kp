@@ -40,3 +40,7 @@ fun main() {
     all.join()
     print(all.panicked())
 }
+// stdout-begin
+// stdout: 27
+// stdout: 4
+// stdout: 5

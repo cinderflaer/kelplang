@@ -19,3 +19,12 @@ fun main() {
     rows.clear()
     print(rows.len())
 }
+// stdout-begin
+// stdout: 2
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 9
+// stdout: 2
+// stdout: 1
+// stdout: 0

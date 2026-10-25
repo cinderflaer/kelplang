@@ -19,3 +19,14 @@ fun main() {
     print(str.to_lower("Ⱥ"))
     print(str.to_lower("Ⱥ").len())
 }
+// stdout-begin
+// stdout: CAFÉ NAÏVE
+// stdout: école ñandú
+// stdout: STRAßE
+// stdout: ΑΒΓ ΩΣΣ
+// stdout: αβγ ωσ
+// stdout: ПРИВЕТ ЁЖ
+// stdout: привет ёж
+// stdout: istanbul
+// stdout: ⱥ
+// stdout: 3

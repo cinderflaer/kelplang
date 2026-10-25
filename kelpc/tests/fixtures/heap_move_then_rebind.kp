@@ -7,3 +7,6 @@ fun main() {
     print(a.len())
     print(b.len())
 }
+// stdout-begin
+// stdout: 2
+// stdout: 1

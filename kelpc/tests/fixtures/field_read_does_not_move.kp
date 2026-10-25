@@ -8,3 +8,7 @@ fun main() {
     print(p.y)
     print(consume(p))
 }
+// stdout-begin
+// stdout: 3
+// stdout: 4
+// stdout: 7

@@ -31,3 +31,7 @@ fun main() {
     print(p.first.second)
     print(p.second)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 3

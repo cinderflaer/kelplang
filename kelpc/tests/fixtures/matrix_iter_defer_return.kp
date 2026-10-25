@@ -33,3 +33,11 @@ fun main() {
     print(first_even(5))
     print(first_even(1))
 }
+// stdout-begin
+// stdout: iter
+// stdout: iter
+// stdout: leave
+// stdout: 4
+// stdout: iter
+// stdout: leave
+// stdout: -1

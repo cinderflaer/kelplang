@@ -48,3 +48,18 @@ fun main() {
     print(letter('b', true))
     print(letter('b', false))
 }
+// stdout-begin
+// stdout: 100
+// stdout: 7
+// stdout: 30
+// stdout: -1
+// stdout: 7
+// stdout: 7
+// stdout: 5
+// stdout: 8
+// stdout: 11
+// stdout: 0
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 4

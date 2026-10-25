@@ -19,3 +19,6 @@ fun main() {
         print("nan")
     }
 }
+// stdout-begin
+// stdout: infinite
+// stdout: nan

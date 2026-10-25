@@ -20,3 +20,15 @@ fun main() {
     // literal; reading through it is what needs `unsafe`, not taking it.
     print(str.ptr("kelp").is_null())
 }
+// stdout-begin
+// stdout: 0
+// stdout: 4
+// stdout: 107
+// stdout: 112
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: false

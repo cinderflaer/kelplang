@@ -24,3 +24,10 @@ fun main() {
     q = make_quad(10, 20, 30)
     print(sum_quad(q))
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 6
+// stdout: 33
+// stdout: 60

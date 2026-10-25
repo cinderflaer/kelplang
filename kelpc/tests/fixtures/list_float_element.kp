@@ -47,3 +47,22 @@ fun main() {
     print(narrow.contains(2.5))
     print(narrow.contains(0.5))
 }
+// stdout-begin
+// stdout: 4
+// stdout: 3.500000
+// stdout: 2.000000
+// stdout: true
+// stdout: false
+// stdout: 1.250000
+// stdout: 3.500000
+// stdout: 4
+// stdout: 2.000000
+// stdout: 2.000000
+// stdout: 9.500000
+// stdout: 9.500000
+// stdout: 0.500000
+// stdout: 3.500000
+// stdout: 2.000000
+// stdout: 2.500000
+// stdout: true
+// stdout: false

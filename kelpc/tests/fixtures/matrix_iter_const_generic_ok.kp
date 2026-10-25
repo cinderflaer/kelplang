@@ -39,3 +39,9 @@ fun main() {
         print(a.data.get(i = i))
     }
 }
+// stdout-begin
+// stdout: 15
+// stdout: 30
+// stdout: 4
+// stdout: 5
+// stdout: 6

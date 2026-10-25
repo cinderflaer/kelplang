@@ -47,3 +47,13 @@ fun main() {
     val again: Pair<i32, i32> = Pair(first = 9, second = 10)
     print(add_pair(p = again))
 }
+// stdout-begin
+// stdout: 3
+// stdout: 3
+// stdout: three
+// stdout: 5
+// stdout: 9
+// stdout: 6
+// stdout: 7
+// stdout: 0
+// stdout: 19

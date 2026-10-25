@@ -73,3 +73,40 @@ fun main() {
         "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
     ))))
 }
+// stdout-begin
+// stdout: aGVsbG8=
+// stdout: aGk=
+// stdout: YQ==
+// stdout:
+// stdout: hello
+// stdout: hi
+// stdout: a
+// stdout: true
+// stdout: true
+// stdout: NBSWY3DP
+// stdout: NBUQ====
+// stdout: hello
+// stdout: true
+// stdout: true
+// stdout: Cn8eVZg
+// stdout: 2g
+// stdout: hello
+// stdout: true
+// stdout: 4869
+// stdout: Hi
+// stdout: Hello
+// stdout: true
+// stdout: true
+// stdout: a%20b%2Fc%3Fd%3De%26f
+// stdout: plain-._~
+// stdout: a b/c
+// stdout: true
+// stdout: true
+// stdout: a+b%2Bc
+// stdout: a b+c
+// stdout: true
+// stdout: 00000000  48 69                                             |Hi|
+// stdout:
+// stdout: da39a3ee5e6b4b0d3255bfef95601890afd80709
+// stdout: a9993e364706816aba3e25717850c26c9cd0d89d
+// stdout: 84983e441c3bd26ebaae4aa1f95129e5e54670f1

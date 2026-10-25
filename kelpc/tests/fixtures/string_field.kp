@@ -22,3 +22,10 @@ fun main() {
     show(moved)
     print("done")
 }
+// stdout-begin
+// stdout: first
+// stdout: 7
+// stdout: after scope
+// stdout: second
+// stdout: 7
+// stdout: done

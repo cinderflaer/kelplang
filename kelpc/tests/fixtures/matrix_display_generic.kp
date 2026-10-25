@@ -43,3 +43,7 @@ fun main() {
     print(show<Tag>(x = &t))
     twice<Vec2>(x = &v)
 }
+// stdout-begin
+// stdout: <1,2>
+// stdout: #9
+// stdout: <1,2> <1,2>

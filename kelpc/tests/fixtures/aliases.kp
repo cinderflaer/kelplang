@@ -19,3 +19,10 @@ fun main() {
     print("_ans and _answer")
     print(17 % 5)
 }
+// stdout-begin
+// stdout: 42
+// stdout: 44
+// stdout: say aliasword
+// stdout: 43
+// stdout: 1 and 40 + 2
+// stdout: 2

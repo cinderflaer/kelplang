@@ -11,3 +11,6 @@ fun main() {
     }
     print(ok)
 }
+// stdout-begin
+// stdout: positive
+// stdout: true

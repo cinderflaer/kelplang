@@ -23,3 +23,17 @@ fun main() {
     print(size_of<int>())
     print(size_of<Ptr<u8>>())
 }
+// stdout-begin
+// stdout: 12
+// stdout: 4
+// stdout: 0
+// stdout: 4
+// stdout: 8
+// stdout: 10
+// stdout: 8
+// stdout: 4
+// stdout: 4
+// stdout: 4
+// stdout: 8
+// stdout: 8
+// stdout: 8

@@ -76,3 +76,17 @@ fun main() {
     // The owned `String`'s own surface still works on a converted value.
     print(d.title.len())
 }
+// stdout-begin
+// stdout: a literal
+// stdout: assigned
+// stdout: t
+// stdout: b
+// stdout: pushed
+// stdout: v
+// stdout: then
+// stdout: some
+// stdout: a title
+// stdout: hey!
+// stdout: 7
+// stdout: true
+// stdout: 1

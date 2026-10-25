@@ -346,10 +346,7 @@ pub(crate) fn a_hosted_panic_is_still_exactly_its_message() {
 /// as they did before the stage. The run is compared with one literal.
 #[test]
 pub(crate) fn the_hosted_str_core_operations_are_unchanged() {
-    assert_compiles_and_runs(
-        "tests/fixtures/str_core.kp",
-        "0\n4\n107\n112\ntrue\nfalse\ntrue\ntrue\ntrue\nfalse\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/str_core.kp");
 }
 
 /// `str.index_of`, `str.contains` and `str.replace` on their edge cases: empty
@@ -358,10 +355,7 @@ pub(crate) fn the_hosted_str_core_operations_are_unchanged() {
 /// pinned to the 26.10.4 output, which the search loops must keep.
 #[test]
 pub(crate) fn the_str_search_and_replace_edges_are_unchanged() {
-    assert_compiles_and_runs(
-        "tests/fixtures/str_search_edges.kp",
-        "4\n0\nnone\n0\nnone\n0\n2\n2\n7\n0\n2\n0\nnone\nnone\n999\nnone\ntrue\ntrue\ntrue\nfalse\ntrue\na+b+c\nba\nabc\n\nhello\n\nxyz\nab\n3000\n1000\n",
-    );
+    assert_fixture_runs("tests/fixtures/str_search_edges.kp");
 }
 
 /// Kernel stage 7's rejection half: `std/str` is only partly on the freestanding

@@ -73,10 +73,7 @@ pub(crate) fn assert_fixture_refused(name: &str, needle: &str) {
 
 #[test]
 pub(crate) fn a_list_sorts_reverses_searches_and_slices() {
-    assert_compiles_and_runs(
-        "tests/fixtures/stdlib_sort.kp",
-        "1\n2\n3\n3\n1\ntrue\nfalse\n2\n3\n3\nfalse\ntrue\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/stdlib_sort.kp");
 }
 
 #[test]
@@ -86,20 +83,14 @@ pub(crate) fn a_list_clones_without_sharing_its_elements() {
     // handle on the same buffer, and the fixture is in the AddressSanitizer
     // pass because a `List<String>` clone that shared an element would
     // double-free at scope end.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_clone.kp",
-        "2\n3\n1\n9\n2\nalpha\nchanged\n0\nalpha-beta\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_clone.kp");
 }
 
 #[test]
 pub(crate) fn sorting_and_slicing_a_list_of_owned_elements_moves_them_safely() {
     // The element shifts are moves, so this fixture runs under
     // AddressSanitizer: a double free or a leak here would be a real one.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_slice_insert.kp",
-        "apple\nfig\npear\ntrue\nfalse\n2\nfig\n4\nfig\napple\nfig\n3\npear\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_slice_insert.kp");
 }
 
 #[test]
@@ -110,11 +101,7 @@ pub(crate) fn a_list_sorts_and_searches_every_element_kind_it_can_hold() {
     // element, a clone for an owned one). A wrong element width or a
     // cloned-twice element is a memory bug rather than a wrong number, so this
     // fixture is also in the AddressSanitizer list and under valgrind.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_sort_kinds.kp",
-        "-7\n0\n3\ntrue\nfalse\n1\n-7\n3\n200\ntrue\nfalse\n\
-         apple\nfig\npear\ntrue\nfalse\n2\nfig\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_sort_kinds.kp");
 }
 
 #[test]
@@ -139,16 +126,7 @@ pub(crate) fn list_sort_handles_introsorts_own_trouble_spots() {
     // out sorted; the depth-limit fallback to the existing heapsort is what
     // is supposed to catch the already-sorted/reverse-sorted/all-equal cases
     // before they could degrade toward O(n^2).
-    assert_compiles_and_runs(
-        "tests/fixtures/list_sort_introsort_stress.kp",
-        "true\n5000\n\
-         true\n5000\n\
-         true\n5000\n\
-         true\n15\n\
-         true\n17\n\
-         0\n\
-         7\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_sort_introsort_stress.kp");
 }
 
 #[test]
@@ -157,18 +135,12 @@ pub(crate) fn a_datac_or_enum_element_gets_a_derived_copy_and_order() {
     // "not defined" because a `datac` element had neither. The copy is deep
     // (the original is cleared first) and the order is field by field, with an
     // `enum` ordering by tag before payload.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_datac_clone_sort.kp",
-        "3\nb\na\n1\n3\nb\n2\na\nempty\na\nb\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_datac_clone_sort.kp");
 }
 
 #[test]
 pub(crate) fn a_list_grows_indexes_and_shrinks() {
-    assert_compiles_and_runs(
-        "tests/fixtures/list_basic.kp",
-        "0\ntrue\n3\nfalse\n1\n3\n1 20 3 \n3\n2\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_basic.kp");
 }
 
 #[test]
@@ -178,25 +150,19 @@ pub(crate) fn a_for_loop_walks_a_list_without_an_index() {
     // (value for `Copy`, shared borrow for owned), a call iterable evaluated
     // once, the same once for a *field* of a call, nesting, and a list a
     // function only borrows.
-    assert_compiles_and_runs(
-        "tests/fixtures/for_loop.kp",
-        "6\n3\n7\n8\n9\n4\n5\n1\na\nb\nc\n1 2 3 2 4 6 3 6 9 \n6\n",
-    );
+    assert_fixture_runs("tests/fixtures/for_loop.kp");
 }
 
 #[test]
 pub(crate) fn a_for_loop_over_list_iter_sums_a_list_of_i32() {
     // Hd4Lr part 1: `xs.iter()` is the same walk as `xs`, with the element a
     // shared borrow of the list.
-    assert_compiles_and_runs("tests/fixtures/for_iter_list_sum.kp", "12\n3\n");
+    assert_fixture_runs("tests/fixtures/for_iter_list_sum.kp");
 }
 
 #[test]
 pub(crate) fn a_for_loop_over_list_iter_walks_owned_strings() {
-    assert_compiles_and_runs(
-        "tests/fixtures/for_iter_list_strings.kp",
-        "alpha\nbeta\ngamma\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/for_iter_list_strings.kp");
 }
 
 #[test]
@@ -213,10 +179,7 @@ pub(crate) fn a_borrowed_list_iteration_reads_every_element_once() {
     // `for x in xs.iter()` walks all five elements (count 5, sum 30), nests,
     // lets the body change another list, and allows `xs` to change after the
     // loops. The string walk reads each name through its borrow (6 letters).
-    assert_compiles_and_runs(
-        "tests/fixtures/for_iter_list_reads_every_element.kp",
-        "5\n30\n5\n25\n6\n6\n",
-    );
+    assert_fixture_runs("tests/fixtures/for_iter_list_reads_every_element.kp");
 }
 
 #[test]
@@ -238,7 +201,7 @@ pub(crate) fn a_borrowed_list_iteration_refuses_every_mutator_of_the_list() {
 
 #[test]
 pub(crate) fn a_for_loop_over_map_iter_walks_the_entries() {
-    assert_compiles_and_runs("tests/fixtures/for_iter_map.kp", "1\n2\n3\n");
+    assert_fixture_runs("tests/fixtures/for_iter_map.kp");
 }
 
 #[test]
@@ -254,7 +217,7 @@ pub(crate) fn a_must_use_result_cannot_be_dropped() {
     // mutators, and a user function can carry it too.
     assert_rejected_with("tests/fixtures/must_use_send_dropped.kp", "must be used");
     assert_rejected_with("tests/fixtures/must_use_user_dropped.kp", "'check' must be used");
-    assert_compiles_and_runs("tests/fixtures/must_use_user_fun.kp", "positive\ntrue\n");
+    assert_fixture_runs("tests/fixtures/must_use_user_fun.kp");
 }
 
 #[test]
@@ -305,14 +268,8 @@ pub(crate) fn a_for_loop_still_allows_reads_another_list_and_a_while() {
     // The rule covers mutation of the walked place only: reading it, changing a
     // different list, changing it after the loop, and the index-`while` that is
     // the supported way for a loop to change what it walks all stay legal.
-    assert_compiles_and_runs(
-        "tests/fixtures/for_iterated_place_is_read_only.kp",
-        "2\n2\n5\n10\n20\n3\n3\n1\n",
-    );
-    assert_compiles_and_runs(
-        "tests/fixtures/for_mutates_another_field.kp",
-        "2\n7\n",
-    );
+    assert_fixture_runs("tests/fixtures/for_iterated_place_is_read_only.kp");
+    assert_fixture_runs("tests/fixtures/for_mutates_another_field.kp");
 }
 
 #[test]
@@ -320,41 +277,29 @@ pub(crate) fn a_for_loop_over_an_iterator_walks_it_by_next() {
     // `kelp wiki page language/iterators.md`: a type implementing `std.iter.Iterator` walks through
     // `next()`, and `Range` is the shipped one. A step and a descending step are
     // the same loop with a different `step`.
-    assert_compiles_and_runs(
-        "tests/fixtures/for_iter_range.kp",
-        "0\n1\n2\n3\n4\n0\n2\n4\n3\n2\n1\n",
-    );
+    assert_fixture_runs("tests/fixtures/for_iter_range.kp");
 }
 
 #[test]
 pub(crate) fn a_user_iterator_loop_stops_on_break_and_skips_on_continue() {
     // The sequence is infinite, so `break` is the loop's exit; `continue`
     // reaches the next `next()` call.
-    assert_compiles_and_runs(
-        "tests/fixtures/for_iter_break.kp",
-        "0\n1\n1\n2\n3\n5\n8\n13\n20\n",
-    );
+    assert_fixture_runs("tests/fixtures/for_iter_break.kp");
 }
 
 #[test]
 pub(crate) fn a_defer_in_an_iterator_body_runs_once_per_iteration() {
-    assert_compiles_and_runs("tests/fixtures/for_iter_defer.kp", "0 d1 d2 d\n");
+    assert_fixture_runs("tests/fixtures/for_iter_defer.kp");
 }
 
 #[test]
 pub(crate) fn two_iterator_loops_nest_with_independent_cursors() {
-    assert_compiles_and_runs(
-        "tests/fixtures/for_iter_nested.kp",
-        "0 1 2 10 11 12 20 21 22 \n",
-    );
+    assert_fixture_runs("tests/fixtures/for_iter_nested.kp");
 }
 
 #[test]
 pub(crate) fn the_iterator_helpers_count_sum_and_collect() {
-    assert_compiles_and_runs(
-        "tests/fixtures/for_iter_helpers.kp",
-        "7\n10\n3\n0\n1\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/for_iter_helpers.kp");
 }
 
 #[test]
@@ -369,15 +314,12 @@ pub(crate) fn a_place_iterator_is_borrowed_by_its_loop() {
 
 #[test]
 pub(crate) fn a_list_of_owned_and_datac_elements_moves_them() {
-    assert_compiles_and_runs(
-        "tests/fixtures/list_owned.kp",
-        "2\nalpha beta \nbeta\n1\ntrue\n2\n3\n9\n3\n0\n7\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_owned.kp");
 }
 
 #[test]
 pub(crate) fn a_list_works_as_a_datac_field_and_as_an_owned_passdown() {
-    assert_compiles_and_runs("tests/fixtures/list_field.kp", "bag\n7\n2\n2\n2\n");
+    assert_fixture_runs("tests/fixtures/list_field.kp");
 }
 
 #[test]
@@ -387,10 +329,7 @@ pub(crate) fn a_list_inserts_and_removes_by_shifting_owned_elements() {
     // bytes would leak a buffer or double-free one. It is kept apart from
     // `list_slice_insert.kp` because that one reaches `insert`/`remove` only
     // alongside `sort`/`contains`/`slice`.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_insert_remove_shifts.kp",
-        "3\na\nb\nc\nd\nb\n3\na\nc\nd\nd\n2\na\n1\ne\nc\ng\nf\nc\ng\nc\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_insert_remove_shifts.kp");
 }
 
 #[test]
@@ -398,10 +337,7 @@ pub(crate) fn a_list_grows_past_several_doublings_and_reuses_its_buffer() {
     // Three hundred pushes is six `realloc`s, each one moving every element;
     // clearing a list keeps its buffer, so the refilled list lands twice the
     // checksum from the capacity it already had.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_growth_and_rebuild.kp",
-        "300\n44850\n0\n300\n89700\n300\nelement\n0\n598\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_growth_and_rebuild.kp");
 }
 
 #[test]
@@ -411,12 +347,7 @@ pub(crate) fn a_float_list_copies_and_compares_at_its_own_width() {
     // integer one. The differential fuzzer found the `llvm` backend emitting
     // an integer compare for the float element, which was invalid IR. The
     // narrow `f32` list below goes through the same path at four bytes.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_float_element.kp",
-        "4\n3.500000\n2.000000\ntrue\nfalse\n1.250000\n3.500000\n4\n2.000000\n\
-         2.000000\n9.500000\n9.500000\n0.500000\n3.500000\n2.000000\n\
-         2.500000\ntrue\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_float_element.kp");
 }
 
 #[test]
@@ -425,10 +356,7 @@ pub(crate) fn a_list_copies_elements_at_their_own_width() {
     // last is not a power of two, so copying it is two instructions rather
     // than one, and every element this corpus had before was four or
     // thirty-two bytes wide.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_element_widths.kp",
-        "3\n5000000002\n15000000003\n7\n3\n2\nfalse\n3\n4\n9\n10\n7\n5\n2\n9\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_element_widths.kp");
 }
 
 #[test]
@@ -442,10 +370,7 @@ pub(crate) fn a_narrow_aggregate_field_is_read_at_its_own_width() {
     // Field widths 1, 2, 3, 4, 5 and 7 are here (the ones the machine cannot
     // move in one instruction are 3, 5 and 7), each read whole and byte by
     // byte, plus an 8-byte field, for which the single load is right.
-    assert_compiles_and_runs(
-        "tests/fixtures/heap_narrow_fields.kp",
-        "2\n2\n302\n23\n40302\n432\n5040302\n5\n605040302\n6\n8070605040302\n8\n42\n42\n80706\n8\n",
-    );
+    assert_fixture_runs("tests/fixtures/heap_narrow_fields.kp");
 }
 
 #[test]
@@ -456,18 +381,12 @@ pub(crate) fn a_list_returns_a_narrow_element_at_its_own_width() {
     // `Two` arm loaded a full second eightbyte, out of a buffer sized to the
     // element. The four pushes fill the initial capacity so both pops come off
     // the buffer's end, where the crossing load is a heap overread.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_narrow_element_pop.kp",
-        "4\n111\n987\n321\n1\n4\n98\n76\n2\n4\n10101\n90807\n30201\n1\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_narrow_element_pop.kp");
 }
 
 #[test]
 pub(crate) fn setting_an_owned_element_frees_the_one_it_replaces() {
-    assert_compiles_and_runs(
-        "tests/fixtures/list_owned_replacement.kp",
-        "1\nsolo\nreplacement\nreplacement\nother\nb\n2\n0\n2\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_owned_replacement.kp");
 }
 
 #[test]
@@ -500,10 +419,7 @@ pub(crate) fn an_empty_container_takes_its_element_from_the_first_use() {
     // `push`, a `push` in a nested block, a `push` under a `for`, a map's
     // `insert`, a box's `set`, and a position that expects a container (a
     // parameter, and a function's return type).
-    assert_compiles_and_runs(
-        "tests/fixtures/container_element_from_use.kp",
-        "4 6\n2 8\n9\n0\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/container_element_from_use.kp");
 }
 
 #[test]
@@ -516,10 +432,7 @@ pub(crate) fn a_list_may_hold_a_list_element() {
     // A-10 slice 1: an element lives in the outer list's own buffer, so a
     // `List<List<i32>>` is a list of growable buffers, each dropped once by the
     // outer `set`/`pop`/`clear`.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_nested_list.kp",
-        "2\n1\n2\n3\n9\n2\n1\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_nested_list.kp");
 }
 
 #[test]
@@ -527,10 +440,7 @@ pub(crate) fn a_nested_list_of_owned_elements_moves_borrows_and_drops() {
     // The `String`-owning nested list through push/get/set/pop/clear, plus a
     // nested list that drops at scope exit. Valgrind walks the nested drop
     // path (see `tests/memory_gate.rs`).
-    assert_compiles_and_runs(
-        "tests/fixtures/list_nested_owned.kp",
-        "2\n2\nbeta\ngamma\nbeta\ntrue\n2\ndone\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_nested_owned.kp");
 }
 
 #[test]
@@ -538,17 +448,14 @@ pub(crate) fn a_list_may_hold_a_box_element() {
     // A-10 slice 1: an element is the box's own struct, so `Box.empty()` is a
     // `NULL` slot the list still drops exactly once, and `get` hands back a
     // borrow of the box.
-    assert_compiles_and_runs(
-        "tests/fixtures/list_box_element.kp",
-        "2\n7\ntrue\n9\n9\nhi\ntrue\nthere\n0\n",
-    );
+    assert_fixture_runs("tests/fixtures/list_box_element.kp");
 }
 
 #[test]
 pub(crate) fn a_bare_list_settles_on_a_nested_element() {
     // H-6's open container meets A-10 slice 1: `xs.push(List.of(1))` settles
     // `xs` on `List<List<i32>>`, and a `Box` element settles it the same way.
-    assert_compiles_and_runs("tests/fixtures/list_nested_open.kp", "2\n2\n5\n");
+    assert_fixture_runs("tests/fixtures/list_nested_open.kp");
 }
 
 /// The open-container marker (`Unit` where an element type goes) is not an
@@ -604,8 +511,5 @@ pub(crate) fn a_box_set_cannot_settle_an_open_box_on_an_open_element() {
 
 #[test]
 pub(crate) fn split_returns_a_list_of_owned_pieces_and_join_consumes_one() {
-    assert_compiles_and_runs(
-        "tests/fixtures/stdlib_list.kp",
-        "4\na|b||c\n[a][b][][c]\n1\n1\n4\na-b--c\n1\nsolo\n",
-    );
+    assert_fixture_runs("tests/fixtures/stdlib_list.kp");
 }

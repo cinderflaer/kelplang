@@ -23,3 +23,8 @@ fun main() {
     }
     print(c.load(order = atomic.Ordering.SeqCst))
 }
+// stdout-begin
+// stdout: 5
+// stdout: 5
+// stdout: 5
+// stdout: 8

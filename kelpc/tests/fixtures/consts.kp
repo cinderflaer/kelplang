@@ -13,3 +13,9 @@ fun main() {
     print(NAME)
     print(BIG)
 }
+// stdout-begin
+// stdout: 42
+// stdout: 1.500000
+// stdout: 84
+// stdout: x
+// stdout: true

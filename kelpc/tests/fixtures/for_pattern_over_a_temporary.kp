@@ -9,3 +9,6 @@ fun main() {
         print(a + b)
     }
 }
+// stdout-begin
+// stdout: 3
+// stdout: 7

@@ -14,3 +14,7 @@ fun main() {
     show(app)
     print(app)
 }
+// stdout-begin
+// stdout: shapes
+// stdout: shapes
+// stdout: shapes

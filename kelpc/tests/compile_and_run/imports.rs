@@ -419,20 +419,17 @@ pub(crate) fn a_grant_pattern_that_is_not_a_path_is_rejected() {
 pub(crate) fn passdowns_are_read_by_referencing_functions_only() {
     // `banner`/`label` reference passdowns (and become wired); `unrelated`
     // references none; `main` reads the generated globals directly.
-    assert_compiles_and_runs(
-        "tests/fixtures/passdowns.kp",
-        "shapes\nshapes\n[shapes] hits = 0\n42\n",
-    );
+    assert_fixture_runs("tests/fixtures/passdowns.kp");
 }
 
 #[test]
 pub(crate) fn a_datac_passdown_is_read_through_a_shared_borrow() {
-    assert_compiles_and_runs("tests/fixtures/passdown_datac.kp", "(3, 4) sum=7\n7\n");
+    assert_fixture_runs("tests/fixtures/passdown_datac.kp");
 }
 
 #[test]
 pub(crate) fn a_local_can_shadow_a_passdown() {
-    assert_compiles_and_runs("tests/fixtures/pd_shadowed.kp", "local=inner\npd=outer\n");
+    assert_fixture_runs("tests/fixtures/pd_shadowed.kp");
 }
 
 #[test]
@@ -442,20 +439,14 @@ pub(crate) fn a_passdown_is_forwarded_through_a_caller_that_does_not_name_it() {
     // value stays a pointer, not a pointer to a pointer), the global's
     // address when it does not, `main`, or a function that only calls a
     // function reading the passdown.
-    assert_compiles_and_runs(
-        "tests/fixtures/pd_argument_forwarding.kp",
-        "ok\nforwarded\nbc\nforwarded\nbc\ndirect\nFAIL\n2\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/pd_argument_forwarding.kp");
 }
 
 #[test]
 pub(crate) fn a_pd_var_is_writable_from_a_function_and_from_main() {
     // M6.4 replaced M5.2's "read-only inside a function": a `pd var` is
     // reached through an exclusive borrow, so writes work and stay checked.
-    assert_compiles_and_runs(
-        "tests/fixtures/pd_var_write.kp",
-        "count = 5\ncount = 100\n",
-    );
+    assert_fixture_runs("tests/fixtures/pd_var_write.kp");
 }
 
 #[test]
@@ -463,14 +454,8 @@ pub(crate) fn a_pd_var_no_function_writes_is_a_shared_borrow() {
     // Roadmap item 17: the borrow a function holds is computed from whether
     // it writes the passdown, so a read-only `pd var` is shared and can be
     // both an argument and a hidden parameter of the same call.
-    assert_compiles_and_runs(
-        "tests/fixtures/pd_var_read_only_shared.kp",
-        "shapes\nshapes\nshapes\n",
-    );
-    assert_compiles_and_runs(
-        "tests/fixtures/pd_var_read_only_datac.kp",
-        "api\n3\napi\n",
-    );
+    assert_fixture_runs("tests/fixtures/pd_var_read_only_shared.kp");
+    assert_fixture_runs("tests/fixtures/pd_var_read_only_datac.kp");
 }
 
 #[test]
@@ -479,17 +464,11 @@ pub(crate) fn a_pd_var_write_reaches_the_callers_that_hold_it() {
     // the callee does not name the passdown (a pure forwarder takes the
     // global's address itself), a shared borrow held across that write is
     // the hazard the mode exists to prevent.
-    assert_compiles_and_runs(
-        "tests/fixtures/pd_write_reaches_callers.kp",
-        "0\n2\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/pd_write_reaches_callers.kp");
     // The other trigger a callee's own references cannot show: the passdown is
     // handed to a `mut` parameter, so the caller writes it without `add` ever
     // naming a passdown.
-    assert_compiles_and_runs(
-        "tests/fixtures/pd_var_mut_argument.kp",
-        "2\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/pd_var_mut_argument.kp");
 }
 
 #[test]
@@ -497,10 +476,7 @@ pub(crate) fn a_pd_var_of_a_two_word_datac_is_writable_through_its_borrow() {
     // The write is `*p = v` on the passdown's hidden borrow, and the operand is
     // a use: missing it puts the write in another parameter's storage instead
     // of refusing it.
-    assert_compiles_and_runs(
-        "tests/fixtures/pd_var_datac_reassign.kp",
-        "1,2\n3,6\n",
-    );
+    assert_fixture_runs("tests/fixtures/pd_var_datac_reassign.kp");
 }
 
 #[test]
@@ -510,10 +486,7 @@ pub(crate) fn a_scalar_local_can_be_borrowed_and_written_through_the_pointer() {
     // binding held across a call, and two live locals around the store (the
     // live-range probe: a missed touch hands the pointer's register to `keep`
     // and the store writes through it).
-    assert_compiles_and_runs(
-        "tests/fixtures/scalar_borrow.kp",
-        "13\n30\n30\n12\n20\n",
-    );
+    assert_fixture_runs("tests/fixtures/scalar_borrow.kp");
 }
 
 #[test]
@@ -521,10 +494,7 @@ pub(crate) fn a_float_scalar_can_be_borrowed_and_written_through_the_pointer() {
     // The same borrow with an `f64` pointee: only the load and the store change
     // register file, so a wrong mnemonic prints a plausible wrong number rather
     // than failing to build.
-    assert_compiles_and_runs(
-        "tests/fixtures/scalar_borrow_f64.kp",
-        "3.000000\n3.250000\n3.250000\n",
-    );
+    assert_fixture_runs("tests/fixtures/scalar_borrow_f64.kp");
 }
 
 #[test]
@@ -535,10 +505,7 @@ pub(crate) fn passdown_storage_is_a_global_that_main_initializes() {
     // initializer that reads an earlier passdown pins the initialization order,
     // and `bump` pins the case where the caller has no hidden parameter and so
     // passes the global's own address.
-    assert_compiles_and_runs(
-        "tests/fixtures/passdown_globals.kp",
-        "10 20 0\n1 2 3\n10 20 2\n1 2 3\n10 20 12\n1 2 3\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/passdown_globals.kp");
 }
 
 #[test]
@@ -570,10 +537,7 @@ pub(crate) fn a_pd_var_cannot_be_borrowed_twice_in_one_call() {
 
 #[test]
 pub(crate) fn reading_a_copy_passdown_twice_in_one_call_is_allowed() {
-    assert_compiles_and_runs(
-        "tests/fixtures/pd_var_copy_read_twice.kp",
-        "2\n20\n",
-    );
+    assert_fixture_runs("tests/fixtures/pd_var_copy_read_twice.kp");
 }
 
 #[test]
@@ -582,10 +546,7 @@ pub(crate) fn a_method_receiver_is_borrowed_after_its_own_arguments() {
     // String-keyed spellings. Each was "already borrowed exclusively" before,
     // because the receiver's exclusive borrow started before the arguments were
     // checked.
-    assert_compiles_and_runs(
-        "tests/fixtures/borrow_two_phase.kp",
-        "2\n2\n42\n3\n",
-    );
+    assert_fixture_runs("tests/fixtures/borrow_two_phase.kp");
 }
 
 #[test]
@@ -609,28 +570,19 @@ pub(crate) fn reading_a_passdown_before_it_is_declared_is_rejected() {
 
 #[test]
 pub(crate) fn templates_print_literals_and_values() {
-    assert_compiles_and_runs(
-        "tests/fixtures/templates.kp",
-        "100% of {nothing} is 50%\narea = 12.566360\nr=2.000000 doubled=4.000000\nno newline here!\n",
-    );
+    assert_fixture_runs("tests/fixtures/templates.kp");
 }
 
 #[test]
 pub(crate) fn a_template_outside_print_is_a_string_value() {
     // A template outside `print` is a String value: the bound text prints as written.
-    assert_compiles_and_runs("tests/fixtures/template_not_printed.kp", "hi x\n");
+    assert_fixture_runs("tests/fixtures/template_not_printed.kp");
 }
 
 #[test]
 pub(crate) fn a_template_string_binds_and_passes_as_a_string() {
-    assert_compiles_and_runs(
-        "tests/fixtures/template_string_val.kp",
-        "report.part\nn=7\nn=7 done\n",
-    );
-    assert_compiles_and_runs(
-        "tests/fixtures/template_string_arg.kp",
-        "[count=3]\n[3 items]\n",
-    );
+    assert_fixture_runs("tests/fixtures/template_string_val.kp");
+    assert_fixture_runs("tests/fixtures/template_string_arg.kp");
 }
 
 #[test]
@@ -649,15 +601,12 @@ pub(crate) fn a_passdown_is_not_visible_from_another_module() {
 #[test]
 pub(crate) fn aliases_substitute_text_in_expressions_and_strings() {
     // Also pins the pure-text semantics: `_doubled` is `40 + 2 * 2`.
-    assert_compiles_and_runs(
-        "tests/fixtures/aliases.kp",
-        "42\n44\nsay aliasword\n43\n1 and 40 + 2\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/aliases.kp");
 }
 
 #[test]
 pub(crate) fn an_underscore_name_nobody_declares_is_a_plain_identifier() {
-    assert_compiles_and_runs("tests/fixtures/alias_plain_ident.kp", "3\n");
+    assert_fixture_runs("tests/fixtures/alias_plain_ident.kp");
 }
 
 #[test]

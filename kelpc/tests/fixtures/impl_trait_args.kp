@@ -29,3 +29,7 @@ fun main() {
     print(describe(s = Square(side = 4)))
     print(describe(s = Rect(width = 1, height = 6)))
 }
+// stdout-begin
+// stdout: 19
+// stdout: square
+// stdout: rect

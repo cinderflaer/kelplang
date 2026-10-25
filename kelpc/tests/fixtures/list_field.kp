@@ -27,3 +27,9 @@ fun main() {
     print(primes.get(0))
     print(bag.xs.len())
 }
+// stdout-begin
+// stdout: bag
+// stdout: 7
+// stdout: 2
+// stdout: 2
+// stdout: 2

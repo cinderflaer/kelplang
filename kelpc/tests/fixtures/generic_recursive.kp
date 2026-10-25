@@ -47,3 +47,9 @@ fun main() {
     print(label(t = leaf))
     print(label(t = branch))
 }
+// stdout-begin
+// stdout: 6
+// stdout: one
+// stdout: two
+// stdout: 0
+// stdout: 9

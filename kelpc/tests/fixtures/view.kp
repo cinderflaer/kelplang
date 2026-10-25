@@ -81,3 +81,28 @@ fun main() {
     print(cut)
     print(cut.len())
 }
+// stdout-begin
+// stdout: the quick brown fox
+// stdout: 19
+// stdout: false
+// stdout: true
+// stdout: true
+// stdout: quick
+// stdout: the
+// stdout: he quick brown fox
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: the
+// stdout: he quick brown fox
+// stdout: 3
+// stdout: true
+// stdout: 0
+// stdout: true
+// stdout: quick
+// stdout: the
+// stdout: owned text
+// stdout: text
+// stdout: quick brown
+// stdout: 11

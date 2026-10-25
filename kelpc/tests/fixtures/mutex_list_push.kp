@@ -29,3 +29,5 @@ fun main() {
     val r3 = thread.join(t3)
     print(items.lock { v -> v.len() })
 }
+// stdout-begin
+// stdout: 40

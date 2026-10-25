@@ -86,10 +86,7 @@ pub(crate) fn io_writes_bytes_text_and_a_borrowed_view() {
     // would miss and write nothing: each returns the byte count it wrote, and
     // the raw bytes reach stdout ahead of the buffered `print` because the body
     // flushes the matching stdio stream first.
-    assert_compiles_and_runs(
-        "tests/fixtures/io_write_bodies.kp",
-        "bytes\n6\ntext\n5\nstr\n4\n",
-    );
+    assert_fixture_runs("tests/fixtures/io_write_bodies.kp");
 }
 
 #[test]
@@ -100,10 +97,7 @@ pub(crate) fn process_runs_a_program_with_argv_and_spawns_one_with_pipes() {
     // on a child that is blocked, and a failed `exec` reported as code 127.
     // Also under AddressSanitizer, where the parent's buffers and pipes are
     // leak-checked.
-    assert_compiles_and_runs(
-        "tests/fixtures/process_spawn.kp",
-        "0\none-two\n7\n0\n0\noops\n0\nhello\n\ntrue\n137\nfalse\n127\ntrue\n1\ntrue\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/process_spawn.kp");
 }
 
 #[test]
@@ -207,7 +201,7 @@ pub(crate) fn the_entry_module_holds_net_as_the_whole_resource_wildcard() {
     // `net` resolves with no `caps(...)` clause, and the runtime check is
     // the `*` the vocabulary gained in S3 (before it, `net` was a path domain
     // and every host would have been denied by the path normalizer).
-    assert_compiles_and_runs("tests/fixtures/net_loopback.kp", "hello\n");
+    assert_fixture_runs("tests/fixtures/net_loopback.kp");
 }
 
 #[test]
@@ -243,7 +237,7 @@ pub(crate) fn a_socket_reports_readiness_without_blocking() {
     // `poll` on a connected socket: false on a bounded wait with nothing sent,
     // true once the peer writes, and true again at end of file after
     // `shutdown_write`, the three answers a single-threaded event loop needs.
-    assert_compiles_and_runs("tests/fixtures/net_poll.kp", "false\ntrue\ntrue\nnow\ntrue\ntrue\n");
+    assert_fixture_runs("tests/fixtures/net_poll.kp");
 }
 
 #[test]
@@ -251,10 +245,7 @@ pub(crate) fn resolving_a_name_returns_its_addresses() {
     // An address literal resolves to itself (deterministic); `localhost` is
     // asserted only as "resolved to something", since which addresses it maps
     // to is the machine's business. Never the internet.
-    assert_compiles_and_runs(
-        "tests/fixtures/net_resolve.kp",
-        "1\n127.0.0.1\ntrue\n",
-    );
+    assert_fixture_runs("tests/fixtures/net_resolve.kp");
 }
 
 #[test]
@@ -309,10 +300,7 @@ pub(crate) fn a_refused_dial_is_a_value_and_not_the_end_of_the_program() {
     // port the kernel assigned and the close are the whole preparation, so the
     // refusal is deterministic and no server is needed. The reason is the text
     // `net.connect` panics with, and the process exits 0 rather than dying.
-    assert_compiles_and_runs(
-        "tests/fixtures/net_try_connect.kp",
-        "err net.connect: connection failed\n  errno 111: Connection refused\nsurvived\n",
-    );
+    assert_fixture_runs("tests/fixtures/net_try_connect.kp");
 }
 
 /// The `net` half of the fallible dial, denied: a fallible form must not be a
@@ -334,13 +322,7 @@ pub(crate) fn a_reconnect_loop_survives_three_refused_dials_and_gives_up() {
     // nobody owns, one line per attempt, and a clean exit at the end instead
     // of a panic on the first one. The fpl discord library's gateway loop is
     // this shape, and `MISSING-w9Kda` is the dial that ended it.
-    assert_compiles_and_runs(
-        "tests/fixtures/net_try_connect_retry.kp",
-        "attempt 1: net.connect: connection failed\n  errno 111: Connection refused\n\
-         attempt 2: net.connect: connection failed\n  errno 111: Connection refused\n\
-         attempt 3: net.connect: connection failed\n  errno 111: Connection refused\n\
-         gave up\n",
-    );
+    assert_fixture_runs("tests/fixtures/net_try_connect_retry.kp");
 }
 
 // ---------------------------------------------------------------------------

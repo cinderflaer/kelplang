@@ -16,3 +16,5 @@ fun main() {
         Empty -> 0.0
     })
 }
+// stdout-begin
+// stdout: 0.000000

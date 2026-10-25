@@ -32,3 +32,6 @@ fun main() {
     overwrite_field(h, String.from_str("beta"))
     print(h.name)
 }
+// stdout-begin
+// stdout: second
+// stdout: beta

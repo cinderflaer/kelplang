@@ -66,3 +66,9 @@ fun main() {
     print(table2.read { v -> *v })
     print(items.lock { v -> *v })
 }
+// stdout-begin
+// stdout: 20
+// stdout: 21
+// stdout: 25
+// stdout: 27
+// stdout: 20

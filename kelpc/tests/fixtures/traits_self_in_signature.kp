@@ -22,3 +22,6 @@ fun main() {
     print(q.x)
     print(p.add(other = q).x)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2

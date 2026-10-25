@@ -18,3 +18,6 @@ fun main() {
         Err(e) -> print(e.message)
     }
 }
+// stdout-begin
+// stdout: 1
+// stdout: joined

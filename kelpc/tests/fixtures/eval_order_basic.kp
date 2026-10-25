@@ -54,3 +54,23 @@ fun main() {
     print("${mk(t(1)).plus(t(2), t(3))}")
     flush("recv2")
 }
+// stdout-begin
+// stdout: x 1 2 3
+// stdout: tmpl: 123
+// stdout: 6
+// stdout: call: 123
+// stdout: binop: 123
+// stdout: ctor: 123
+// stdout: array: 123
+// stdout: push: 12
+// stdout: and: 1
+// stdout: or: 1
+// stdout: set: 12
+// stdout: compound: 7
+// stdout: 195
+// stdout: nested: 12345
+// stdout: 7 4
+// stdout: arith: 1234
+// stdout: recv: 123
+// stdout: 6
+// stdout: recv2: 123

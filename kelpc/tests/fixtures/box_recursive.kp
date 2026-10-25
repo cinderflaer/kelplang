@@ -48,3 +48,14 @@ fun main() {
     list.next.set(head)
     print(list.next.get().value)
 }
+// stdout-begin
+// stdout: 6
+// stdout: 3
+// stdout: 3
+// stdout: 2
+// stdout: 1
+// stdout: 203
+// stdout: 19906
+// stdout: 198
+// stdout: true
+// stdout: 198

@@ -18,3 +18,7 @@ fun main() {
     print(area(e))
     print(area(d))
 }
+// stdout-begin
+// stdout: 12.000000
+// stdout: 0.000000
+// stdout: 3.000000

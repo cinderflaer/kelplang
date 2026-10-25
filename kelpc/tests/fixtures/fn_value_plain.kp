@@ -56,3 +56,11 @@ fun main() {
     val h = Callback(cb = fun(x: i32) => i32 = x - k)
     print(h.cb(12))
 }
+// stdout-begin
+// stdout: 42
+// stdout: 12
+// stdout: 18
+// stdout: 21
+// stdout: 20
+// stdout: 6
+// stdout: 7

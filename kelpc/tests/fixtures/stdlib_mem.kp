@@ -9,3 +9,7 @@ fun main() {
     print(b)
     print(b.get(2))
 }
+// stdout-begin
+// stdout: 3
+// stdout: hi
+// stdout: 0

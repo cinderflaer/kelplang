@@ -43,3 +43,8 @@ fun main() {
     print(smaller<Vec2>(a = a, b = b))
     print(smaller<Vec2>(a = b, b = a))
 }
+// stdout-begin
+// stdout: 4
+// stdout: 7
+// stdout: true
+// stdout: false

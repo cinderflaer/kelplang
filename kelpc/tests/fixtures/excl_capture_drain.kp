@@ -52,3 +52,8 @@ fun main() {
     }
     print(m.count)
 }
+// stdout-begin
+// stdout: 1
+// stdout: 6
+// stdout: 8
+// stdout: 8

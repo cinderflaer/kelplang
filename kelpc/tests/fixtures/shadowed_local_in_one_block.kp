@@ -33,3 +33,10 @@ fun main() {
     }
     print("outer=${n}")
 }
+// stdout-begin
+// stdout: a=2
+// stdout: s=two
+// stdout: p=3,4
+// stdout: cards=1 7
+// stdout: inner=2
+// stdout: outer=1

@@ -27,3 +27,18 @@ fun main() {
         i = i + 1
     }
 }
+// stdout-begin
+// stdout: leaf
+// stdout: 1
+// stdout: 9
+// stdout: leaf
+// stdout: 2
+// stdout: leaf
+// stdout: 1
+// stdout: 0
+// stdout: loop
+// stdout: leaf
+// stdout: 10
+// stdout: loop
+// stdout: leaf
+// stdout: 11

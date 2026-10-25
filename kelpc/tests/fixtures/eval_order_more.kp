@@ -45,3 +45,16 @@ fun main() {
     val q = cl(t(1)) + cl(t(2))
     flush("closure")
 }
+// stdout-begin
+// stdout: enum: 12
+// stdout: ctor_swapped: 21
+// stdout: indirect: 12
+// stdout: indirect_plus: 345
+// stdout: cmp: 12
+// stdout: chain: 1234
+// stdout: 2 1 2
+// stdout: reads: 12
+// stdout: read_then_call: 5
+// stdout: if: 12
+// stdout: arr_expr: 1234
+// stdout: closure: 1828

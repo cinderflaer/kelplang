@@ -11,3 +11,8 @@ fun main() {
     print(str.to_upper("ab"))
     print("w = ${str.to_upper("cd")}")
 }
+// stdout-begin
+// stdout: x
+// stdout: y
+// stdout: AB
+// stdout: w = CD

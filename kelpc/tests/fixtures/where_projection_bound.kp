@@ -43,3 +43,10 @@ fun main() {
     print(show_all(Tags(left = 2)))
     print(show_all(iter.take(Tags(left = 3), 2)))
 }
+// stdout-begin
+// stdout: #1
+// stdout: #0
+// stdout: 2
+// stdout: #2
+// stdout: #1
+// stdout: 2

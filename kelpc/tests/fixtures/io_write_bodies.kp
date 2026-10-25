@@ -15,3 +15,10 @@ fun main() {
     val view = io.write_str_raw(1, "str\n")
     print(view)
 }
+// stdout-begin
+// stdout: bytes
+// stdout: 6
+// stdout: text
+// stdout: 5
+// stdout: str
+// stdout: 4

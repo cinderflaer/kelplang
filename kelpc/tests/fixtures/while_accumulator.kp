@@ -11,3 +11,5 @@ fun sum_to(n: i32) => i32 {
 fun main() {
     print(sum_to(10))
 }
+// stdout-begin
+// stdout: 55

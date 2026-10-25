@@ -15,3 +15,8 @@ fun main() {
     print(frame.offset(16))
     print(frame.offset(4095))
 }
+// stdout-begin
+// stdout: 10
+// stdout: 2148532224
+// stdout: 2148532240
+// stdout: 2148536319

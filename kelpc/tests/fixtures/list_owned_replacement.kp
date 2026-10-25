@@ -28,3 +28,14 @@ fun main() {
     words.clear()
     print(words.len())
 }
+// stdout-begin
+// stdout: 1
+// stdout: solo
+// stdout: replacement
+// stdout: replacement
+// stdout: other
+// stdout: b
+// stdout: 2
+// stdout: 0
+// stdout: 2
+// stdout: 0

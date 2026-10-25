@@ -35,3 +35,18 @@ fun main() {
     print(v.is_empty())
     print(v.to_string().len())
 }
+// stdout-begin
+// stdout: 0
+// stdout: true
+// stdout: 0
+// stdout: true
+// stdout:
+// stdout: 0
+// stdout: 3
+// stdout: abc
+// stdout: abcd
+// stdout: 4
+// stdout: true
+// stdout: 0
+// stdout: true
+// stdout: 0

@@ -34,3 +34,10 @@ fun main() {
     give_up(tx_a)
     show(sync.select2(&rx_a, &rx_b))
 }
+// stdout-begin
+// stdout: 1
+// stdout: 5
+// stdout: 1
+// stdout: 6
+// stdout: 0
+// stdout: closed

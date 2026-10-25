@@ -11,3 +11,6 @@ fun main() {
     print(xs.len())
     print(xs.get(0))
 }
+// stdout-begin
+// stdout: 2
+// stdout: 41

@@ -21,3 +21,10 @@ fun main() {
         twice { show() }
     }
 }
+// stdout-begin
+// stdout: a
+// stdout: a
+// stdout: b
+// stdout: c
+// stdout: show
+// stdout: show

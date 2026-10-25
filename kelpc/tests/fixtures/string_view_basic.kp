@@ -67,3 +67,26 @@ fun main() {
     print(b)
     print(str.len(b.as_str()))
 }
+// stdout-begin
+// stdout: the quick brown fox
+// stdout: 19
+// stdout: false
+// stdout: true
+// stdout: quick
+// stdout: the
+// stdout: he quick brown fox
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: true
+// stdout: the
+// stdout: 3
+// stdout: true
+// stdout: 0
+// stdout: true
+// stdout: quick
+// stdout: 5
+// stdout: owned text
+// stdout: text
+// stdout: raw
+// stdout: 3

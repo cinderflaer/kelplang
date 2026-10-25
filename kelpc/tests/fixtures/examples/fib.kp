@@ -6,3 +6,5 @@ fun fib(n: i32) => i32 {
 fun main() {
     print(fib(10))
 }
+// stdout-begin
+// stdout: 55

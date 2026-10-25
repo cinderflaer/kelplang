@@ -653,16 +653,10 @@ pub(crate) fn a_single_literal_name_grant_denies_a_name_that_is_only_a_prefix_ma
 
 #[test]
 pub(crate) fn time_and_rand_are_gated_domains_with_no_named_resource() {
-    assert_compiles_and_runs(
-        "tests/fixtures/caps_time_rand.kp",
-        "true\ntrue\ntrue\n4\nslept\n",
-    );
+    assert_fixture_runs("tests/fixtures/caps_time_rand.kp");
 }
 
 #[test]
 pub(crate) fn path_normalize_is_the_function_the_capability_checker_uses() {
-    assert_compiles_and_runs(
-        "tests/fixtures/path_normalize.kp",
-        "/a/b/c\n/a/c\n/a\n/tmp/scratch\n",
-    );
+    assert_fixture_runs("tests/fixtures/path_normalize.kp");
 }

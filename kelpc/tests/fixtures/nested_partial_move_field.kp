@@ -13,3 +13,7 @@ fun main() {
     print(p.name.id)
     print(p.city)
 }
+// stdout-begin
+// stdout: Ada
+// stdout: 7
+// stdout: London

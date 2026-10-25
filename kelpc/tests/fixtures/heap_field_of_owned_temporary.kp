@@ -77,3 +77,12 @@ fun main() {
     print(count())
     print(mkBag().items.len())
 }
+// stdout-begin
+// stdout: aa
+// stdout: bb
+// stdout: 2
+// stdout: aa
+// stdout: 4
+// stdout: 3
+// stdout: 2
+// stdout: 2

@@ -83,3 +83,19 @@ fun main() {
     print(option.is_some(o = index_of(xs = xs, needle = "b")))
     print(option.is_none(o = index_of(xs = xs, needle = "z")))
 }
+// stdout-begin
+// stdout: true
+// stdout: false
+// stdout: 2
+// stdout: false
+// stdout: -1
+// stdout: true
+// stdout: 1
+// stdout: 1
+// stdout: true
+// stdout: -1
+// stdout: 0
+// stdout: 2
+// stdout: odd
+// stdout: true
+// stdout: true

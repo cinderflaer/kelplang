@@ -22,3 +22,6 @@ fun main() {
     print(body())
     print(LOCK.load(order = atomic.Ordering.SeqCst))
 }
+// stdout-begin
+// stdout: true
+// stdout: false

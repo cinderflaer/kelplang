@@ -66,3 +66,5 @@ fun total<M>(xs: List<Node<M>>) => i32 {
 fun main() {
     print(size(view(State(title = "row", n = 3))))
 }
+// stdout-begin
+// stdout: 3

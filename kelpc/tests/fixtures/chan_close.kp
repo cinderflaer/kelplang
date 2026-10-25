@@ -68,3 +68,12 @@ fun main() {
         None -> print("lost")
     }
 }
+// stdout-begin
+// stdout: 6
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: -1
+// stdout: open
+// stdout: closed
+// stdout: back

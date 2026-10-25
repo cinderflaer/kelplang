@@ -22,3 +22,7 @@ fun main() {
     print(w.b)
     print(w.c)
 }
+// stdout-begin
+// stdout: 4
+// stdout: 5
+// stdout: 6

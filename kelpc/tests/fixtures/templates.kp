@@ -11,3 +11,8 @@ fun main() {
     print!("no newline here")
     print("!")
 }
+// stdout-begin
+// stdout: 100% of {nothing} is 50%
+// stdout: area = 12.566360
+// stdout: r=2.000000 doubled=4.000000
+// stdout: no newline here!

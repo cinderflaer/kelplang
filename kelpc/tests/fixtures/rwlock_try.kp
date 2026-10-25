@@ -20,3 +20,9 @@ fun main() {
     }
     print(rw.read { v -> *v })
 }
+// stdout-begin
+// stdout: 1
+// stdout: true
+// stdout: 1
+// stdout: true
+// stdout: 5

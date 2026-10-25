@@ -26,3 +26,6 @@ fun main() {
         print(inner.len())
     }
 }
+// stdout-begin
+// stdout: 1
+// stdout: 1

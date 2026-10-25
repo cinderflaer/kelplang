@@ -12,3 +12,6 @@ fun main() {
     show()
     print(origin.sum())
 }
+// stdout-begin
+// stdout: (3, 4) sum=7
+// stdout: 7

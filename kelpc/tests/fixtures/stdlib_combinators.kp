@@ -74,3 +74,15 @@ fun main() {
     print(result.expect(r = recovered, message = "err"))
     chained.each(fun(n: &i32) { print(n) })
 }
+// stdout-begin
+// stdout: 5
+// stdout: HELLO
+// stdout: 2
+// stdout: true
+// stdout: 7
+// stdout: 7
+// stdout: 42
+// stdout: 105
+// stdout: 4
+// stdout: 11
+// stdout: 4

@@ -17,3 +17,9 @@ fun main() {
     // arithmetic stays in the type the context gave the literal.
     print(mask - top)
 }
+// stdout-begin
+// stdout: 18446744073709551615
+// stdout: 18446744073709551615
+// stdout: 9223372036854775808
+// stdout: 9223372036854775808
+// stdout: 9223372036854775807

@@ -32,3 +32,12 @@ fun main() {
     l.close()
     print("done")
 }
+// stdout-begin
+// stdout: warm 4
+// stdout: closed fresh 0
+// stdout: kept 4
+// stdout: closed all 4
+// stdout: left 0
+// stdout: false
+// stdout: after stale checkout 0
+// stdout: done

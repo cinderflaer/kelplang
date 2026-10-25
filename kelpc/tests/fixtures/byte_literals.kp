@@ -66,3 +66,25 @@ fun main() {
         n += 1
     }
 }
+// stdout-begin
+// stdout: 10
+// stdout: 13
+// stdout: 9
+// stdout: 34
+// stdout: 92
+// stdout: 39
+// stdout: 0
+// stdout: 32
+// stdout: 255
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: 4
+// stdout: Abc
+// stdout: true
+// stdout: 233
+// stdout: true
+// stdout: 48
+// stdout: 49
+// stdout: 50

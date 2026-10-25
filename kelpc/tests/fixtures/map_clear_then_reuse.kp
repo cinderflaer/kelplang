@@ -33,3 +33,18 @@ fun main() {
     print(ks.len())
     print(ks.get(0))
 }
+// stdout-begin
+// stdout: 10
+// stdout: 81
+// stdout: 0
+// stdout: true
+// stdout: false
+// stdout: 2
+// stdout: 33
+// stdout: 44
+// stdout: true
+// stdout: 44
+// stdout: 1
+// stdout: false
+// stdout: 1
+// stdout: 3

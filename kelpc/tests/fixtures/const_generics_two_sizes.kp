@@ -41,3 +41,10 @@ fun main() {
     print(small.rings())
     print(big.rings())
 }
+// stdout-begin
+// stdout: 4
+// stdout: 8
+// stdout: 30
+// stdout: 44
+// stdout: 4
+// stdout: 8

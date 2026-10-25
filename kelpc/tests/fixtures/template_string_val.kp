@@ -8,3 +8,7 @@ fun main() {
     print(label)
     print("${label} done")
 }
+// stdout-begin
+// stdout: report.part
+// stdout: n=7
+// stdout: n=7 done

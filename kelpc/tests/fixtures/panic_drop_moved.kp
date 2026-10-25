@@ -38,3 +38,15 @@ fun main() {
     run(0)
     run(1)
 }
+// stdout-begin
+// stdout: drop
+// stdout: 2
+// stdout: drop
+// stdout: 1
+// stdout: boom
+// stdout: keep
+// stdout: drop
+// stdout: 2
+// stdout: drop
+// stdout: 1
+// stdout: boom

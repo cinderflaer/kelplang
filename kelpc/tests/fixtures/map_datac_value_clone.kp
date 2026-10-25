@@ -31,3 +31,15 @@ fun main() {
     print(m.get("a").path)
     print(m.len())
 }
+// stdout-begin
+// stdout: alpha
+// stdout: 10
+// stdout: none
+// stdout: 0
+// stdout: 2
+// stdout: alpha
+// stdout: 10
+// stdout: beta
+// stdout: 20
+// stdout: alpha
+// stdout: 2

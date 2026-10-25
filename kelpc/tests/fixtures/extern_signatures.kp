@@ -46,3 +46,16 @@ fun main() {
     print(path.normalize("/a//b/./c"))
     print(path.normalize("/a/b/../c"))
 }
+// stdout-begin
+// stdout: 1.414214
+// stdout: 1024.000000
+// stdout: 2.000000
+// stdout: false
+// stdout: hi
+// stdout: ff
+// stdout: 3.14
+// stdout: ello
+// stdout: 42
+// stdout: true
+// stdout: /a/b/c
+// stdout: /a/c

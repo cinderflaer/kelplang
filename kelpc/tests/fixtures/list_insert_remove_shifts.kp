@@ -55,3 +55,26 @@ fun main() {
     words.reverse()
     print(words.len())
 }
+// stdout-begin
+// stdout: 3
+// stdout: a
+// stdout: b
+// stdout: c
+// stdout: d
+// stdout: b
+// stdout: 3
+// stdout: a
+// stdout: c
+// stdout: d
+// stdout: d
+// stdout: 2
+// stdout: a
+// stdout: 1
+// stdout: e
+// stdout: c
+// stdout: g
+// stdout: f
+// stdout: c
+// stdout: g
+// stdout: c
+// stdout: 0

@@ -13,3 +13,12 @@ fun main() {
     print(str.slice(s, 3, 3).len())
     print(str.slice(s, 0, str.len(s)))
 }
+// stdout-begin
+// stdout: 11
+// stdout: a
+// stdout: é
+// stdout: €
+// stdout: 😀
+// stdout: !
+// stdout: 0
+// stdout: aé€😀!

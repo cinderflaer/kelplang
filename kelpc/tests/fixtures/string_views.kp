@@ -37,3 +37,19 @@ fun main() {
     print(str.char_count("héllo"))
     print(str.trim("  own  "))
 }
+// stdout-begin
+// stdout: hello
+// stdout: 5
+// stdout: hello  
+// stdout: 7
+// stdout: ello
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: true
+// stdout: false
+// stdout: 2
+// stdout: true
+// stdout: raw
+// stdout: 5
+// stdout: own

@@ -4,3 +4,5 @@ fun fact(n: i32) => i32 = if n <= 1 { 1 } else { n * fact(n - 1) }
 fun main() {
     print(fact(5))
 }
+// stdout-begin
+// stdout: 120

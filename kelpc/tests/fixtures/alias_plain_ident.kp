@@ -4,3 +4,5 @@ fun main() {
     val _count = 2
     print(_count + 1)
 }
+// stdout-begin
+// stdout: 3

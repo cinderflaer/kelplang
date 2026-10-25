@@ -12,3 +12,6 @@ fun main() {
     }
     print(b)
 }
+// stdout-begin
+// stdout: three
+// stdout: again

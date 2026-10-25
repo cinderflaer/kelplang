@@ -41,3 +41,12 @@ fun main() {
         i += 1
     }
 }
+// stdout-begin
+// stdout: 5
+// stdout: 0
+// stdout: 0
+// stdout: 5
+// stdout: first
+// stdout: 4
+// stdout: 0
+// stdout: 0

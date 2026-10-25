@@ -16,3 +16,6 @@ fun main() {
     print(outer(d))
     print(inner(&c))
 }
+// stdout-begin
+// stdout: 36.000000
+// stdout: 18.000000

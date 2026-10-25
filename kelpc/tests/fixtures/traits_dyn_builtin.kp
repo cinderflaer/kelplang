@@ -14,3 +14,5 @@ fun main() {
     val n: i32 = 21
     print(twice(&n))
 }
+// stdout-begin
+// stdout: 84

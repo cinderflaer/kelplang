@@ -11,3 +11,8 @@ fun main() {
     val empty = ""
     print(str.len(empty))
 }
+// stdout-begin
+// stdout: 104
+// stdout: 111
+// stdout: 5
+// stdout: 0

@@ -71,3 +71,9 @@ fun main() {
     // was a literal.
     print(node_total(n = Node(value = pair_sum(p = Pair(left = 6, right = 7)), next = Box.empty())))
 }
+// stdout-begin
+// stdout: 6
+// stdout: 10
+// stdout: 9
+// stdout: 19
+// stdout: 13

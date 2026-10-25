@@ -17,3 +17,7 @@ fun main() {
     print(Version(major = 1) < Version(major = 2))
     print(Version(major = 1) >= Version(major = 2))
 }
+// stdout-begin
+// stdout: 2
+// stdout: false
+// stdout: true

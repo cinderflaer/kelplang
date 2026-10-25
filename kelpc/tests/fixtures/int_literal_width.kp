@@ -37,3 +37,14 @@ fun main() {
     val big: i64 = 1000000000007
     print(big % 1000000007)
 }
+// stdout-begin
+// stdout: -2147483648
+// stdout: -147483634
+// stdout: -2147483647
+// stdout: 2147483648
+// stdout: 147483634
+// stdout: 147483633
+// stdout: -2147483648
+// stdout: 255
+// stdout: 65535
+// stdout: 999993014

@@ -78,3 +78,16 @@ fun main() {
     print(taken(1))
     print(slot.is_empty())
 }
+// stdout-begin
+// stdout: 11
+// stdout: 10
+// stdout: 3
+// stdout: 30
+// stdout: -6
+// stdout: 14
+// stdout: 15
+// stdout: 42
+// stdout: 13
+// stdout: 5
+// stdout: 11
+// stdout: true

@@ -12,10 +12,7 @@ use super::*;
 /// value it carries is the number the compiler checked.
 #[test]
 pub(crate) fn an_irq_line_and_a_frame_are_values_a_hosted_program_can_claim() {
-    assert_compiles_and_runs(
-        "tests/fixtures/irq_frame_claim.kp",
-        "10\n2148532224\n2148532240\n2148536319\n",
-    );
+    assert_fixture_runs("tests/fixtures/irq_frame_claim.kp");
 }
 
 /// Kernel stage 18's acceptance boot: `examples/kernel0-caps` holds exactly one
@@ -345,47 +342,35 @@ pub(crate) fn a_private_static_is_not_reachable_from_another_module() {
 /// own statements, and the block form (`defer { ... }`) is one action.
 #[test]
 pub(crate) fn deferred_actions_run_last_in_first_out() {
-    assert_compiles_and_runs(
-        "tests/fixtures/defer_lifo.kp",
-        "body\nthird-a\nthird-b\nsecond\nfirst\n",
-    );
+    assert_fixture_runs("tests/fixtures/defer_lifo.kp");
 }
 
 /// A `return` nested in an `if` inside a `while` leaves the loop body and then
 /// the function body, so the loop body's defer runs and then the function's.
 #[test]
 pub(crate) fn a_return_inside_a_loop_runs_both_blocks_defers() {
-    assert_compiles_and_runs(
-        "tests/fixtures/defer_return_in_loop.kp",
-        "loop-out\nloop-out\nloop-out\nf-out\n20\n",
-    );
+    assert_fixture_runs("tests/fixtures/defer_return_in_loop.kp");
 }
 
 /// Each block owns its own deferred actions, so an inner block's run when it is
 /// left and the outer block's wait for the outer exit.
 #[test]
 pub(crate) fn a_nested_blocks_defers_run_at_its_own_exit() {
-    assert_compiles_and_runs(
-        "tests/fixtures/defer_nested_blocks.kp",
-        "inner-body\ninner-end\nouter-body\nouter-end\n",
-    );
+    assert_fixture_runs("tests/fixtures/defer_nested_blocks.kp");
 }
 
 /// A deferred action reads its locals at the block's exit, so a mutation after
 /// the `defer` statement is visible to it.
 #[test]
 pub(crate) fn a_deferred_action_sees_the_final_value_of_a_local() {
-    assert_compiles_and_runs("tests/fixtures/defer_sees_final_value.kp", "42\n");
+    assert_fixture_runs("tests/fixtures/defer_sees_final_value.kp");
 }
 
 /// The kernel pattern: a flag set at the top is released by a `defer`, and the
 /// caller sees it clear after the function returns.
 #[test]
 pub(crate) fn a_defer_releases_an_atomic_lock_flag_on_the_way_out() {
-    assert_compiles_and_runs(
-        "tests/fixtures/defer_lock_flag.kp",
-        "true\ntrue\nfalse\n",
-    );
+    assert_fixture_runs("tests/fixtures/defer_lock_flag.kp");
 }
 
 /// A function with a borrowed return type keeps its elided lifetime when its
@@ -393,47 +378,35 @@ pub(crate) fn a_defer_releases_an_atomic_lock_flag_on_the_way_out() {
 /// deferred action does not run on it).
 #[test]
 pub(crate) fn a_defer_keeps_a_borrowed_return_and_a_panic_tail_working() {
-    assert_compiles_and_runs(
-        "tests/fixtures/defer_borrow_return.kp",
-        "as_str-out\nhello\n",
-    );
+    assert_fixture_runs("tests/fixtures/defer_borrow_return.kp");
 }
 
 /// A `defer` written in an `if` block belongs to that block, so the branch's
 /// action runs before the function body's.
 #[test]
 pub(crate) fn a_defer_in_a_branch_runs_before_the_function_body_defer() {
-    assert_compiles_and_runs(
-        "tests/fixtures/defer_then_branch.kp",
-        "then\nout\n1\nout\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/defer_then_branch.kp");
 }
 
 /// `for` desugars to a `while`, so a `defer` in the loop body runs once per
 /// iteration.
 #[test]
 pub(crate) fn a_defer_in_a_for_body_runs_once_per_iteration() {
-    assert_compiles_and_runs(
-        "tests/fixtures/defer_for_loop.kp",
-        "1\niter-end\n2\niter-end\n",
-    );
+    assert_fixture_runs("tests/fixtures/defer_for_loop.kp");
 }
 
 /// A block used as a value keeps that value while its deferred actions run,
 /// and a function whose body is a block expression is the same case.
 #[test]
 pub(crate) fn a_value_block_runs_its_defers_and_keeps_its_value() {
-    assert_compiles_and_runs(
-        "tests/fixtures/defer_value_block.kp",
-        "block-out\ntext\nf-out\n5\n",
-    );
+    assert_fixture_runs("tests/fixtures/defer_value_block.kp");
 }
 
 /// The `?` refusal is about the block the `defer` is written in: a `?` inside a
 /// `fun` literal belongs to the closure and leaves the outer `defer` alone.
 #[test]
 pub(crate) fn a_defer_tolerates_a_question_mark_inside_a_closure() {
-    assert_compiles_and_runs("tests/fixtures/defer_closure_try.kp", "4\nout\n");
+    assert_fixture_runs("tests/fixtures/defer_closure_try.kp");
 }
 
 /// A panic never returns, so a deferred action does not run on the way out: the
@@ -473,7 +446,7 @@ pub(crate) fn a_panic_does_not_run_a_deferred_action() {
 /// so both backends emit the call for its side effect and a bare return.
 #[test]
 pub(crate) fn returning_a_unit_valued_call_is_legal_on_both_backends() {
-    assert_compiles_and_runs("tests/fixtures/unit_return_value.kp", "said\n");
+    assert_fixture_runs("tests/fixtures/unit_return_value.kp");
 }
 
 /// `?` leaves the enclosing function, which would skip the deferred action, so
@@ -525,20 +498,14 @@ pub(crate) fn a_defer_naming_a_later_local_is_refused() {
 /// on the success path it does not run.
 #[test]
 pub(crate) fn an_errdefer_runs_on_the_error_path_only() {
-    assert_compiles_and_runs(
-        "tests/fixtures/errdefer_error_path.kp",
-        "8\ncleanup\nerr\n",
-    );
+    assert_fixture_runs("tests/fixtures/errdefer_error_path.kp");
 }
 
 /// A `?` that fails after an `errdefer` has been written runs it, with the
 /// locals bound before it still in scope; a `?` that succeeds does not.
 #[test]
 pub(crate) fn an_errdefer_runs_when_a_later_question_mark_fails() {
-    assert_compiles_and_runs(
-        "tests/fixtures/errdefer_second_try.kp",
-        "3\n1\nerr\n",
-    );
+    assert_fixture_runs("tests/fixtures/errdefer_second_try.kp");
 }
 
 /// An `errdefer` in a function whose return type is neither Result nor Option is
@@ -568,7 +535,7 @@ pub(crate) fn an_errdefer_naming_a_later_local_is_refused() {
 /// returns its length, exactly as the explicit `.as_str()` form does.
 #[test]
 pub(crate) fn a_string_argument_is_borrowed_for_a_str_parameter() {
-    assert_compiles_and_runs("tests/fixtures/string_to_str_arg.kp", "kelp\n4\n4\n");
+    assert_fixture_runs("tests/fixtures/string_to_str_arg.kp");
 }
 
 /// A `String` moved into a call in the same argument list as its borrow is
@@ -596,7 +563,7 @@ pub(crate) fn a_string_for_a_str_parameter_of_a_generic_function_is_refused_by_n
 /// (`kelp wiki page language/iterators.md`).
 #[test]
 pub(crate) fn break_and_continue_control_a_while_loop() {
-    assert_compiles_and_runs("tests/fixtures/break_and_continue.kp", "1\n2\n4\n5\n");
+    assert_fixture_runs("tests/fixtures/break_and_continue.kp");
 }
 
 /// A deferred action runs while its block is being left, so a `break` inside it
@@ -680,10 +647,7 @@ pub(crate) fn a_freestanding_project_can_release_a_lock_with_a_defer() {
 /// order, and locals die last-in-first-out.
 #[test]
 pub(crate) fn a_user_destructor_runs_before_fields_in_declaration_order() {
-    assert_compiles_and_runs(
-        "tests/fixtures/drop_order.kp",
-        "body\nleaf\n3\npair\nleaf\n1\nleaf\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/drop_order.kp");
 }
 
 /// Every drop point the plan already had reaches the destructor: an early
@@ -691,26 +655,20 @@ pub(crate) fn a_user_destructor_runs_before_fields_in_declaration_order() {
 /// frees one value per iteration.
 #[test]
 pub(crate) fn a_destructor_runs_at_every_drop_point() {
-    assert_compiles_and_runs(
-        "tests/fixtures/drop_control_flow.kp",
-        "leaf\n1\n9\nleaf\n2\nleaf\n1\n0\nloop\nleaf\n10\nloop\nleaf\n11\n",
-    );
+    assert_fixture_runs("tests/fixtures/drop_control_flow.kp");
 }
 
 /// Reassigning an owned `var` of a destructor type runs the destructor on the
 /// value it replaces.
 #[test]
 pub(crate) fn reassigning_an_owned_destructor_value_runs_the_destructor() {
-    assert_compiles_and_runs(
-        "tests/fixtures/drop_reassign.kp",
-        "leaf\n1\nafter\nleaf\n2\n",
-    );
+    assert_fixture_runs("tests/fixtures/drop_reassign.kp");
 }
 
 /// A moved-out value is not dropped by the scope that declared it.
 #[test]
 pub(crate) fn a_moved_out_destructor_value_is_not_dropped() {
-    assert_compiles_and_runs("tests/fixtures/drop_moved.kp", "moved\nleaf\n1\n");
+    assert_fixture_runs("tests/fixtures/drop_moved.kp");
 }
 
 /// Decision 21: a container of a destructor type is refused in a hosted build, because
@@ -724,7 +682,7 @@ pub(crate) fn containers_drop_each_element_through_its_destructor() {
 /// drops after it.
 #[test]
 pub(crate) fn an_enum_destructor_runs_for_every_variant() {
-    assert_compiles_and_runs("tests/fixtures/drop_enum.kp", "body\nmaybe\nmaybe\nleaf\n1\n");
+    assert_fixture_runs("tests/fixtures/drop_enum.kp");
 }
 
 /// Decision 21: a `Map` value of a destructor type is refused in a hosted build, because
@@ -738,7 +696,7 @@ pub(crate) fn map_values_drop_through_their_destructor() {
 /// flag, so the caller sees it clear after the guarded call returns.
 #[test]
 pub(crate) fn a_lock_guard_releases_the_flag_through_its_destructor() {
-    assert_compiles_and_runs("tests/fixtures/drop_guard_lock.kp", "true\nfalse\n");
+    assert_fixture_runs("tests/fixtures/drop_guard_lock.kp");
 }
 
 /// A destructor type that owns a buffer: the user body runs first and can read
@@ -746,7 +704,7 @@ pub(crate) fn a_lock_guard_releases_the_flag_through_its_destructor() {
 /// pass, where a missing drop is a leak and a second one a double free.
 #[test]
 pub(crate) fn a_destructor_type_owns_its_buffer_until_the_last_field_drop() {
-    assert_compiles_and_runs("tests/fixtures/drop_owned_field.kp", "body\nnamed\n4\nnamed\n5\n");
+    assert_fixture_runs("tests/fixtures/drop_owned_field.kp");
 }
 
 /// Decision 21: a closure that captures a destructor type cannot cross a thread

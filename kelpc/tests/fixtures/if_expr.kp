@@ -14,3 +14,7 @@ fun main() {
     print(classify(0))
     print(classify(42))
 }
+// stdout-begin
+// stdout: -1
+// stdout: 0
+// stdout: 1

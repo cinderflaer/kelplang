@@ -23,3 +23,12 @@ fun main() {
     print(names.len())
     print(names.get(1).as_str())
 }
+// stdout-begin
+// stdout: 0
+// stdout: 100
+// stdout: 0
+// stdout: 198
+// stdout: true
+// stdout: 7
+// stdout: 2
+// stdout: b

@@ -35,3 +35,20 @@ fun main() {
     val at = digit.to_usize()
     print(at + 1)
 }
+// stdout-begin
+// stdout: 65
+// stdout: 65
+// stdout: 65
+// stdout: 65
+// stdout: 65
+// stdout: 300
+// stdout: 300
+// stdout: 251
+// stdout: -7
+// stdout: -7
+// stdout: 9
+// stdout: 9
+// stdout: 9
+// stdout: 4294967295
+// stdout: 5
+// stdout: 6

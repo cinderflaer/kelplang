@@ -16,3 +16,6 @@ fun main() {
     val b = Shape.Circle(r = 2.0)
     print(b.label())
 }
+// stdout-begin
+// stdout: empty
+// stdout: circle

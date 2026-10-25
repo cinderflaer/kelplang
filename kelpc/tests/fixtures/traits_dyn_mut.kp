@@ -26,3 +26,6 @@ fun main() {
     bump_all(&mut cell)
     print(cell.value())
 }
+// stdout-begin
+// stdout: 11
+// stdout: 18

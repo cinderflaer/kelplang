@@ -14,3 +14,10 @@ fun main() {
         k += 1
     }
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 2
+// stdout: 3
+// stdout: 3
+// stdout: 4

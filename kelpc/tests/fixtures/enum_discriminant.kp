@@ -54,3 +54,17 @@ fun main() {
     print(size_of<Signed>())
     print(align_of<Signed>())
 }
+// stdout-begin
+// stdout: 10
+// stdout: 2
+// stdout: 1
+// stdout: 10
+// stdout: 99
+// stdout: 1
+// stdout: 8
+// stdout: 8
+// stdout: 4
+// stdout: -5
+// stdout: -5
+// stdout: 4
+// stdout: 2

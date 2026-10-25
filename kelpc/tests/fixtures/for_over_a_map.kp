@@ -18,3 +18,11 @@ fun main() {
         print(name.len())
     }
 }
+// stdout-begin
+// stdout: 1
+// stdout: 2
+// stdout: 3
+// stdout: 10
+// stdout: 20
+// stdout: 7
+// stdout: 5
