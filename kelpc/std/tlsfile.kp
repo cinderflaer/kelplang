@@ -121,9 +121,9 @@ fun mode_text(mode: u32) => String {
     val bits = mode & 511
     var out = String.with_capacity(4)
     out.push_str("0")
-    val a = str.from_u64((bits >> 6).to_u64())
-    val b = str.from_u64(((bits >> 3) & 7).to_u64())
-    val c = str.from_u64((bits & 7).to_u64())
+    val a = (bits >> 6).to_u64().toText()
+    val b = ((bits >> 3) & 7).to_u64().toText()
+    val c = (bits & 7).to_u64().toText()
     out.push_str(a)
     out.push_str(b)
     out.push_str(c)

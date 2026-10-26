@@ -408,6 +408,10 @@ pub(crate) fn check_method_call(
     // `n.to_byte()` and `n.try_to_byte()` are the everyday spellings of the
     // `u8` conversions (issue #279): from here on the call is the builtin's.
     let method = numeric_alias(&probe.ty, method).unwrap_or(method);
+    // `n.toText()` on any number is the text of the value (issue #262).
+    if method == "toText" && probe.ty.is_numeric() {
+        return check_number_to_text(receiver, &probe.ty, args, span, ctx);
+    }
     // A method call on a borrowed trait object (A-12 slice 4) goes through the
     // vtable: the trait's flattened method list gives the slot, the receiver's
     // type gives the mutability, and the trait's own signature gives the

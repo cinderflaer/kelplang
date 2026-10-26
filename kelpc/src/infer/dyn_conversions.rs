@@ -224,6 +224,124 @@ pub(crate) fn numeric_alias(receiver: &Ty, method: &str) -> Option<&'static str>
     }
 }
 
+/// `n.toText()` on a number (issue #262): the owned `String` of its text.
+///
+/// An integer takes no argument. Its text is `std/str`'s `from_i64` or
+/// `from_u64` when the file names that module, and otherwise the one-value
+/// string template that `"${n}"` builds; both write the same decimal digits. A
+/// float with no argument gives the print form, the text `"${x}"` gives. A float
+/// with one `i32` argument gives exactly that many digits after the point, which
+/// is `std/str`'s `from_f64`, so the file has to name the module with
+/// `impl "std/str"`. The lowering writes no retired spelling: each call is built
+/// as syntax here, not read from the source.
+pub(crate) fn check_number_to_text(
+    receiver: &ast::Expr,
+    ty: &Ty,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let as_template = |ctx: &mut Ctx| -> Result<tir::Expr> {
+        let mut value = instantiate::check_template(
+            &[ast::TemplatePart::Expr(receiver.clone())],
+            false,
+            span,
+            ctx,
+        )?;
+        value.ty = Ty::String;
+        Ok(value)
+    };
+    if ty.is_integer() {
+        if !args.is_empty() {
+            return Err(TypeError {
+                help: Some("an integer's text is its decimal digits: write 'n.toText()' with no argument".to_string()),
+                message: format!("'{}.toText' takes no argument, found {}", ty.display(), args.len()),
+                span,
+            });
+        }
+        // With `std/str` in scope the text is that module's `from_i64` or
+        // `from_u64`, the function the retired spellings wrapped. A freestanding
+        // build admits that function (with an allocator) and refuses a print
+        // template, so the call is the one that keeps `fmt.int` working there.
+        if is_module_alias("str", ctx) {
+            let signed = matches!(ty, Ty::I32 | Ty::I64 | Ty::Int | Ty::Isize);
+            let (convert, func, wide) = if signed {
+                ("to_i64", "from_i64", matches!(ty, Ty::I64))
+            } else {
+                ("to_u64", "from_u64", matches!(ty, Ty::U64 | Ty::Uint))
+            };
+            let value = if wide {
+                receiver.clone()
+            } else {
+                ast::Expr::MethodCall {
+                    receiver: Box::new(receiver.clone()),
+                    method: convert.to_string(),
+                    type_args: Vec::new(),
+                    args: Vec::new(),
+                    span,
+                }
+            };
+            let call = ast::Expr::MethodCall {
+                receiver: Box::new(ast::Expr::Ident("str".to_string(), span)),
+                method: func.to_string(),
+                type_args: Vec::new(),
+                args: vec![ast::CallArg { name: None, value }],
+                span,
+            };
+            return check_expr(&call, ctx, None);
+        }
+        return as_template(ctx);
+    }
+    match args {
+        [] => as_template(ctx),
+        [decimals] => {
+            if !is_module_alias("str", ctx) {
+                return Err(TypeError {
+                    help: Some("add `impl \"std/str\"` to the file that writes the call".to_string()),
+                    message: format!(
+                        "'{}.toText(decimals)' writes its digits through 'str.from_f64', which is not in scope: the file does not import 'std/str'",
+                        ty.display()
+                    ),
+                    span,
+                });
+            }
+            let value = if matches!(ty, Ty::F64) {
+                receiver.clone()
+            } else {
+                ast::Expr::MethodCall {
+                    receiver: Box::new(receiver.clone()),
+                    method: "to_f64".to_string(),
+                    type_args: Vec::new(),
+                    args: Vec::new(),
+                    span,
+                }
+            };
+            // `str.from_f64(x, d)` is a method call on the module alias, the way
+            // the parser reads every `module.name(...)` call.
+            let call = ast::Expr::MethodCall {
+                receiver: Box::new(ast::Expr::Ident("str".to_string(), span)),
+                method: "from_f64".to_string(),
+                type_args: Vec::new(),
+                args: vec![
+                    ast::CallArg { name: None, value },
+                    ast::CallArg { name: None, value: decimals.value.clone() },
+                ],
+                span,
+            };
+            check_expr(&call, ctx, None)
+        }
+        _ => Err(TypeError {
+            help: Some("a float's text is its print form with no argument, or its digits with one: 'x.toText()' or 'x.toText(2)'".to_string()),
+            message: format!(
+                "'{}.toText' takes zero or one argument, found {}",
+                ty.display(),
+                args.len()
+            ),
+            span,
+        }),
+    }
+}
+
 /// The `(source, target)` pair a `try_to_<T>` method call names, or `None`
 /// when the receiver and the method do not spell one (MISSING-RbhdW).
 ///

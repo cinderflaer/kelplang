@@ -1411,7 +1411,7 @@ fun format_spec(out: mut String, spec: u8, lt: LocalTime) {
 /// Appends `value` in decimal, padded on the left with zeros to `width` digits.
 /// `value` in `width` decimal digits at least, zero-filled on the left.
 fun push_pad(out: mut String, value: i64, width: int) {
-    val digits = str.from_i64(value)
+    val digits = value.toText()
     var pad: int = 0
     if width > digits.len() {
         pad = width - digits.len()

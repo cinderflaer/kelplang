@@ -19,14 +19,14 @@ pub trait Display {
 }
 
 /// The decimal text of a signed integer, with a leading `-` when negative.
-fun int(n: i64) => String = str.from_i64(n)
+fun int(n: i64) => String = n.toText()
 
 /// The decimal text of an unsigned integer.
-fun uint(n: u64) => String = str.from_u64(n)
+fun uint(n: u64) => String = n.toText()
 
 /// `x` in decimal with exactly `decimals` digits after the point, two when
 /// `decimals` is left out (issue #296).
-fun float(x: f64, decimals: i32 = 2) => String = str.from_f64(x, decimals)
+fun float(x: f64, decimals: i32 = 2) => String = x.toText(decimals)
 
 /// The hexadecimal text of `n`. Lowercase, no `0x` prefix.
 extern fun hex(n: u64) => String = "hex_raw"
@@ -78,14 +78,14 @@ fun pad_right(s: &str, width: int, fill: u8) => String {
 /// `1,234,567`. Both signednesses exist because a user module cannot overload a
 /// name, which is why `fmt` already spells `int` and `uint` apart.
 fun commas_u64(n: u64) => String {
-    val digits = str.from_u64(n)
+    val digits = n.toText()
     return group_digits(text = digits.as_str())
 }
 
 /// `n` with a comma every three digits from the right, the signed form of
 /// `commas_u64`. A leading `-` stays in front of the first group.
 fun commas_i64(n: i64) => String {
-    val digits = str.from_i64(n)
+    val digits = n.toText()
     return group_digits(text = digits.as_str())
 }
 
@@ -122,7 +122,7 @@ fun group_digits(text: &str) => String {
 /// line (`4k`) means and the two have to agree.
 fun human_size(bytes: u64) => String {
     if bytes < 1024 {
-        val text = str.from_u64(bytes)
+        val text = bytes.toText()
         return str.concat(text, " B")
     }
     if bytes < 1048576 {

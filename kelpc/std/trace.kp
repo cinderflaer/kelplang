@@ -35,8 +35,8 @@ fun end(file: &str, line: int, span: Span) {
 /// time, the escaped `file:line` and the escaped name. A negative `elapsed_ns`
 /// leaves out the final duration field, which only `end` records carry.
 fun emit(kind: &str, file: &str, line: int, name: &str, elapsed_ns: i64) {
-    val at = fmt.uint(line.to_u64())
-    val time_ns = fmt.int(time.now_mono_ns())
+    val at = line.to_u64().toText()
+    val time_ns = time.now_mono_ns().toText()
     val safe_file = escape(file)
     val safe_name = escape(name)
     val out0 = str.concat("trace\t", kind)
@@ -49,7 +49,7 @@ fun emit(kind: &str, file: &str, line: int, name: &str, elapsed_ns: i64) {
     val out7 = str.concat(out6, "\t")
     val out = str.concat(out7, safe_name.as_str())
     if elapsed_ns >= 0 {
-        val elapsed = fmt.int(elapsed_ns)
+        val elapsed = elapsed_ns.toText()
         val with_separator = str.concat(out, "\t")
         val completed = str.concat(with_separator, elapsed.as_str())
         io.eprint(completed)

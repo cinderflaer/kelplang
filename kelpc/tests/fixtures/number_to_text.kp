@@ -1,0 +1,38 @@
+// `n.toText()` on an integer and on a float (issue #262): the text of a number
+// with no conversion first. An integer's text is its decimal digits, the same
+// bytes as "${n}". A float with an argument gives exactly that many digits after
+// the point, the text `std/str`'s from_f64 gives, and a float with no argument
+// gives the print form, the same bytes as "${x}".
+impl "std/str"
+
+fun main() {
+    val small: int = -42
+    val wide: i64 = -7
+    val big: u64 = 18446744073709551615
+    val count: usize = 12
+    val ratio: f64 = 3.14159
+    val half: f32 = 2.5
+    print(small.toText())
+    print(wide.toText())
+    print(big.toText())
+    print(count.toText())
+    print(ratio.toText(2))
+    print(ratio.toText(0))
+    print(half.toText(1))
+    print(ratio.toText(4))
+    print(ratio.toText())
+    print("${ratio}")
+    print("${small.toText()}|${big.toText()}")
+}
+// stdout-begin
+// stdout: -42
+// stdout: -7
+// stdout: 18446744073709551615
+// stdout: 12
+// stdout: 3.14
+// stdout: 3
+// stdout: 2.5
+// stdout: 3.1416
+// stdout: 3.141590
+// stdout: 3.141590
+// stdout: -42|18446744073709551615

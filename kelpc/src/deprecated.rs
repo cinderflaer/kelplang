@@ -59,9 +59,11 @@ pub struct Outdated {
 ///
 /// The `impl` clauses that were here before were removed in the cycle after
 /// `26.09.0`, on the deadline each carried. The current entries are `Map.new()`
-/// (issue #302, `Map.empty()` is its spelling) and the two numeric names (issue
+/// (issue #302, `Map.empty()` is its spelling), the two numeric names (issue
 /// #279): `to_u8` and `try_to_u8` still build, and the everyday `to_byte` and
-/// `try_to_byte` are their spellings.
+/// `try_to_byte` are their spellings, and the six text names (issue #262):
+/// `fmt.int`, `fmt.uint`, `fmt.float`, `str.from_u64`, `str.from_i64` and
+/// `str.from_f64` still build, and `toText` on the number is their spelling.
 ///
 /// The register stays the mechanism for the next deprecation: add an entry here,
 /// raise its finding where the spelling is read (`scan_tokens` for a method
@@ -83,6 +85,36 @@ pub const REGISTER: &[Outdated] = &[
         id: "numeric-try-to-u8",
         what: "`.try_to_u8()`",
         instead: "write `.try_to_byte()`, which hands back the same `Option<u8>`",
+    },
+    Outdated {
+        id: "fmt-int",
+        what: "`fmt.int(`",
+        instead: "write `n.toText()`, which gives the same decimal text of an integer",
+    },
+    Outdated {
+        id: "fmt-uint",
+        what: "`fmt.uint(`",
+        instead: "write `n.toText()`, which gives the same decimal text of an unsigned integer",
+    },
+    Outdated {
+        id: "fmt-float",
+        what: "`fmt.float(`",
+        instead: "write `x.toText(decimals)`, which gives the same text with `decimals` digits after the point (`x.toText(2)` for the default of two)",
+    },
+    Outdated {
+        id: "str-from-u64",
+        what: "`str.from_u64(`",
+        instead: "write `n.toText()`, which gives the same decimal text of an unsigned integer",
+    },
+    Outdated {
+        id: "str-from-i64",
+        what: "`str.from_i64(`",
+        instead: "write `n.toText()`, which gives the same decimal text of an integer",
+    },
+    Outdated {
+        id: "str-from-f64",
+        what: "`str.from_f64(`",
+        instead: "write `x.toText(decimals)`, which gives the same text with `decimals` digits after the point",
     },
 ];
 
@@ -134,6 +166,28 @@ pub fn scan_tokens(tokens: &[Token], module: &str) -> Vec<Diagnostic> {
         if matches!(&name.kind, TokenKind::Ident(text) if text == "new") {
             found.push(finding("map-new", name.span, module));
         }
+    }
+    // `fmt.int(`, `fmt.uint(`, `fmt.float(`, `str.from_u64(`, `str.from_i64(` and
+    // `str.from_f64(`: the two owners are the module names, so a call through
+    // another name (a local, a user module) is left alone (issue #262).
+    for window in tokens.windows(4) {
+        let [owner_tok, dot, name_tok, open] = window else { continue };
+        if !matches!(dot.kind, TokenKind::Dot) || !matches!(open.kind, TokenKind::LParen) {
+            continue;
+        }
+        let (TokenKind::Ident(owner), TokenKind::Ident(name)) = (&owner_tok.kind, &name_tok.kind) else {
+            continue;
+        };
+        let id = match (owner.as_str(), name.as_str()) {
+            ("fmt", "int") => "fmt-int",
+            ("fmt", "uint") => "fmt-uint",
+            ("fmt", "float") => "fmt-float",
+            ("str", "from_u64") => "str-from-u64",
+            ("str", "from_i64") => "str-from-i64",
+            ("str", "from_f64") => "str-from-f64",
+            _ => continue,
+        };
+        found.push(finding(id, name_tok.span, module));
     }
     for window in tokens.windows(3) {
         let [dot, name, open] = window else { continue };
@@ -229,6 +283,26 @@ mod tests {
     }
 
     #[test]
+    fn the_text_spellings_are_flagged_by_their_owner_module() {
+        // The six retired names are flagged where the owner is `fmt` or `str`
+        // (issue #262). A call through another owner, a user function named
+        // `int`, and the `toText` replacement are left alone.
+        let text = "var a = fmt.int(1)\nvar b = fmt.uint(2)\nvar c = fmt.float(3.0)\n\
+                    var d = str.from_u64(4)\nvar e = str.from_i64(5)\nvar f = str.from_f64(6.0, 2)\n\
+                    var g = other.int(7)\nvar h = n.toText()\nvar i = fmt.int\nvar j = str.from_bytes(b)\n";
+        let tokens = Lexer::new(text).tokenize().expect("the sample lexes");
+        let found = scan_tokens(&tokens, "m");
+        let ids: Vec<&str> = found
+            .iter()
+            .map(|d| d.message.split(" is outdated").next().unwrap_or(""))
+            .collect();
+        assert_eq!(found.len(), 6, "{ids:?}");
+        for spelling in ["`fmt.int(`", "`fmt.uint(`", "`fmt.float(`", "`str.from_u64(`", "`str.from_i64(`", "`str.from_f64(`"] {
+            assert!(ids.contains(&spelling), "{spelling} not flagged: {ids:?}");
+        }
+    }
+
+    #[test]
     fn the_shipped_sources_carry_no_outdated_spelling() {
         // A deprecation in the stdlib is the worst kind: every program that
         // imports that module would be warned about a file it cannot edit.
@@ -237,7 +311,10 @@ mod tests {
         // an entry owns (the scan below), and every shipped module parses (the
         // walk, which is where a refused spelling fails loudly, naming its fix).
         // The next entry adds its own spelling to the list.
-        const RETIRED: &[&str] = &["with caps(", ").R:", ").R ", ".to_u8(", ".try_to_u8(", "Map.new("];
+        const RETIRED: &[&str] = &[
+            "with caps(", ").R:", ").R ", ".to_u8(", ".try_to_u8(", "Map.new(", "fmt.int(", "fmt.uint(",
+            "fmt.float(", "str.from_u64(", "str.from_i64(", "str.from_f64(",
+        ];
         let mut ids: Vec<&str> = crate::stdlib::shipped().to_vec();
         ids.push(crate::stdlib::RT_MODULE);
         for id in ids {

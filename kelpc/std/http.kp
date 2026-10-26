@@ -671,9 +671,9 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: int) => St
     if u.port != default_port_for(u.scheme) {
         out.push_str(":")
         // A formatted number is an owned temporary, so its `&str` view has to
-        // be bound before it can be used: `fmt.uint(n).as_str()` taken as an
+        // be bound before it can be used: `n.toText().as_str()` taken as an
         // argument is the "temporary would be freed" error.
-        val port_text = fmt.uint(u.port.to_u64())
+        val port_text = u.port.to_u64().toText()
         out.push_str(port_text)
     }
     out.push_str("\r\n")
@@ -687,7 +687,7 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: int) => St
     }
     if body_len > 0 {
         out.push_str("Content-Length: ")
-        val len_text = fmt.uint(body_len.to_u64())
+        val len_text = body_len.to_u64().toText()
         out.push_str(len_text)
         out.push_str("\r\n")
     }
@@ -1267,7 +1267,7 @@ fun absolute_url(base: Url, loc: &str) => String {
     out.push_str("://")
     out.push_str(base.host)
     out.push_str(":")
-    val port_text = fmt.uint(base.port.to_u64())
+    val port_text = base.port.to_u64().toText()
     out.push_str(port_text)
     if str.starts_with(loc, "/") {
         out.push_str(loc)
@@ -2447,7 +2447,7 @@ fun Server.try_accept() => result.Result<ServerConn, HttpErr> {
 /// nothing. `http_error_status` reads it back, `ServerConn.write_error` answers.
 fun srv_err<T>(code: i32, text: &str) => result.Result<T, HttpErr> {
     var r = String.with_capacity(64)
-    val c = fmt.int(code.to_i64())
+    val c = code.to_i64().toText()
     r.push_str(c.as_str())
     r.push_str(" ")
     r.push_str(text)
@@ -3097,7 +3097,7 @@ fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<int, H
     val code = resp.status
     var out = String.with_capacity(256)
     out.push_str("HTTP/1.1 ")
-    val code_text = fmt.int(code.to_i64())
+    val code_text = code.to_i64().toText()
     out.push_str(code_text)
     out.push_str(" ")
     val reason = srv_reason(code)
@@ -3124,7 +3124,7 @@ fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<int, H
     val bodyless = code < 200 || code == 204 || code == 304
     if !bodyless {
         out.push_str("Content-Length: ")
-        val len_text = fmt.uint(resp.body.len().to_u64())
+        val len_text = resp.body.len().to_u64().toText()
         out.push_str(len_text)
         out.push_str("\r\n")
     }

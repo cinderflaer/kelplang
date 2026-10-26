@@ -105,7 +105,7 @@ fun hex_digit(n: u8) => u8 {
 // `n` appended in decimal. `str.from_u64` returns a `String`; binding it first
 // keeps the borrow off a temporary.
 fun push_dec(out: mut String, n: u64) {
-    val text = str.from_u64(n)
+    val text = n.toText()
     out.push_str(text)
 }
 
