@@ -711,6 +711,13 @@ pub(crate) fn a_worker_that_returns_unit_can_be_joined() {
     assert_fixture_runs("tests/fixtures/thread_join_unit.kp");
 }
 
+/// Issue #310: `thread.join_or_report` joins one handle, prints a worker's panic
+/// text, and hands back its value as `Some` or `None`.
+#[test]
+pub(crate) fn a_join_or_report_helper_joins_and_reports_a_panic() {
+    assert_fixture_runs("tests/fixtures/thread_join_or_report.kp");
+}
+
 /// `MISSING-r7Wqb`'s general case: a `Result<unit, E>` written by hand, with
 /// no thread anywhere. `Ok`'s field is `unit`; constructing one still runs the
 /// value expression for its side effect even though nothing is stored.

@@ -1,0 +1,29 @@
+// `thread.join_or_report` (issue #310): joins one handle and hands back its value
+// as `Some`. A worker that panics is reported on stdout with the panic text, and
+// the join hands back `None`, so the caller needs no `Err` arm of its own.
+impl "std/thread"
+impl "std/option"
+
+fun doubled(x: move i64) => i64 {
+    return x * 2
+}
+
+fun gives_up(x: move i64) {
+    panic("worker gives up")
+}
+
+fun main() {
+    val ok: Thread<i64> = thread.spawn(doubled, 21)
+    if let Some(v) = thread.join_or_report<i64>(ok) {
+        print(v)
+    }
+    val bad: Thread<unit> = thread.spawn(gives_up, 1)
+    val gone = thread.join_or_report<unit>(bad)
+    if option.is_none(o = gone) {
+        print("no value")
+    }
+}
+// stdout-begin
+// stdout: 42
+// stdout: worker gives up
+// stdout: no value
