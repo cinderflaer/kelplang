@@ -351,6 +351,8 @@ pub const PROTOTYPES: &[(&str, &str)] = &[(
      "void kelp_std__time__sleep_ms_raw(uint64_t ms);"),
     ("kelp_std__thread__sleep_ms_raw",
      "void kelp_std__thread__sleep_ms_raw(uint64_t ms);"),
+    ("kelp_std__result__exit_with_message_raw",
+     "void kelp_std__result__exit_with_message_raw(const char* message, int32_t code);"),
     ("kelp_std__thread__current_id_raw",
      "uint64_t kelp_std__thread__current_id_raw(void);"),
     ("kelp_std__env__has_raw",

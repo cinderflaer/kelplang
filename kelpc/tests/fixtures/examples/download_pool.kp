@@ -112,14 +112,7 @@ fun main() {
         process.exit(2)
     }
     // The port is checked here; each worker parses its own copy from the command line.
-    val port = when str.parse_u64(args.get(2).as_str()) {
-        Ok(v) -> v.to_u16()
-        Err(_) -> {
-            print("bad port")
-            process.exit(2)
-            0
-        }
-    }
+    val port = str.parse_u64(args.get(2).as_str()).orExit("bad port").to_u16()
 
     val w0: int = 0
     val w1: int = 1

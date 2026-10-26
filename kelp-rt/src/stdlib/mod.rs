@@ -10,6 +10,7 @@ pub mod env;
 pub mod fs;
 pub mod io;
 pub mod process;
+pub mod result;
 pub mod fmt;
 pub mod math;
 pub mod net;

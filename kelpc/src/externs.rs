@@ -58,6 +58,7 @@ static RUST_PORTED: &[(&str, &str)] = &[
     ("std/time", "now_mono_ns_raw"),
     ("std/time", "sleep_ms_raw"),
     ("std/thread", "sleep_ms_raw"),
+    ("std/result", "exit_with_message_raw"),
     ("std/thread", "current_id_raw"),
     ("std/env", "has_raw"),
     ("std/env", "get_raw"),

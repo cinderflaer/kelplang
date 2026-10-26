@@ -37,6 +37,12 @@ enum Result<T, E> {
     Err(val error: E)
 }
 
+// Writes `message` and a newline to standard error, then exits with `code`.
+// The Rust runtime provides it (`kelp-rt/src/stdlib/result.rs`). This module
+// cannot import `std/io` or `std/process` to do it, since both import `std/str`,
+// which imports this one.
+extern fun exit_with_message_raw(message: &str, code: i32)
+
 /// Whether the result is a success: `result.is_ok(r)` is `r.is_ok()`.
 fun is_ok<T, E>(r: &Result<T, E>) => bool = r.is_ok()
 
@@ -104,6 +110,10 @@ fun map_err<T, E, F>(r: move Result<T, E>, f: closure fun(&E) => F) => Result<T,
 // `is_err` and `unwrap_or` stay as the module's public spelling; each one calls
 // its method.
 //
+// `orExit` is the one method here that ends the program. Use it where a
+// failure is a usage error and the message is for the person at the terminal.
+// See its own comment.
+//
 // The rule for an error a default hides. `unwrap_or` drops the `Err` payload
 // without reading it, logging it or passing it on, so its `E` needs no `Copy`.
 // Use it only where the error carries nothing the caller needs: an optional
@@ -127,6 +137,20 @@ fun Result<T, E>.is_err() => bool = when self {
 fun Result<T, E>.unwrap_or(fallback: T) => T = when self {
     Ok(v) -> v
     Err(_) -> fallback
+}
+
+/// The success payload, for a `Copy` success payload. On `Err` the message goes
+/// to standard error as one line and the program exits with status 2, with no
+/// unwinding and no destructors, as `process.exit` does. The `Err` payload is
+/// not read, so `E` needs no `Copy`. Use it for a usage error (a bad argument,
+/// a setting that does not parse); a failure the caller can handle belongs in a
+/// `when`, `?` or `map_err`. `str.parse_u64(args.get(2)).orExit("bad port")`.
+fun Result<T, E>.orExit(message: &str) => T {
+    if let Ok(v) = self {
+        return v
+    }
+    exit_with_message_raw(message, 2)
+    panic(message)
 }
 
 /// Chain a second fallible step: `f` returns a `Result` itself, which is what
