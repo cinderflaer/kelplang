@@ -7,12 +7,14 @@ impl "std/str"
 impl "std/fmt"
 impl "std/process"
 impl "std/result"
+impl "std/option"
+impl "std/pool"
 
 const WORKER_COUNT: usize = 4
 
 // A thread takes only a scalar argument (a collected value is not scanned while a worker holds
 // it), so each worker is handed its index and reads its own job from the command line.
-datac Job(val host: String, val port: u16, val paths: List<String>)
+datac FetchJob(val host: String, val port: u16, val paths: List<String>)
 datac Outcome(val ok: int, val failed: int, val bytes: u64)
 
 fun build_url(host: str, port: u16, path: str) => String {
@@ -59,7 +61,7 @@ fun fetch_all(worker: int) => Outcome {
 }
 
 // The job of one worker, read from the command line: the host, the port and that worker's share.
-fun job_for(worker: int) => Job {
+fun job_for(worker: int) => FetchJob {
     val args = process.args()
     var paths: List<String> = List.empty()
     var i: int = 3
@@ -71,7 +73,7 @@ fun job_for(worker: int) => Job {
         Ok(v) -> v.to_u16()
         Err(_) -> 0
     }
-    return Job(host = args.get(1).clone(), port = port, paths = slice_for(&paths, worker))
+    return FetchJob(host = args.get(1).clone(), port = port, paths = slice_for(&paths, worker))
 }
 
 // Every `worker`th path, starting at `worker`: a round-robin split decided
@@ -132,41 +134,29 @@ fun main() {
     var total_failed: int = 0
     var total_bytes: u64 = 0
 
-    when thread.join(h0) {
-        Ok(o) -> {
-            report("worker 0", &o)
-            total_ok = total_ok + o.ok
-            total_failed = total_failed + o.failed
-            total_bytes = total_bytes + o.bytes
-        }
-        Err(e) -> print(e.message)
+    if let Some(o) = pool.join_or_report<Outcome>(h0) {
+        report("worker 0", &o)
+        total_ok = total_ok + o.ok
+        total_failed = total_failed + o.failed
+        total_bytes = total_bytes + o.bytes
     }
-    when thread.join(h1) {
-        Ok(o) -> {
-            report("worker 1", &o)
-            total_ok = total_ok + o.ok
-            total_failed = total_failed + o.failed
-            total_bytes = total_bytes + o.bytes
-        }
-        Err(e) -> print(e.message)
+    if let Some(o) = pool.join_or_report<Outcome>(h1) {
+        report("worker 1", &o)
+        total_ok = total_ok + o.ok
+        total_failed = total_failed + o.failed
+        total_bytes = total_bytes + o.bytes
     }
-    when thread.join(h2) {
-        Ok(o) -> {
-            report("worker 2", &o)
-            total_ok = total_ok + o.ok
-            total_failed = total_failed + o.failed
-            total_bytes = total_bytes + o.bytes
-        }
-        Err(e) -> print(e.message)
+    if let Some(o) = pool.join_or_report<Outcome>(h2) {
+        report("worker 2", &o)
+        total_ok = total_ok + o.ok
+        total_failed = total_failed + o.failed
+        total_bytes = total_bytes + o.bytes
     }
-    when thread.join(h3) {
-        Ok(o) -> {
-            report("worker 3", &o)
-            total_ok = total_ok + o.ok
-            total_failed = total_failed + o.failed
-            total_bytes = total_bytes + o.bytes
-        }
-        Err(e) -> print(e.message)
+    if let Some(o) = pool.join_or_report<Outcome>(h3) {
+        report("worker 3", &o)
+        total_ok = total_ok + o.ok
+        total_failed = total_failed + o.failed
+        total_bytes = total_bytes + o.bytes
     }
 
     var summary = String.empty()

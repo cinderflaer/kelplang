@@ -7,6 +7,7 @@
        fun Pool.spawn(job: move closure fun())
        fun Pool.join()
        fun Pool.panicked() => i32
+       fun join_or_report<t>(handle: move Thread<t>) => option.Option<t>
 
    `pool.new(n)` starts `n` worker threads that pull jobs from one FIFO queue.
    `spawn` queues a job (a closure that may capture values it owns: they move
@@ -184,4 +185,24 @@ fun Pool.panicked() => i32 {
 /// Joins the pool, so dropping it runs every queued job first.
 fun mut Pool.drop() {
     self.join()
+}
+
+/* #310: `pool.join_or_report` joins one thread handle and reports its error. It
+   sits in this module and not in `std/thread` because a module cannot call its
+   own builtins by name: `thread.join` is reached through `impl "std/thread"`, as
+   `thread.spawn` is above, and this module already imports it. The call sites it
+   serves are the ones that joined a `Thread<T>` and printed the `Err` message
+   (examples/download_pool.kp). */
+
+/// Joins `handle` and returns its value as `Some`. A worker that panicked prints
+/// its panic text on stdout and returns `None`. The handle is consumed, so it
+/// joins once.
+fun join_or_report<t>(handle: move Thread<t>) => option.Option<t> {
+    when thread.join(handle) {
+        Ok(v) -> option.Option.Some(value = v)
+        Err(e) -> {
+            print(e.message)
+            option.Option.None
+        }
+    }
 }
