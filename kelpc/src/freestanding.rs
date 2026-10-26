@@ -278,7 +278,15 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
     // The program's own declarations first, so a construct in the program is
     // reported by its own name rather than behind the std module it reaches
     // through.
+    //
+    // A `std` struct is left to `check_reached_structs`, which runs after the
+    // freestanding prune: an instance named only by a std signature (the
+    // `ByteIter<String>` that `str.bytes` returns) is dropped with its function,
+    // so the program never reaches it (issue #367).
     for s in &program.structs {
+        if is_std_struct(&s.name) {
+            continue;
+        }
         for f in &s.fields {
             if let Some(name) = heap_refusal(&f.ty, heap_ok) {
                 return Err(unavailable(
@@ -344,6 +352,42 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
         checker.block(&f.body, &f.module)?;
     }
 
+    Ok(())
+}
+
+/// Whether a struct instance was declared by a `std` module (its name is
+/// spelled `std.<module>.<Name>`, with any generic arguments after the name).
+fn is_std_struct(name: &str) -> bool {
+    name.starts_with("std.")
+}
+
+/// The struct half of the freestanding check, for the program that remains
+/// after `prune`: every `std` struct instance still in it is reached, so a
+/// `String` or `Bytes` field in one is refused as a user struct would be.
+/// Issue #367: `check` skips std structs, because a std signature can name an
+/// instance the prune then drops; this is the check that sees what is left.
+pub fn check_reached_structs(program: &Program, project: &Project) -> Result<(), Diagnostic> {
+    let target = project.target();
+    if !target.is_freestanding() {
+        return Ok(());
+    }
+    let heap_ok = target.alloc().is_some() && target.dealloc().is_some();
+    for s in program.structs.iter().filter(|s| is_std_struct(&s.name)) {
+        for f in &s.fields {
+            if let Some(name) = heap_refusal(&f.ty, heap_ok) {
+                return Err(unavailable(
+                    format!(
+                        "the field '{}.{}' has type {}",
+                        s.name,
+                        f.name,
+                        heap_message(name, heap_ok)
+                    ),
+                    Span::new(0, 0),
+                    "",
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

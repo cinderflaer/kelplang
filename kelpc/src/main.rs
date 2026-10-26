@@ -430,6 +430,11 @@ fn build(
             }
         };
         timing.infer += prune_infer_start.elapsed();
+        // The reached std structs of the pruned program (issue #367).
+        if let Err(d) = freestanding::check_reached_structs(&typed, &loaded.project) {
+            sources.report(&d);
+            return false;
+        }
     }
 
     let borrow_start = Instant::now();
