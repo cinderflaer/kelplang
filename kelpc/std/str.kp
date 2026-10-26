@@ -2,6 +2,7 @@
 impl "std/mem"
 impl "std/option"
 impl "std/result"
+impl "std/iter"
 
 // BEGIN GENERATED: Unicode simple case table data (kelpc/tools/gen_case_table.pl)
 // Unicode 16.0.0 simple case mappings, one entry per code point that changes.
@@ -66,6 +67,41 @@ fun char_count(s: &str) => int {
         i = i + 1
     }
     return count
+}
+
+/// The bytes of a `str`, one `u8` per pass, in order, from `str.bytes`.
+///
+/// The iterator owns a copy of the text. A `datac` may store a `View` only
+/// when its owner is moved into the same value, and a borrowed `str` field
+/// would need lifetime syntax, so the text is copied once when the walk starts.
+pub datac ByteIter(
+    /// The text being walked, owned by the iterator.
+    var text: String,
+    /// The index of the next byte to yield.
+    var at: int,
+)
+
+impl iter.Iterator for ByteIter {
+    type Item = u8
+    /// Yields the next byte of the text, or `None` once every byte has been yielded.
+    fun mut Self.next() => option.Option<u8> {
+        val sv = self.text.view()
+        if self.at >= sv.len() {
+            return option.Option.None
+        }
+        val b = sv.get(self.at)
+        self.at += 1
+        return option.Option.Some(value = b)
+    }
+}
+
+/// The bytes of `s`, in order, for `for b in str.bytes(s) { ... }`.
+///
+/// Each item is one `u8`, so a multi-byte character yields its UTF-8 bytes
+/// one at a time and the count is `len(s)`, not `char_count(s)`. The empty
+/// string yields nothing. The walk copies `s` once, when it starts.
+pub fun bytes(s: &str) => ByteIter {
+    return ByteIter(text = String.from_str(s), at = 0)
 }
 
 /// The index of `needle` in `s`, or `None`. The old `Match(ok, at)` datac is

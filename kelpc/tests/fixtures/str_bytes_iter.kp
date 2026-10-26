@@ -1,0 +1,31 @@
+// std/str's byte iterator (issue #261): `for b in str.bytes(s)` walks the
+// bytes of a str in order, one u8 per pass. The empty string yields nothing and
+// a multi-byte character yields its UTF-8 bytes. `fmt.bytes` is imported beside
+// it to show the two `bytes` names do not clash.
+impl "std/str"
+impl "std/fmt"
+impl "std/iter"
+
+fun main() {
+    // h, e with an acute accent (two bytes: 195 169), l, l, o
+    for b in str.bytes("hé") {
+        print(b)
+    }
+    var empty = 0
+    for _b in str.bytes("") {
+        empty += 1
+    }
+    print(empty)
+    print(iter.count(str.bytes("héllo")))
+    print(iter.count(str.bytes("")))
+    print(fmt.bytes(Bytes.from_str("hi")))
+}
+
+// stdout-begin
+// stdout: 104
+// stdout: 195
+// stdout: 169
+// stdout: 0
+// stdout: 6
+// stdout: 0
+// stdout: 68 69
