@@ -1,0 +1,9 @@
+name = "freestandingstringstructreached"
+
+# Issue #367: a program that constructs a struct with a String field in a
+# freestanding build is still refused by name, as before.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

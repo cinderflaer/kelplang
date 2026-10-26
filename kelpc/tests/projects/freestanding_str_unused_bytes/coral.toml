@@ -1,0 +1,9 @@
+name = "freestandingstrunusedbytes"
+
+# Issue #367: `std/str` is loaded (its `impl` line is here) but `str.bytes` is
+# never called. The struct its signature names must not be refused.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

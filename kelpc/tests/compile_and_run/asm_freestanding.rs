@@ -360,6 +360,55 @@ pub(crate) fn the_str_search_and_replace_edges_are_unchanged() {
 
 /// Kernel stage 7's rejection half: `std/str` is only partly on the freestanding
 /// allowed set, so its other functions are refused at the call, by name. The check runs before any backend is named, so the message is the one `kelpc build` gives.
+/// Issue #367: a freestanding project that loads `std/str` and never calls
+/// `str.bytes` builds. The iterator's struct is named by `bytes`'s signature,
+/// so it exists in the program, but nothing reaches it, and the check must not
+/// refuse its `String` field.
+#[test]
+pub(crate) fn a_freestanding_str_project_that_never_calls_bytes_builds() {
+    if !have_ld_lld() {
+        println!("skipping the unused str bytes test: 'ld.lld' is not on PATH");
+        return;
+    }
+    let dir = "freestanding_str_unused_bytes";
+    let bin = out_path(dir);
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .arg("build")
+        .arg(project(dir))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding build of '{dir}' failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+}
+
+/// Issue #367's second half: a program that declares and constructs a struct
+/// with a `String` field is still refused without an allocator, by name.
+#[test]
+pub(crate) fn a_reached_string_field_struct_is_still_refused_in_a_freestanding_build() {
+    let dir = "freestanding_string_struct_reached";
+    let bin = out_path(dir);
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .arg("build")
+        .arg(project(dir))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(!build.status.success(), "'{dir}' built, but its String field should be refused");
+    assert!(
+        stderr.contains("has type 'String', which is unavailable in a freestanding build without an allocator"),
+        "'{dir}' was refused with the wrong message:\n{stderr}"
+    );
+}
+
 #[test]
 pub(crate) fn a_std_str_function_outside_the_freestanding_five_is_refused() {
     assert_rejected_with(

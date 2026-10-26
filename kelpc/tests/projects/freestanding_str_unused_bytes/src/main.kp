@@ -1,0 +1,9 @@
+// `std/str` is loaded and `str.bytes` is never called. The iterator's struct
+// is named by the signature of `bytes`, so it is instantiated in this program,
+// but nothing reaches it, and the freestanding check must not refuse it.
+impl "std/str"
+
+section(".text.boot") fun kmain() {
+    var n: int = str.len("kelp")
+    while true { n = n + 1 }
+}

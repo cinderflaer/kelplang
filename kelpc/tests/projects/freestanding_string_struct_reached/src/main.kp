@@ -1,0 +1,9 @@
+// The struct `Holder` is declared and constructed by this program, so its
+// String field is refused without an allocator, with the same message as
+// before issue #367.
+datac Holder(val name: String)
+
+section(".text.boot") fun kmain() {
+    val h = Holder(name = String.from_str("kelp"))
+    while true { }
+}
