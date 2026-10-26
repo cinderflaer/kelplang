@@ -125,3 +125,110 @@ fn every_shared_file_is_linked_and_every_link_points_into_shared() {
         unlinked.join("\n")
     );
 }
+
+/// Every example module that opens with a comment opens with a `//!` module
+/// header: the doc form that `kelpc doc` reads as the module's introduction,
+/// not a `//` note that the lint counts as a comment run. The header is
+/// accepted by the formatter, and `kelpc doc` renders its first line into the
+/// module's page (issue #306).
+#[test]
+fn every_example_module_opens_with_a_module_header() {
+    let mut all = Vec::new();
+    collect_every_kp(&examples(), &mut all);
+    all.sort();
+    let mut problems = Vec::new();
+    for path in all {
+        let text = fs::read_to_string(&path).expect("reading an example source");
+        let first = text.lines().next().unwrap_or("");
+        if !first.starts_with("//") {
+            // A file with no header at all has nothing to convert.
+            continue;
+        }
+        let Some(intro) = first.strip_prefix("//!") else {
+            problems.push(format!("{}: first line is a '//' comment, not a '//!' header", relative(&path)));
+            continue;
+        };
+        let intro = intro.trim();
+
+        // `fmt` may still reflow other parts of a file that were never
+        // formatted, so the check is that it leaves the header alone: format a
+        // copy, then compare the leading `//!` block.
+        let copy = std::env::temp_dir()
+            .join(format!("kelpc-module-header-fmt-{}.kp", std::process::id()));
+        fs::write(&copy, &text).expect("writing a copy for kelpc fmt");
+        let fmt = std::process::Command::new(env!("CARGO_BIN_EXE_kelpc"))
+            .args(["fmt", "-w"])
+            .arg(&copy)
+            .output()
+            .expect("spawn kelpc fmt");
+        let formatted = fs::read_to_string(&copy).unwrap_or_default();
+        let _ = fs::remove_file(&copy);
+        if !fmt.status.success() {
+            problems.push(format!(
+                "{}: kelpc fmt refuses it: {}",
+                relative(&path),
+                String::from_utf8_lossy(&fmt.stderr).trim()
+            ));
+        } else if header_of(&formatted) != header_of(&text) {
+            problems.push(format!("{}: kelpc fmt changes the module header", relative(&path)));
+        }
+
+        let out = std::env::temp_dir().join(format!("kelpc-module-header-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        let doc = std::process::Command::new(env!("CARGO_BIN_EXE_kelpc"))
+            .args(["doc"])
+            .arg(&path)
+            .arg("-o")
+            .arg(&out)
+            .output()
+            .expect("spawn kelpc doc");
+        if !doc.status.success() {
+            problems.push(format!(
+                "{}: kelpc doc refuses it: {}",
+                relative(&path),
+                String::from_utf8_lossy(&doc.stderr).trim()
+            ));
+        } else {
+            let mut rendered = String::new();
+            for entry in fs::read_dir(&out).expect("reading the doc output") {
+                let p = entry.expect("reading a doc page").path();
+                rendered.push_str(&fs::read_to_string(&p).unwrap_or_default());
+            }
+            if !intro.is_empty() && !rendered.contains(intro) {
+                problems.push(format!(
+                    "{}: kelpc doc does not render the header's first line",
+                    relative(&path)
+                ));
+            }
+        }
+        let _ = fs::remove_dir_all(&out);
+    }
+    assert!(
+        problems.is_empty(),
+        "{} example modules without a usable module header:\n{}",
+        problems.len(),
+        problems.join("\n")
+    );
+}
+
+/// Every `.kp` under `dir`, including the shared library trees such as
+/// `polyp/`, skipping fetched and built output and not descending into links.
+fn collect_every_kp(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).expect("reading an example directory") {
+        let path = entry.expect("reading an example entry").path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name == "deps" || name == "build" || name == "target" {
+            continue;
+        }
+        if path.is_dir() && !path.is_symlink() {
+            collect_every_kp(&path, out);
+        } else if path.extension() == Some("kp".as_ref()) {
+            out.push(path);
+        }
+    }
+}
+
+/// The leading `//!` lines of a source file.
+fn header_of(text: &str) -> Vec<&str> {
+    text.lines().take_while(|l| l.starts_with("//!")).collect()
+}

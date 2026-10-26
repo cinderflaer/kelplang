@@ -1,15 +1,8 @@
-// Kernel gap 4's runtime proof: QEMU's RAM starts zeroed, so a plain read of a
-// `.bss` byte proves nothing about the compiler's `_start` clear loop. This
-// project has the image load a 64-byte marker into a section the linker script
-// places inside `[__bss_start, __bss_end)`, so `bss clear` can only be printed
-// if `_start` really erased those bytes before it called this entry.
-//
-// The marker is defined by assembler directives rather than by a
-// `section("...")` const, because LLVM's own section-name heuristic turns any
-// `.bss.*` name into `NOBITS`: a const there loses its initializer and the
-// image carries no pattern at all. The explicit `@progbits` is what puts these
-// 64 bytes in the image's loaded `.bss`. The address is then read with inline
-// asm, because the language still has no address-of-const form.
+//! Kernel gap 4's runtime proof: QEMU's RAM starts zeroed, so a plain read of a
+//! `.bss` byte proves nothing about the compiler's `_start` clear loop. This
+//! project has the image load a 64-byte marker into a section the linker script
+//! places inside `[__bss_start, __bss_end)`, so `bss clear` can only be printed
+//! if `_start` really erased those bytes before it called this entry.
 impl "std/str"
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 

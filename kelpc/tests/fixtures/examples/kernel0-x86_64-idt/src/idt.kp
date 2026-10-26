@@ -1,19 +1,5 @@
-// The x86-64 IDT, the four CPU exception gates and the timer gate
-// (kernel stage 22, `language/kernel.md` (kelp wiki)).
-//
-// An exception taken in ring 0 pushes three words - `RIP`, `CS` and `RFLAGS` -
-// because no privilege change happens; vectors 8, 10..14 and 17 push an error
-// code below them, and 13 and 14 are the two of those this kernel installs. The
-// other gates push a zero in the error slot so every vector reaches one frame
-// layout, which is why the `push 0` at the top of a `#DE`/`#UD`/timer gate is
-// not a mistake.
-//
-// The gate then pushes the general registers (oldest push at the highest
-// offset, because the stack grows down) and the vector number, moves the frame
-// base into `rdi`, aligns `rsp`, calls the dispatcher, restores the registers
-// and ends in `iretq`. The numbers below are that contract and nothing in the
-// compiler checks them: `layout_ok` checks them at boot and
-// `kelpc/tests/projects/x86_idt_layout` pins them on both backends.
+//! The x86-64 IDT, the four CPU exception gates and the timer gate
+//! (kernel stage 22, `language/kernel.md` (kelp wiki)).
 impl "pic"
 impl "uart"
 

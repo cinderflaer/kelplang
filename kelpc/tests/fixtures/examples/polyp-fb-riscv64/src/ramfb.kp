@@ -1,21 +1,6 @@
-// Register the framebuffer with QEMU's `ramfb` device through fw_cfg (Polyp v3 stage 4's stretch).
-//
-// QEMU's riscv64 `virt` machine puts the fw_cfg device at 0x10100000: an 8-byte data register at
-// +0, a 2-byte selector at +8 and the 8-byte DMA address register at +16, all three big-endian
-// (`hw/nvram/fw_cfg.c`'s memory ops carry `DEVICE_BIG_ENDIAN`). This module uses only the DMA
-// interface: it reads a whole file directory into a static and then writes `etc/ramfb`, whose
-// 28-byte contents are this project's framebuffer. Once that write lands QEMU scans out the memory
-// it names, so a monitor `screendump` shows what the renderer drew.
-//
-// Three facts the register protocol depends on, all read out of QEMU's `fw_cfg_dma_transfer`: the
-// 16-byte DMA descriptor in guest memory is big-endian (`be32_to_cpu`/`be64_to_cpu` on read,
-// `stl_be_dma` on the control write-back), the control word's low bits are `qemu_fw_cfg.h`'s
-// ERROR 0x01, READ 0x02, SKIP 0x04, SELECT 0x08 and WRITE 0x10, and the selector is the control's
-// high 16 bits. A read past the end of a file is zero-filled rather than failed, which is what
-// lets one fixed-size read fetch the whole directory. Every descriptor access is volatile: the
-// device writes the control word back into the descriptor, so the compiler must not fold the poll.
-//
-// `kelp wiki page libraries/polyp-freestanding.md` records how far this got.
+//! Register the framebuffer with QEMU's `ramfb` device through fw_cfg (Polyp v3 stage 4's stretch).
+//!
+//! `kelp wiki page libraries/polyp-freestanding.md` records how far this got.
 impl "std/str"
 
 const FW_CFG_BASE: usize = 0x10100000

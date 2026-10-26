@@ -1,9 +1,4 @@
-// A headless platform that also writes each presented frame to a PPM file (Polyp v3 stage 3).
-//
-// With `POLYP_DUMP_DIR` set, every `present` writes `<dir>/frame_0.ppm`, `frame_1.ppm`, ... and
-// then records the frame as `HeadlessPlatform` does; with the variable unset it is exactly a
-// `HeadlessPlatform`. It is the "look at a frame" platform for a developer, the same job
-// `soft/debug.kp` does for the raster, and it is hosted-only for the same reason: `std/fs`.
+//! A headless platform that also writes each presented frame to a PPM file (Polyp v3 stage 3).
 impl "deps/polyp/backends/soft/soft/damage"
 impl "deps/polyp/backends/soft/soft/debug" caps(fs = ["/**"])
 impl "deps/polyp/backends/soft/soft/event"

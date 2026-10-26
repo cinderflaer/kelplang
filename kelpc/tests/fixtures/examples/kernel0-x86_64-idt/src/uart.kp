@@ -1,11 +1,7 @@
-// The COM1 UART QEMU's x86 machine puts at port 0x3F8, plus the integer
-// printing the trap reports need. Poll the Line Status Register at 0x3FD for
-// bit 5 (THR empty) before a byte goes to the Transmit Holding Register at
-// 0x3F8, so the driver never overruns the FIFO.
-//
-// Text arrives as a `str`, the same type a hosted program writes, and
-// `str.len`/`str.byte` are the compiler's own byte loops, so no `strlen` and no
-// `[u8; N]` copy sits between the caller and the port.
+//! The COM1 UART QEMU's x86 machine puts at port 0x3F8, plus the integer
+//! printing the trap reports need. Poll the Line Status Register at 0x3FD for
+//! bit 5 (THR empty) before a byte goes to the Transmit Holding Register at
+//! 0x3F8, so the driver never overruns the FIFO.
 impl "std/str"
 impl "port"
 

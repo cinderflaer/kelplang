@@ -1,9 +1,9 @@
-// The tiny driver for kernel stage 18: it takes a `Line` and a `Frame` and
-// prints them. The two parameters are the receipts for the entry's claims, and
-// the entry's `impl "drv" caps(...)` line is what gives this module the `irq`
-// and `frames` domains. Without that grant `line.number()`, `frame.addr()` and
-// `frame.offset(...)` would not resolve: every item of a capability module
-// needs the domain, so possession of the value is not enough to read it.
+//! The tiny driver for kernel stage 18: it takes a `Line` and a `Frame` and
+//! prints them. The two parameters are the receipts for the entry's claims, and
+//! the entry's `impl "drv" caps(...)` line is what gives this module the `irq`
+//! and `frames` domains. Without that grant `line.number()`, `frame.addr()` and
+//! `frame.offset(...)` would not resolve: every item of a capability module
+//! needs the domain, so possession of the value is not enough to read it.
 impl "std/irq"
 impl "std/frame"
 impl "uart"

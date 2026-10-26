@@ -1,17 +1,9 @@
-// The message queue. A GTK callback cannot hold the loop's state, so it posts a
-// small integer here and the loop, which owns the state, turns the integer back
-// into a message. Both ends run on the thread that owns the GTK main context
-// (`g_signal_connect` invokes the handler from `g_main_context_iteration`, which
-// the loop calls), so there is no locking, and the counters below are the whole
-// of the state.
-//
-// The rings are fixed size on purpose: they bound what a burst of clicks can
-// buffer, and the head/count pair tells the full and empty cases apart without a
-// third sentinel. A post into a full ring is dropped, never overwriting a pending
-// one.
-//
-// The state is `static mut`, so the consumer lists this module under
-// `[unsafe] modules` in its coral.toml. Every access is inside an `unsafe` block.
+//! The message queue. A GTK callback cannot hold the loop's state, so it posts a
+//! small integer here and the loop, which owns the state, turns the integer back
+//! into a message. Both ends run on the thread that owns the GTK main context
+//! (`g_signal_connect` invokes the handler from `g_main_context_iteration`, which
+//! the loop calls), so there is no locking, and the counters below are the whole
+//! of the state.
 impl "std/str"
 
 const CAPACITY: usize = 64

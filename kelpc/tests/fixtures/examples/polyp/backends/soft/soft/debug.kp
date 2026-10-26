@@ -1,14 +1,4 @@
-// Hosted debugging output for the software raster (Polyp v3 stage 2).
-//
-// `dump_ppm` writes a binary `P6` PPM of a framebuffer, for a developer who wants to look at a
-// frame. It is a *hosted* module on purpose: it is the only one in `soft/` that names `std/fs`,
-// and a freestanding image never imports it, so the freestanding build never sees the module at
-// all. Stage 4's project imports `fb`/`draw`/`font`/`damage` and not this.
-//
-// It reads raw pixels (a framebuffer is what it dumps), so a project that imports it lists it
-// under `[unsafe] modules`. The integer-to-decimal writer is spelled out rather than reached
-// through `std/fmt`, because a PPM header is five small numbers and a `String` per number would
-// allocate for nothing.
+//! Hosted debugging output for the software raster (Polyp v3 stage 2).
 impl "deps/polyp/backends/soft/soft/fb"
 impl "std/fs"
 

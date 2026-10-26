@@ -1,13 +1,4 @@
-// Polyp's headless backend: the core's loop with no display at all.
-//
-// It applies a patch list to an in-memory retained tree, delivers a scripted event list, and keeps
-// the same widget counters the GTK backend keeps, so the Elm loop and a whole program can be
-// tested in the plain development shell, on either compiler backend, with no X server and no GTK.
-// `dump` renders the retained tree as text for an assertion.
-//
-// Focus and the entry text are modelled rather than delegated: a programmatic edit writes the
-// entry's text and then posts that entry's id, which is the signal a real entry would have
-// emitted, and a patch leaves a focused entry's text alone exactly as GTK's backend does.
+//! Polyp's headless backend: the core's loop with no display at all.
 impl "deps/polyp/core/core"
 impl "std/fmt"
 impl "std/option"

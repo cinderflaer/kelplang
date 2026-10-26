@@ -1,9 +1,9 @@
-// The display a soft backend draws onto (Polyp v3 stage 3).
-//
-// This is the whole contract between the framework and an operating system: four functions and
-// the framebuffer the platform owns. `PLATFORM.md` is the plain-terms version.
-// Nothing here allocates, dereferences a pixel or names a `std` module, so the module is off a
-// consumer's `[unsafe]` list and a freestanding platform may implement it.
+//! The display a soft backend draws onto (Polyp v3 stage 3).
+//!
+//! This is the whole contract between the framework and an operating system: four functions and
+//! the framebuffer the platform owns. `PLATFORM.md` is the plain-terms version.
+//! Nothing here allocates, dereferences a pixel or names a `std` module, so the module is off a
+//! consumer's `[unsafe]` list and a freestanding platform may implement it.
 impl "deps/polyp/backends/soft/soft/damage"
 impl "deps/polyp/backends/soft/soft/event"
 impl "deps/polyp/backends/soft/soft/fb"

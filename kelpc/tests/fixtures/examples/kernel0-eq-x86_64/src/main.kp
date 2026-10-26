@@ -1,11 +1,8 @@
-// Kernel stage 23 on x86-64: the same three shapes as `examples/kernel0-eq`
-// (a `String`-field `datac` with equality and a derived key pair, `View.slice`
-// and `View.to_string`, and a `std/regex` match) booted on QEMU's x86-64 `q35`
-// machine through the Xen PVH note. Only the UART differs: COM1 is port I/O
-// rather than memory-mapped, so there is no `Ptr` and no `mmio` grant.
-//
-// The first byte out is a newline, because SeaBIOS prints "Booting from ROM.."
-// with no newline of its own and the boot test compares whole lines.
+//! Kernel stage 23 on x86-64: the same three shapes as `examples/kernel0-eq`
+//! (a `String`-field `datac` with equality and a derived key pair, `View.slice`
+//! and `View.to_string`, and a `std/regex` match) booted on QEMU's x86-64 `q35`
+//! machine through the Xen PVH note. Only the UART differs: COM1 is port I/O
+//! rather than memory-mapped, so there is no `Ptr` and no `mmio` grant.
 impl "std/str"
 impl "std/regex"
 impl "std/option"

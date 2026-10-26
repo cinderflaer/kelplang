@@ -1,18 +1,4 @@
-// Polyp v4 stage 4's tests: memoised subtrees, in plain Kelp with no display.
-//
-// The program is a scrolled list of rows. `view_memo` builds every row as `k.memo(key, deps, row_view)`;
-// `view_plain` builds the same rows with `k.keyed`. Every scenario applies the same model changes to
-// both and requires the two screens to have the same framebuffer checksum, so memoisation can only
-// ever skip work, never change a pixel.
-//
-//   rows      200 rows, one changes: 1 view call and 199 hits (and the first frame is 200 misses)
-//   deps      a deps change rebuilds exactly that row; a deps value equal to the old one is a hit
-//   reorder   moving a row keeps every memo a hit (identity is the key) and the screen equal
-//   remove    a removed row's record is dropped: bringing the key back builds it again
-//   nested    a memo inside a memo row: the outer misses on a deps change, the inner hits when its own
-//             deps did not change
-//   click     a press on a widget inside a memo row reaches the model
-//   nostore   the plain loop (no store) draws the same screen, just without skipping anything
+//! Polyp v4 stage 4's tests: memoised subtrees, in plain Kelp with no display.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/a11y"
 impl "deps/polyp/backends/soft/soft/fb"

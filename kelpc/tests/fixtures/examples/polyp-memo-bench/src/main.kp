@@ -1,13 +1,11 @@
-// The memoisation benchmark (Polyp v4 stage 4), hosted and headless.
-//
-// A scrolled list of rows at 800x600; every frame one row's title changes and the frame runs the
-// whole loop body: view, diff, apply, layout, paint. Two variants: `plain` (every row rebuilt by `view`
-// and compared by the diff) and `memo` (every row is `k.memo(..)`, so 1 row is rebuilt and the rest are
-// hits). It prints, per variant: rows, frames, memoised view calls, hits, pixels written, the median
-// microseconds per frame, and the last run's mean microseconds in `view` and in diff+apply; the times are one
-// development host's at one moment and noisy (`kelp wiki page libraries/polyp.md` quotes a run).
-//
-// `POLYP_BENCH_QUICK` shortens a run to a handful of frames so a test can bound it.
+//! The memoisation benchmark (Polyp v4 stage 4), hosted and headless.
+//!
+//! A scrolled list of rows at 800x600; every frame one row's title changes and the frame runs the
+//! whole loop body: view, diff, apply, layout, paint. Two variants: `plain` (every row rebuilt by `view`
+//! and compared by the diff) and `memo` (every row is `k.memo(..)`, so 1 row is rebuilt and the rest are
+//! hits). It prints, per variant: rows, frames, memoised view calls, hits, pixels written, the median
+//! microseconds per frame, and the last run's mean microseconds in `view` and in diff+apply; the times are one
+//! development host's at one moment and noisy (`kelp wiki page libraries/polyp.md` quotes a run).
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/fb"
 impl "deps/polyp/backends/soft/soft/headless_platform"

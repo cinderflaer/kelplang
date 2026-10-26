@@ -1,13 +1,8 @@
-// x86 port I/O, the byte form only: `in al, dx` and `out dx, al` are the two
-// instructions the compiler's constraint vocabulary can spell, and it has no
-// fixed-register constraint, so the template parks the port in `dx` and the
-// byte in `al` itself and declares both clobbered. A port is a number, not an
-// address, so nothing here needs an `mmio` grant.
-//
-// The 8259 PIC and the 8254 PIT are driven through this module; COM1 has its
-// own copy of the same two functions, exactly as `examples/kernel0-x86_64`'s
-// driver has, because a driver that talks to one device should not have to
-// import another's register window.
+//! x86 port I/O, the byte form only: `in al, dx` and `out dx, al` are the two
+//! instructions the compiler's constraint vocabulary can spell, and it has no
+//! fixed-register constraint, so the template parks the port in `dx` and the
+//! byte in `al` itself and declares both clobbered. A port is a number, not an
+//! address, so nothing here needs an `mmio` grant.
 
 pub fun inb(port: u16) => u8 {
     val v: u8 = unsafe {

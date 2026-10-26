@@ -1,7 +1,7 @@
-// The trap half of kernel 0: `kmain` installs the vector, takes a machine-mode
-// `ecall` (mcause 11), and continues after the handler returns. The `ecall` is
-// inline asm in an unsafe block; the handler restores every register it touches,
-// so the compiler may keep values live across it with no clobber list.
+//! The trap half of kernel 0: `kmain` installs the vector, takes a machine-mode
+//! `ecall` (mcause 11), and continues after the handler returns. The `ecall` is
+//! inline asm in an unsafe block; the handler restores every register it touches,
+//! so the compiler may keep values live across it with no clobber list.
 impl "trap"
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 

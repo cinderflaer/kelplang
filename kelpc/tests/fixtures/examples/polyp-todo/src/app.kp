@@ -1,11 +1,11 @@
-// The todo list program itself, with no display: the model, the view, the update, the scripted
-// input sequence and the report. `examples/polyp-todo/src/main.kp` runs it on the GTK backend,
-// `examples/polyp-core-test` runs the same script on the headless one and
-// `examples/polyp-fb-riscv64`/`examples/polyp-fb-x86_64` run it on bare metal, so the counters and
-// the pixels the four runs compare are the same program's. The report writes through a `fun (str)`
-// the caller supplies rather than through `print`, because a freestanding build refuses `print`
-// wherever it appears in a module it compiles and this module is the program both sides run
-// (`plan/polyp-v3.md`, stage 4).
+//! The todo list program itself, with no display: the model, the view, the update, the scripted
+//! input sequence and the report. `examples/polyp-todo/src/main.kp` runs it on the GTK backend,
+//! `examples/polyp-core-test` runs the same script on the headless one and
+//! `examples/polyp-fb-riscv64`/`examples/polyp-fb-x86_64` run it on bare metal, so the counters and
+//! the pixels the four runs compare are the same program's. The report writes through a `fun (str)`
+//! the caller supplies rather than through `print`, because a freestanding build refuses `print`
+//! wherever it appears in a module it compiles and this module is the program both sides run
+//! (`plan/polyp-v3.md`, stage 4).
 impl "deps/polyp/core/core"
 impl "std/str"
 

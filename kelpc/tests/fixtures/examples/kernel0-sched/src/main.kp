@@ -1,9 +1,5 @@
-// Kernel stage 21: the machine timer interrupt and a preemptive round-robin
-// scheduler, in machine mode with no paging (`language/kernel.md` (kelp wiki)).
-//
-// The boot is short because everything interesting is a trap: install the
-// vector, build the task table and start the scheduler. From then on the only
-// way this code runs again is the panic handler.
+//! Kernel stage 21: the machine timer interrupt and a preemptive round-robin
+//! scheduler, in machine mode with no paging (`language/kernel.md` (kelp wiki)).
 impl "sched"
 impl "timer" caps(mmio = ["0x2004000+0x8", "0x200BFF8+0x8"])
 impl "trap"

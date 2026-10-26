@@ -1,18 +1,4 @@
-// Polyp v4 stage 1's tests: timers and animation, in plain Kelp with no display.
-//
-// Every scenario drives the soft backend on a `HeadlessPlatform` whose clock the test sets, so the
-// numbers are exact and the same on every backend. The Rust test pins the whole output.
-//
-//   easing    the integer easings at known points
-//   progress  a progress bar animating 0..1000 permille over 500 ms: exact values at exact ticks,
-//             damage only over the bar, and `wants_frames` true while it moves and false after
-//   restart   the same `Anim` on the next view keeps running, a different one restarts
-//   spacer    a spacer's height animation re-lays-out what is below it
-//   opacity   an opacity animation blends the widget's colours toward the background
-//   offset    an offset animation damages the old and the new place
-//   every     a repeating timer fires at the right ticks and skips the periods it missed
-//   after     a one-shot fires once, and re-arms when the state removes it and adds it again
-//   idle      a UI at rest has `wants_frames` false and presents nothing
+//! Polyp v4 stage 1's tests: timers and animation, in plain Kelp with no display.
 impl "deps/polyp/core/anim"
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/event"

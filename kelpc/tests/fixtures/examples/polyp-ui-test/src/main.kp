@@ -1,17 +1,4 @@
-// Polyp v3 stage 3's tests, in plain Kelp with no display.
-//
-// Five sections, all deterministic and all printed for the Rust test to pin:
-//
-//   hit     hit-testing every interactive widget of a small tree by its own centre
-//   order   the Tab order (interactive widgets depth first) and Tab / Shift-Tab wrapping
-//   edit    entry editing: insert, left, right, home, delete, end, backspace, with the caret
-//   damage  a same-width text change damages its own rectangle and leaves every pixel outside
-//           it identical, a hover change damages only the hovered widget, and an idle frame
-//           presents nothing
-//   layout  a same-width text change re-measures one node and arranges none; a wider one does
-//
-// `POLYP_UI_TEST=ppm` runs the PpmPlatform acceptance instead, which the Rust test points at a
-// temporary directory and then checks the file it wrote.
+//! Polyp v3 stage 3's tests, in plain Kelp with no display.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/damage"
 impl "deps/polyp/backends/soft/soft/event"

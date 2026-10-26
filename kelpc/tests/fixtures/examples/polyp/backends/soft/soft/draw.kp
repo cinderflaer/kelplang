@@ -1,26 +1,4 @@
-// The drawing primitives (Polyp v3 stage 2).
-//
-// Every function here clips to `clip.top() ∩ fb.bounds()` before it touches a pixel, and
-// returns the number of pixels it wrote, so stage 5 can assert a frame's cost against a budget.
-// Nothing allocates: scratch is a stack array in the one function that needs one
-// (`blit_mask8`'s caller, `font.draw_glyph`), and everything else is integer arithmetic over
-// the `Rect`/`Fb` values `fb.kp` exposes.
-//
-// The primitives are split so that a full shape is a set of *disjoint* spans: `stroke_rect`
-// paints four bands that cannot overlap, `fill_round_rect` paints one span per row, and
-// `stroke_round_rect` paints the two spans a row has outside its inner shape. No pixel is
-// written twice, which is what makes the returned count exact rather than approximate.
-//
-// The blend is source-over with an 8-bit alpha, integer and exact. Per 8-bit channel:
-//
-//     out = (src * a + dst * (255 - a) + 127) / 255
-//
-// in `u64`, so `a == 255` returns `src` exactly and `a == 0` returns `dst` exactly. All four
-// channels blend, alpha included. The `+ 127` is the round-to-nearest term; the test recomputes
-// the same expression with full-precision integers and compares pixel for pixel.
-//
-// This module writes through `fb`'s raw pixel access, so a project that imports it lists it
-// under `[unsafe] modules`.
+//! The drawing primitives (Polyp v3 stage 2).
 impl "deps/polyp/backends/soft/soft/fb"
 
 pub const MAX_CLIP: int = 8

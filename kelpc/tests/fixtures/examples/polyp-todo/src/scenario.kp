@@ -1,15 +1,5 @@
-// The scripted todo scenario, shared by every Polyp run: the hosted soft backend, the two
-// bare-metal framebuffer projects (Polyp v3 stage 4).
-//
-// `drive` is the whole scenario as one function. It builds the application's initial state and
-// tree, paints the first frame, schedules every `app.script()` event on the backend's programmatic
-// channel, then calls `soft_backend.frame` once per step until the program quits, emitting one line
-// per step. `SoftBackend.pump` releases exactly one queued `core.Event` per frame, so step 0 is the
-// first frame and step n is the frame that ran scripted event n.
-//
-// `emit` is the one thing a run may do differently: a hosted entry prints the line, a kernel writes
-// the bytes to its UART. The line itself is built here, with integer formatting only (`str.from_i64`
-// and a hex table), so the two sides cannot disagree about how the same checksum reads.
+//! The scripted todo scenario, shared by every Polyp run: the hosted soft backend, the two
+//! bare-metal framebuffer projects (Polyp v3 stage 4).
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/fb"
 impl "deps/polyp/backends/soft/soft/platform"

@@ -1,15 +1,4 @@
-// Polyp's GTK4 backend: the core's patch list applied to a live GTK widget tree.
-//
-// This is v2's widget code moved behind the `core.Backend` interface. It holds the widgets, the
-// real signal handlers and the counters; it never sees a `Node`, only the `Props` a patch carries,
-// so the loop above it has no idea a display is involved at all. `gtk.kp` is the binding and
-// `queue.kp` the message ring the signal handlers post into.
-//
-// A widget handle is never stored. A hosted build refuses a resource value inside a `List`, so the
-// tree keeps only scalars: a node's kind, handler, interactive id, key, classes and children. A
-// node's widget is found by the scalar that names it, its index among its parent's children, which
-// GTK keeps in the order the tree was built in. Every handle is a local, read from the live tree
-// when a patch needs it.
+//! Polyp's GTK4 backend: the core's patch list applied to a live GTK widget tree.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/gtk/gtk"
 impl "deps/polyp/backends/gtk/queue"

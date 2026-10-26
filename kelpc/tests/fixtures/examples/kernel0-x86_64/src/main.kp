@@ -1,9 +1,9 @@
-// Kernel 0 on x86-64: the smallest thing that boots on bare metal and says so.
-// The message is a `str` literal in read-only data; the driver walks it one
-// byte at a time with `str.len`/`str.byte`. The leading newline separates the
-// line from SeaBIOS' own "Booting from ROM.." line, which has no newline of its
-// own, so the UART output the boot test reads has the greeting on a line of its
-// own.
+//! Kernel 0 on x86-64: the smallest thing that boots on bare metal and says so.
+//! The message is a `str` literal in read-only data; the driver walks it one
+//! byte at a time with `str.len`/`str.byte`. The leading newline separates the
+//! line from SeaBIOS' own "Booting from ROM.." line, which has no newline of its
+//! own, so the UART output the boot test reads has the greeting on a line of its
+//! own.
 impl "uart"
 
 section(".text.boot") fun kmain() {

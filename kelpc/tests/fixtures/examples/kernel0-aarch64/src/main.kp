@@ -1,6 +1,6 @@
-// Kernel 0 on aarch64: the smallest thing that boots on bare metal and says
-// so. The message is a `str` literal in read-only data; the driver walks it one
-// byte at a time with `str.len`/`str.byte`.
+//! Kernel 0 on aarch64: the smallest thing that boots on bare metal and says
+//! so. The message is a `str` literal in read-only data; the driver walks it one
+//! byte at a time with `str.len`/`str.byte`.
 impl "uart" caps(mmio = ["0x09000000+0x1000"])
 
 section(".text.boot") fun kmain() {

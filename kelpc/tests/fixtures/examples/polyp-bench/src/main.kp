@@ -1,14 +1,10 @@
-// The Polyp benchmark (Polyp v3 stage 5), hosted and headless.
-//
-// Five scripted scenarios run on the soft backend at 800x600 with a 200-row todo list, each five
-// times. Per scenario it prints: the number of frames, the pixels the primitives wrote across those
-// frames, the rectangles presented, the allocation sites the backend accounted for, and the median
-// and worst microseconds per frame. The counters are exact and machine-independent; the times are
-// the host's and are the numbers `plan/polyp-v3.md` quotes.
-//
-// The frame counts are `scenario_frames`: 100 for the typing scenario and 50 for the checkbox one
-// (the counts their names claim), 40 for the scroll and 30 for the resize and repaint, so the whole
-// run fits inside the bounded runner the test suite uses.
+//! The Polyp benchmark (Polyp v3 stage 5), hosted and headless.
+//!
+//! Five scripted scenarios run on the soft backend at 800x600 with a 200-row todo list, each five
+//! times. Per scenario it prints: the number of frames, the pixels the primitives wrote across those
+//! frames, the rectangles presented, the allocation sites the backend accounted for, and the median
+//! and worst microseconds per frame. The counters are exact and machine-independent; the times are
+//! the host's and are the numbers `plan/polyp-v3.md` quotes.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/damage"
 impl "deps/polyp/backends/soft/soft/event"

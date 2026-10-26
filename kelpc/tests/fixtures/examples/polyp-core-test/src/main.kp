@@ -1,13 +1,4 @@
-// Polyp v3 stage 1's tests, in plain Kelp with no display.
-//
-// The first half asserts the pure diff: identical trees produce nothing, a text change produces
-// one Update, a keyed reorder produces Moves and no Create or Remove, an insert creates, a remove
-// removes, a kind change replaces, and a duplicate key panics naming the key (run separately, with
-// POLYP_TEST=dupkey, because a panic ends the process).
-//
-// The second half runs the todo example's own program on the headless backend with the same
-// scripted input `examples/polyp-todo/smoke.sh` gives the GTK backend, and prints the same summary,
-// so the two backends' counters can be compared line by line.
+//! Polyp v3 stage 1's tests, in plain Kelp with no display.
 impl "deps/polyp/core/core"
 impl "deps/polyp/core/diag"
 impl "deps/polyp/backends/headless/headless_backend"

@@ -1,8 +1,4 @@
-// The `static mut [u32; N]` framebuffer shape, which is what a kernel hands its console.
-//
-// `fb.new` is the constructor; viewing a static is `Ptr.from_mut(FRAME)` (unsafe, because it is
-// a `static mut`), a `.cast<u32>()` binding, and the size and stride the caller knows. This
-// module is the audit entry for that path in the test project, and `main` only calls `run`.
+//! The `static mut [u32; N]` framebuffer shape, which is what a kernel hands its console.
 impl "deps/polyp/backends/soft/soft/fb"
 
 static mut FRAME: [u32; 64] = [0; 64]

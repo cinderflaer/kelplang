@@ -1,11 +1,4 @@
-// Polyp v4 stage 3's tests: the accessibility tree, in plain Kelp with no display.
-//
-//   dump      the todo app's tree as a golden text dump
-//   press     pressing "add" through the tree ends in the same model and focus as a click at its bounds
-//   focus     focusing an entry by id
-//   set_value setting an entry's text through the tree reaches the model
-//   toggle    a checkbox toggles through its id (and is named after the label next to it)
-//   disabled  a disabled button and entry reject every action, are skipped by Tab and ignore clicks
+//! Polyp v4 stage 3's tests: the accessibility tree, in plain Kelp with no display.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/a11y"
 impl "deps/polyp/backends/soft/soft/event"

@@ -1,15 +1,15 @@
-// The PL011 UART QEMU's aarch64 `virt` machine puts at 0x09000000. DR (offset
-// 0) is the byte to send; FR (offset 0x18) bit 5 (TXFF) is set while the
-// transmit FIFO is full, so a byte is written only after that bit reads back
-// clear. Every access goes through `Ptr<u8>`/`Ptr<u32>` and is volatile so the
-// compiler can neither merge, reorder nor elide it, and nothing else about the
-// device is checked: the base, the offsets and the bit are the driver's own
-// claim about the hardware (kernel stage 1, `language/unsafe.md` (kelp wiki)).
-//
-// Text arrives as a `str`, the same type a hosted program writes, and
-// `str.len`/`str.byte` are the compiler's own byte loops (kernel stage 7,
-// `language/kernel.md` (kelp wiki) gap 1), so no `strlen` and no `[u8; N]` copy sits
-// between the caller and the device.
+//! The PL011 UART QEMU's aarch64 `virt` machine puts at 0x09000000. DR (offset
+//! 0) is the byte to send; FR (offset 0x18) bit 5 (TXFF) is set while the
+//! transmit FIFO is full, so a byte is written only after that bit reads back
+//! clear. Every access goes through `Ptr<u8>`/`Ptr<u32>` and is volatile so the
+//! compiler can neither merge, reorder nor elide it, and nothing else about the
+//! device is checked: the base, the offsets and the bit are the driver's own
+//! claim about the hardware (kernel stage 1, `language/unsafe.md` (kelp wiki)).
+//!
+//! Text arrives as a `str`, the same type a hosted program writes, and
+//! `str.len`/`str.byte` are the compiler's own byte loops (kernel stage 7,
+//! `language/kernel.md` (kelp wiki) gap 1), so no `strlen` and no `[u8; N]` copy sits
+//! between the caller and the device.
 impl "std/str"
 
 const UART_BASE: usize = 0x09000000

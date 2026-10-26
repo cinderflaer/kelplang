@@ -1,17 +1,5 @@
-// The task table, the three tasks and the round-robin scheduler
-// (`language/kernel.md` (kelp wiki)).
-//
-// There is no separate idle context: the boot takes one `ecall` with a frame of
-// its own, the first `schedule` call picks task 0, and from then on every trap
-// is either the machine timer (preempt) or a task's `ecall` (yield), and both
-// end at the same `pick`. Nothing in a task ever calls `yield`, so a task only
-// loses the CPU to the timer, which is what makes the interleaving in the serial
-// log a proof of preemption rather than of cooperation.
-//
-// The scheduler runs with `mstatus.MIE` clear (a trap clears it), on whichever
-// stack the interrupted task was using, and returns the frame the naked entry
-// resumes. It never returns to its caller in the ordinary sense after the boot:
-// the boot's frame is abandoned the first time task 0 is chosen.
+//! The task table, the three tasks and the round-robin scheduler
+//! (`language/kernel.md` (kelp wiki)).
 impl "trap"
 impl "timer"
 impl "uart"

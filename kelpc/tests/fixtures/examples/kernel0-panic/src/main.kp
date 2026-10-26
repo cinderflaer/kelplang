@@ -1,9 +1,9 @@
-// Kernel 0's panic path, exercised on purpose. `kmain` reads one element past
-// an array's end, which is what the compiler's own bounds check catches: the
-// check calls the `[target] panic` handler with the static message it was
-// written with, so the fault names the check instead of just wedging. The
-// handler prints `panic: ` and the message over the same UART driver kernel 0
-// uses.
+//! Kernel 0's panic path, exercised on purpose. `kmain` reads one element past
+//! an array's end, which is what the compiler's own bounds check catches: the
+//! check calls the `[target] panic` handler with the static message it was
+//! written with, so the fault names the check instead of just wedging. The
+//! handler prints `panic: ` and the message over the same UART driver kernel 0
+//! uses.
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 section(".text.boot") fun kmain() {

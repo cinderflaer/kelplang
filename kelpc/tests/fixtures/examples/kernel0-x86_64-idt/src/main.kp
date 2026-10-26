@@ -1,10 +1,5 @@
-// Kernel stage 22: the x86-64 IDT, four CPU exception gates and the 8259/8254
-// timer interrupt (`language/kernel.md` (kelp wiki)).
-//
-// The boot is two deliberate faults the dispatcher resumes from, five real
-// timer ticks, and one store the page fault gate cannot repair. The store comes
-// last on purpose: its handler prints and halts, so it is the last thing the
-// serial port sees.
+//! Kernel stage 22: the x86-64 IDT, four CPU exception gates and the 8259/8254
+//! timer interrupt (`language/kernel.md` (kelp wiki)).
 impl "idt" caps(mmio = ["0x200000000+0x1000"])
 impl "pic"
 impl "uart"

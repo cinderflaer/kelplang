@@ -1,15 +1,4 @@
-// The todo program on the software backend, with no display (Polyp v3 stage 3, extended by stage 4).
-//
-// `src/deps/todo/app.kp` is the same program `examples/polyp-todo` runs on GTK,
-// `examples/polyp-core-test` runs on the headless backend and the two `examples/polyp-fb-*` kernels
-// run on bare metal: the same `view`, the same `update`, the same scripted input.
-// `src/deps/todo/scenario.kp` is the driver all of them share, so this file is only the platform
-// and the printing: a headless platform at one of three sizes, a soft backend, and `emit_line` as
-// the one thing the driver is not allowed to decide for itself.
-//
-// The step lines it prints are the expected output for the two kernels: the framebuffer
-// equivalence test runs this binary at `POLYP_SOFT_SIZE=kernel` (the kernels' 320x200) and compares
-// its `step ` lines, byte for byte, with each kernel's serial output.
+//! The todo program on the software backend, with no display (Polyp v3 stage 3, extended by stage 4).
 impl "deps/polyp/core/core"
 impl "deps/polyp/core/diag"
 impl "deps/polyp/backends/soft/soft/headless_platform"

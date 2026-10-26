@@ -1,9 +1,9 @@
-// The Polyp v4 demo program, with no display: a model, a view, an update and the timers it wants. It
-// uses all four v4 features: a repeating timer, a one-shot and an animated progress bar and toast
-// (stage 1), UTF-8 text (stage 2), an accessibility tree the scenario dumps at the end (stage 3) and
-// three memoised rows (stage 4). `src/main.kp` runs it on the hosted headless platform and
-// prints the transcript, and the two `examples/polyp-v4-*` kernels run the very same file on bare metal,
-// so this module may not print, hold a `pd`, or touch a libc: it reports through a `fun (str)`.
+//! The Polyp v4 demo program, with no display: a model, a view, an update and the timers it wants. It
+//! uses all four v4 features: a repeating timer, a one-shot and an animated progress bar and toast
+//! (stage 1), UTF-8 text (stage 2), an accessibility tree the scenario dumps at the end (stage 3) and
+//! three memoised rows (stage 4). `src/main.kp` runs it on the hosted headless platform and
+//! prints the transcript, and the two `examples/polyp-v4-*` kernels run the very same file on bare metal,
+//! so this module may not print, hold a `pd`, or touch a libc: it reports through a `fun (str)`.
 impl "deps/polyp/core/anim"
 impl "deps/polyp/core/core"
 impl "std/str"

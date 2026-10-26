@@ -1,19 +1,4 @@
-// UTF-8 decoding for the soft backend's text (Polyp v4 stage 2).
-//
-// Pure functions over a `str` view: no allocation, no pointer, nothing a freestanding image lacks.
-// `decode(s, i)` reads the unit that starts at byte `i` and answers `(len << 32) | codepoint`, where
-// `len` is how many bytes the unit takes. A unit is either one well-formed scalar value or one
-// *malformed run*, and a malformed run is always exactly one unit (so one replacement box, one
-// caret step, one backspace) and is always at least one byte, so a scan always makes progress:
-//
-// - a byte that cannot start a sequence (a stray continuation byte 0x80..0xBF, 0xC0, 0xC1, 0xF5..0xFF)
-//   is a run of that one byte;
-// - a lead byte whose continuation bytes are cut short (the string ends, or the next byte is not a
-//   continuation) is a run of the lead byte plus the continuation bytes that did follow it;
-// - a complete sequence that is not a scalar value (an overlong form such as C0 80 or E0 80 80, a
-//   UTF-16 surrogate ED A0..BF .., a value above U+10FFFF) is a run of the whole sequence.
-//
-// The code point of a malformed run is `REPLACEMENT` (U+FFFD). No read goes past the end of the string.
+//! UTF-8 decoding for the soft backend's text (Polyp v4 stage 2).
 
 impl "std/str"
 

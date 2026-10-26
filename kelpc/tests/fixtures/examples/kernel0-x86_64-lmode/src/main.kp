@@ -1,8 +1,8 @@
-// Kernel stage 20's long-mode proof: print the greeting, prove the CPU is in
-// long mode with paging on, then fault. `inspect.long_mode_on` reads CR0, CR4
-// and EFER through `asm`; only when `EFER.LMA`, `CR0.PG` and `CR4.PAE` are all
-// set does this print `long mode on`, and then a `ud2` with a null IDT makes
-// the triple fault the boot test accepts.
+//! Kernel stage 20's long-mode proof: print the greeting, prove the CPU is in
+//! long mode with paging on, then fault. `inspect.long_mode_on` reads CR0, CR4
+//! and EFER through `asm`; only when `EFER.LMA`, `CR0.PG` and `CR4.PAE` are all
+//! set does this print `long mode on`, and then a `ud2` with a null IDT makes
+//! the triple fault the boot test accepts.
 impl "uart"
 impl "inspect"
 

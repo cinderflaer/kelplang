@@ -1,18 +1,8 @@
-// The GTK4 binding Polyp builds its widgets with. Every function is an
-// `extern fun` bound to a real symbol by the consumer's coral.toml, whose
-// `[extern."deps/polyp/backends/gtk/gtk"]` section is pasted from README.md;
-// the header there supplies the C prototypes and `pkg_config = "gtk4"` the
-// include and link paths.
-//
-// GTK spells every `GtkWidget*` as one C type. Kelp's opaque handles are
-// nominal, so the shapes the loop actually distinguishes are named after what
-// they are and their parent chains say how they relate: a `Window` is a
-// `Widget`, a `BoxWidget` is too, and all three are `Object`s, so any of them
-// converts up to the base for `g_object_unref`. The ABI is the same pointer
-// either way. `gtk_box_new` really returns `GtkWidget*` in the header and is
-// declared as the `BoxWidget` it is, which is why `gtk_box_append` takes one
-// without a downcast (a `cast` is legal only in the module holding the
-// `[extern.*]` section, and the loop is one module up).
+//! The GTK4 binding Polyp builds its widgets with. Every function is an
+//! `extern fun` bound to a real symbol by the consumer's coral.toml, whose
+//! `[extern."deps/polyp/backends/gtk/gtk"]` section is pasted from README.md;
+//! the header there supplies the C prototypes and `pkg_config = "gtk4"` the
+//! include and link paths.
 pub extern type Object
 pub extern type Widget: Object
 pub extern type Window: Widget

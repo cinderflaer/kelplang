@@ -1,11 +1,11 @@
-// The run diagnostics a hosted program reads after a run: the live text of each entry widget, as
-// the display showed it (Polyp v3 stage 4).
-//
-// It is a module of its own because its one global is a `pd var List<String>`. A freestanding
-// build refuses every passdown (its initializer runs through `kelp_init_pds`, which only the hosted
-// entry point calls) and a static cannot hold a heap type, so the counter set lives in `core.kp`
-// as `Atomic` statics and this one snapshot lives here, where a project that must not carry a `pd`
-// simply does not import it. plan/polyp-v3.md, stage 4 is the design.
+//! The run diagnostics a hosted program reads after a run: the live text of each entry widget, as
+//! the display showed it (Polyp v3 stage 4).
+//!
+//! It is a module of its own because its one global is a `pd var List<String>`. A freestanding
+//! build refuses every passdown (its initializer runs through `kelp_init_pds`, which only the hosted
+//! entry point calls) and a static cannot hold a heap type, so the counter set lives in `core.kp`
+//! as `Atomic` statics and this one snapshot lives here, where a project that must not carry a `pd`
+//! simply does not import it. plan/polyp-v3.md, stage 4 is the design.
 impl "deps/polyp/core/core"
 
 // One entry text per entry widget, in tree order, as of the last `capture`.

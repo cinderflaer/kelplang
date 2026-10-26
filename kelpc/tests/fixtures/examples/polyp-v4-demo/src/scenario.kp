@@ -1,11 +1,4 @@
-// The scripted v4 scenario, shared by the hosted run and the two bare-metal kernels (Polyp v4).
-//
-// `drive` builds the application's first frame, then plays `app.script()`: for every step it advances
-// the platform's clock (through `advance`, the one thing a platform spells differently), queues the
-// press on the backend's programmatic channel and runs `soft_backend.frame_timed`, then emits one line
-// that names the step, the clock, the frame's checksum, how many rectangles it presented, whether the
-// backend still wants frames and the model's tick count. The line is built with integer formatting
-// only, so the hosted `print` and a kernel's UART write the same bytes.
+//! The scripted v4 scenario, shared by the hosted run and the two bare-metal kernels (Polyp v4).
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/a11y"
 impl "deps/polyp/backends/soft/soft/fb"

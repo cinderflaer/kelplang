@@ -1,8 +1,8 @@
-// Kernel stage 7: a `static mut` counter and a `static` message table, which is
-// what a kernel needs before it has a console cursor or a page table. `bump`
-// increments the counter in `unsafe` (a `static mut` is the audited shared
-// state, so its module is on the manifest's `[unsafe] modules` list), and
-// `kmain` prints `counter 3` through the UART and halts.
+//! Kernel stage 7: a `static mut` counter and a `static` message table, which is
+//! what a kernel needs before it has a console cursor or a page table. `bump`
+//! increments the counter in `unsafe` (a `static mut` is the audited shared
+//! state, so its module is on the manifest's `[unsafe] modules` list), and
+//! `kmain` prints `counter 3` through the UART and halts.
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 static mut COUNTER: int = 0

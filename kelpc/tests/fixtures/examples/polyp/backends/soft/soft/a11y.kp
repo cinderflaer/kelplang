@@ -1,18 +1,4 @@
-// The accessibility tree the soft backend can build on demand (Polyp v4 stage 3).
-//
-// A screen reader or a test-automation harness asks the backend for `a11y_tree()` and gets plain data:
-// one `Node` per exposed widget with a role, a name, a value, state flags, bounds and the actions it
-// accepts, and then drives the UI by node id (`a11y_act`, `a11y_set_value`). Nothing here is built
-// during a frame: the tree exists only while a caller holds it, so the frame path allocates exactly
-// what it allocated before.
-//
-// Roles: `button`, `checkbox`, `entry`, `label` (a `Text`), `progress`, `list` (a `Scrolled`),
-// `list_item` (a container directly inside a list) and `region` (any other `Column`/`Row`). Spacers
-// and separators are decoration and are not exposed. A checkbox with no label of its own is named
-// after the label next to it (the next sibling `Text`), which is how the todo app's rows read.
-// `value` is the entry's text, `"true"`/`"false"` for a checkbox and the permille for a progress bar.
-// Node ids are the backend's own widget numbers: they are stable for as long as the widget lives.
-// `bounds` are the widget's layout rectangle, without any animated paint offset.
+//! The accessibility tree the soft backend can build on demand (Polyp v4 stage 3).
 impl "std/str"
 
 pub const ROLE_BUTTON: i32 = 0

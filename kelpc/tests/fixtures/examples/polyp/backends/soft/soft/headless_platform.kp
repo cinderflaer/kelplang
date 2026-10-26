@@ -1,13 +1,5 @@
-// A platform with no window: an in-memory framebuffer, scripted input and recorded presents
-// (Polyp v3 stage 3).
-//
-// This is the platform the tests and the todo-soft run use. It owns a heap framebuffer, plays a
-// list of `(time_ms, Event)` through `poll_event` as `now_ms` reaches them, and records how many
-// rectangles every `present` was handed and the checksum of the frame it showed. A run with no
-// window is therefore completely deterministic: the same events and the same pixels every time.
-//
-// The framebuffer is allocated once, at construction, through `Ptr.alloc<u32>` and never freed:
-// the module is on a consumer's `[unsafe]` list for that one allocation and the fill.
+//! A platform with no window: an in-memory framebuffer, scripted input and recorded presents
+//! (Polyp v3 stage 3).
 impl "deps/polyp/backends/soft/soft/damage"
 impl "deps/polyp/backends/soft/soft/event"
 impl "deps/polyp/backends/soft/soft/fb"

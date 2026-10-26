@@ -1,9 +1,9 @@
-// Kernel stage 7's heap half: a bump allocator over a `static mut` arena, and a
-// `List<i32>` built on it. `coral.toml`'s `[target] alloc`/`dealloc` name the two
-// functions below, so every allocation and free the list makes calls them
-// instead of libc's `malloc`/`free` (there is no libc in this image). The bump
-// allocator never reclaims a block: `dealloc` only counts, which is what makes
-// the "balanced" line a proof that every allocation reached a matching free.
+//! Kernel stage 7's heap half: a bump allocator over a `static mut` arena, and a
+//! `List<i32>` built on it. `coral.toml`'s `[target] alloc`/`dealloc` name the two
+//! functions below, so every allocation and free the list makes calls them
+//! instead of libc's `malloc`/`free` (there is no libc in this image). The bump
+//! allocator never reclaims a block: `dealloc` only counts, which is what makes
+//! the "balanced" line a proof that every allocation reached a matching free.
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 static mut ARENA: [u8; 16384] = [0; 16384]

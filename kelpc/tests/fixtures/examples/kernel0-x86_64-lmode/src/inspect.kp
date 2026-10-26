@@ -1,6 +1,6 @@
-// The long-mode and paging checks for `examples/kernel0-x86_64-lmode`. Every
-// read is `asm` in this module, which the `[unsafe]` list names; the compiler
-// only knows these are machine registers, not what they mean.
+//! The long-mode and paging checks for `examples/kernel0-x86_64-lmode`. Every
+//! read is `asm` in this module, which the `[unsafe]` list names; the compiler
+//! only knows these are machine registers, not what they mean.
 impl "std/str"
 impl "uart"
 

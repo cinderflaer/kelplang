@@ -1,9 +1,9 @@
-// Polyp, the application-facing module: the v1/v2 surface over the core and one backend.
-//
-// Everything that decides what the screen should be lives in `core.kp`, and everything that draws
-// it lives in a backend (`gtk_backend.kp` here, `headless_backend.kp` for tests). This module is
-// the thin, stable surface an application imports: the builder, `run`, the stylesheet hook, the
-// scheduled-input helpers and the counters. plan/polyp-v3.md is the design.
+//! Polyp, the application-facing module: the v1/v2 surface over the core and one backend.
+//!
+//! Everything that decides what the screen should be lives in `core.kp`, and everything that draws
+//! it lives in a backend (`gtk_backend.kp` here, `headless_backend.kp` for tests). This module is
+//! the thin, stable surface an application imports: the builder, `run`, the stylesheet hook, the
+//! scheduled-input helpers and the counters. plan/polyp-v3.md is the design.
 impl "deps/polyp/core/core"
 impl "deps/polyp/core/diag"
 impl "deps/polyp/backends/gtk/gtk_backend" caps(ui = ["*"])

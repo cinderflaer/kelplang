@@ -1,9 +1,9 @@
-// Kernel stage 12: `String` and `Bytes` in freestanding mode. The allocator is
-// the bump one kernel stage 7 built for `kernel0-heap`, with the optional
-// `realloc` named so buffer growth takes the fast path. Nothing here reaches
-// libc: `str.concat`, the integer builders, `String.push`/`push_str` and
-// `Bytes.push` all lower to byte loops in the object, and every block comes
-// from `alloc`/`realloc` and reaches `dealloc`.
+//! Kernel stage 12: `String` and `Bytes` in freestanding mode. The allocator is
+//! the bump one kernel stage 7 built for `kernel0-heap`, with the optional
+//! `realloc` named so buffer growth takes the fast path. Nothing here reaches
+//! libc: `str.concat`, the integer builders, `String.push`/`push_str` and
+//! `Bytes.push` all lower to byte loops in the object, and every block comes
+//! from `alloc`/`realloc` and reaches `dealloc`.
 impl "std/str"
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 

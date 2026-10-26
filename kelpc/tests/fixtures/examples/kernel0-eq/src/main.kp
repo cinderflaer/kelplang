@@ -1,18 +1,4 @@
-// Kernel stage 23: equality and the `View` surface with no libc behind them.
-//
-// Two things the freestanding subset could not do before this stage:
-//
-// * a `datac` with a `String` field. `derive(eq, hash)` writes its `eq` and
-//   `hash`, so `==` and a `Map<Pair, i32>` use them. The `String` field is
-//   compared through `view()`, and the image needs no hosted `memcmp`.
-// * `View.slice`/`View.to_string`. The view accessors were already lowered,
-//   but the two `std/str` and `std/regex` are written on had no freestanding
-//   body and the type itself was refused. The example slices a `str` view and
-//   copies a slice back into an owned `String`.
-//
-// The regex at the end is the third piece: `std/regex` is pure Kelp over
-// `List<u8>`/`List<i32>` and the allocator, and with the two above in place it
-// builds and matches with nothing left for `ld.lld` to resolve.
+//! Kernel stage 23: equality and the `View` surface with no libc behind them.
 impl "std/str"
 impl "std/regex"
 impl "std/option"

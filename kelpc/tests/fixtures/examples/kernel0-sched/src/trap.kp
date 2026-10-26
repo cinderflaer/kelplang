@@ -1,19 +1,5 @@
-// The machine-mode trap frame and the naked entry that saves into it
-// (`language/kernel.md` (kelp wiki)).
-//
-// This is kernel stage 11's frame (`examples/kernel0-user/src/trap.kp`) with
-// two differences. The frame is not built on a stack: `mscratch` holds the
-// address of the *current task's* frame while that task runs, so the entry
-// writes the whole register file into the task table itself and the scheduler
-// switches tasks by handing back a different frame. And the frame is one word
-// longer than the register file: the word at `DISPATCH_OFF`, just past
-// `mstatus`, is the address of the scheduler the entry calls, which is how a
-// naked function reaches a Kelp function without spelling its mangled symbol
-// (the same reason kernel stage 11 keeps its dispatch address in a slot).
-//
-// The offset constants below are a contract with the asm template and nothing
-// in the compiler checks them; `layout_ok` is the check the boot runs before it
-// relies on them.
+//! The machine-mode trap frame and the naked entry that saves into it
+//! (`language/kernel.md` (kelp wiki)).
 
 // The register file's offsets: `xN` is at `(N - 1) * 8`, so `x1`/`ra` is first
 // and `x31`/`t6` is last. `sepc` and `mstatus` follow it.

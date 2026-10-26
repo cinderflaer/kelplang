@@ -1,13 +1,7 @@
-// The trap vector and the code that installs it. `mtvec` names a naked
-// function (kernel stage 5): it runs with no prologue and no compiler-generated
-// return, because the interrupted code never agreed to a calling convention.
-// Everything the handler disturbs it saves itself, and it ends in `mret`.
-//
-// The vector is installed from `Ptr.from_fn(trap_handler).addr()` (kernel gap
-// 2), so no mangled symbol is spelled in this file: the address the check
-// names is the one the linker resolves. The handler reaches `report` through
-// `mscratch` for the same reason, and because an inline-asm operand would make
-// the compiler materialise a register before the handler has saved anything.
+//! The trap vector and the code that installs it. `mtvec` names a naked
+//! function (kernel stage 5): it runs with no prologue and no compiler-generated
+//! return, because the interrupted code never agreed to a calling convention.
+//! Everything the handler disturbs it saves itself, and it ends in `mret`.
 impl "uart"
 
 const TRAP_MSG: [u8; 12] = [116, 114, 97, 112, 58, 32, 101, 99, 97, 108, 108, 10]

@@ -1,8 +1,8 @@
-// The 8259 PIC pair and the 8254 PIT, through `port` (kernel stage 22,
-// `language/kernel.md` (kelp wiki)). The BIOS leaves the PICs mapped over vectors 8..15, which
-// collide with the CPU's own exceptions, so `remap` sends ICW1..4 and moves the
-// master to 32..39 and the slave to 40..47. Only IRQ0 is unmasked afterwards;
-// every other line stays masked for a device this kernel does not have.
+//! The 8259 PIC pair and the 8254 PIT, through `port` (kernel stage 22,
+//! `language/kernel.md` (kelp wiki)). The BIOS leaves the PICs mapped over vectors 8..15, which
+//! collide with the CPU's own exceptions, so `remap` sends ICW1..4 and moves the
+//! master to 32..39 and the slave to 40..47. Only IRQ0 is unmasked afterwards;
+//! every other line stays masked for a device this kernel does not have.
 impl "port"
 impl "std/atomic"
 impl "uart"

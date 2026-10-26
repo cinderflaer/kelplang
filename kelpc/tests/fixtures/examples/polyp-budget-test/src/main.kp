@@ -1,21 +1,4 @@
-// Work-budget tests for the soft backend (Polyp v3 stage 5), hosted and deterministic.
-//
-// Every number printed here is a count, not a time: the pixels come from the stage-2 primitives'
-// own return values, the rectangles from `paint`, and the layout counts from the measure/arrange
-// counters. The Rust test `polyp_soft_work_budgets_hold` pins the whole output, so the budgets are
-// the same on the LLVM backend.
-//
-// The sections are:
-//   idle      an idle frame writes 0 pixels and presents 0 rectangles
-//   text      a same-width label change damages exactly the label box (one rectangle)
-//   hover     a hover change damages exactly the hovered widget
-//   focus     a focus change damages exactly the old and the new widget
-//   type      typing one character damages at most the entry's rectangle
-//   remove    removing one row of 200 re-lays-out and repaints only what moved
-//   append    appending a row touches only the new row and the scrollbar
-//   repaint   a full 800x600 repaint's overdraw factor
-//   deadline  frame_budgeted splits a frame at whole rectangles and keeps the rest
-//   allocs    the steady-state frames allocate nothing the backend can account for
+//! Work-budget tests for the soft backend (Polyp v3 stage 5), hosted and deterministic.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/damage"
 impl "deps/polyp/backends/soft/soft/event"

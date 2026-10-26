@@ -1,16 +1,4 @@
-// Integer animation values (Polyp v4 stage 1).
-//
-// An `Anim` is plain data: a start value, an end value, a duration in milliseconds and an easing.
-// It carries no clock. A widget that carries one (`Children.anim` and friends in `core.kp`) is
-// *started* by the soft backend the first time it sees that exact value on that widget, and the
-// backend then reads the platform's clock (the `Tick` events, `soft/event.kp`) to know how far along
-// it is. Because the value is a pure function of the elapsed time, a test that drives the clock
-// gets exact intermediate values.
-//
-// Everything is integer math: the progress fraction is a permille (`0..=1000`) and the value is
-// `from + (to - from) * eased(t) / 1000` in `i64`, so a bare-metal image with no FPU runs it and
-// both backends agree to the last unit. `eased` is monotonic for the four easings below and maps
-// 0 to 0 and 1000 to 1000, so an animation starts exactly at `from` and ends exactly at `to`.
+//! Integer animation values (Polyp v4 stage 1).
 
 pub const EASE_LINEAR: i32 = 0
 pub const EASE_IN: i32 = 1

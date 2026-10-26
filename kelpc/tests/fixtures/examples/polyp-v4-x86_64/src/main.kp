@@ -1,5 +1,5 @@
-// Polyp v4 on bare metal, x86-64: the same program, driver and `fb_platform.kp` as
-// `examples/polyp-v4-riscv64`, with the COM1 driver in place of the NS16550.
+//! Polyp v4 on bare metal, x86-64: the same program, driver and `fb_platform.kp` as
+//! `examples/polyp-v4-riscv64`, with the COM1 driver in place of the NS16550.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/v4/app"

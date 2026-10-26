@@ -1,11 +1,4 @@
-// Polyp v4 stage 2's tests: UTF-8 text, in plain Kelp with no display.
-//
-//   decode   the decoder's unit lengths and code points for well-formed and malformed bytes
-//   width    text measure by code point: "héllo" is 5 cells, a 3-byte scalar is one cell
-//   glyphs   which blocks have drawings (has_glyph) and that a missing one is the replacement box
-//   draw     malformed and truncated input draws one box per run and reads nothing out of bounds
-//   edit     an entry's caret moves and backspace/delete act by code point, with 2-, 3- and 4-byte
-//            characters, a malformed byte, and a programmatic text change that strands the caret
+//! Polyp v4 stage 2's tests: UTF-8 text, in plain Kelp with no display.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/damage"
 impl "deps/polyp/backends/soft/soft/draw"

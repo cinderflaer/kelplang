@@ -1,13 +1,4 @@
-// A todo list on keyed rows, over Polyp v3.
-//
-// The program itself is `app.kp`: the model, the view, the update and the scripted input the smoke
-// run drives it with. This file is only the GTK side: it opens the window, installs the stylesheet,
-// arms the script and prints the summary `examples/polyp-todo/smoke.sh` reads. The same `app.kp` is
-// run on the headless backend by `examples/polyp-core-test`, which is how the two backends are
-// compared.
-//
-// `src/deps/polyp/` is a link to examples/polyp/ in this repository; a real consumer copies the
-// library there. See examples/polyp/README.md.
+//! A todo list on keyed rows, over Polyp v3.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/gtk/polyp/lib" caps(ui = ["*"])
 impl "app"

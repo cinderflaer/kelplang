@@ -1,32 +1,6 @@
-// download_pool.kp, fetch a list of paths from one host concurrently, with
-// one keep-alive connection pool per worker thread (MK6-S2-M1: the payoff of
-// row 4 on the critical path, once threads existed to spend).
-//
-//     kelpc build examples/download_pool.kp -o download_pool
-//     ./download_pool 127.0.0.1 8000 /a.bin /b.bin /c.bin /d.bin /e.bin
-//
-// `Thread<T>` cannot be a `List`/array element (MK9 section 5: a handle names
-// one running worker and is joined once, while a container's own routines
-// copy and drop an element like a plain location), so the worker count here
-// is fixed at four, named individually the way `thread_stress.kp`'s eight
-// are. The paths are split across those four workers *before* any of them
-// starts: v1 has no `Mutex` and no channel (MK9 section 8), so there is no
-// shared queue a running worker could pull its next path from. Splitting the
-// work ahead of time, by a plain round-robin over the argument list, is what
-// "one pool per worker" costs without one.
-//
-// Each worker owns one `http.Pool` for the run's one host, never shared with
-// another thread (a `Pool`'s `var idle` field is exactly the kind of shared
-// mutable state `thread.spawn` refuses to send, MK9 section 5 rule 3, so
-// the only way to give a worker one is to let it build its own), so the four
-// in-flight workers keep at most four sockets open between them and every
-// path a worker downloads after its first reuses its own connection.
-//
-// The capability is `net = ["*"]` because the host is a command-line
-// argument, decided at run time, and a compile-time pattern cannot spell a
-// value that is not known yet, the same tradeoff `examples/download.kp`'s
-// header discusses for its own fixed pattern. Narrow this to the host you
-// actually run against if you adapt the program.
+//! download_pool.kp, fetch a list of paths from one host concurrently, with
+//! one keep-alive connection pool per worker thread (MK6-S2-M1: the payoff of
+//! row 4 on the critical path, once threads existed to spend).
 impl "std/thread"
 impl "std/http" caps(net = ["*"])
 impl "std/str"

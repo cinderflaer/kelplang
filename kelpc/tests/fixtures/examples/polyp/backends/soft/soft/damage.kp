@@ -1,33 +1,4 @@
-// The damage list (Polyp v3 stage 2).
-//
-// A frame's dirty rectangles, at most 16 of them, in a fixed inline array. `add` never grows
-// the array and never allocates, so a caller can hand the same list back every frame and rely
-// on its cost. The policy is:
-//
-//   1. an empty rectangle is dropped;
-//   2. if the list is not full and the rectangle overlaps or *touches* an entry, that entry
-//      becomes the union, and a coalesce pass merges any entries the union made touch;
-//   3. otherwise, if the list is not full, the rectangle is appended;
-//   4. otherwise (full, and nothing touches) the pair whose union wastes the least area
-//      (`union(i, j).area() - area(i) - area(j)`) is merged, which drops the count to 15, the
-//      new rectangle is appended, and a coalesce pass runs. Ties break on the lowest `(i, j)`,
-//      so the result is deterministic.
-//
-// Coalescing is what keeps the list small: after every change, touching pairs merge until no
-// pair touches, and each merge strictly reduces the count, so it terminates in at most 15
-// merges. The stage allowed "collapse everything to one bounding rectangle" as the full-list
-// answer; the least-waste pair is used instead because it preserves more detail for the same
-// cap, and `bounds()` is there for a caller that wants the one-rectangle answer. The order of
-// the entries is *not* stable across an `add` (a merge uses one slot and removes another); a
-// caller iterates, it does not index.
-//
-// The bodies below copy an element out with `dup()` and keep every list read in a statement of
-// its own rather than in an `if`/`while` condition. A borrow taken in a condition is live for
-// the whole statement in this compiler, so `if fb.touches(rects.get(i), r) { rects.set(...) }`
-// is refused; the copy is what keeps each mutation sound without weakening the check.
-//
-// Nothing here dereferences a pixel, so the module needs no `[unsafe]` entry, and it imports
-// only the pure-integer half of the raster.
+//! The damage list (Polyp v3 stage 2).
 impl "deps/polyp/backends/soft/soft/fb"
 
 pub const MAX_DAMAGE: int = 16

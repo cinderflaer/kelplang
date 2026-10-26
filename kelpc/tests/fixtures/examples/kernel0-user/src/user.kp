@@ -1,16 +1,5 @@
-// The two user programs, each a naked function whose whole body is the machine
-// code it runs, in a section of its own (`language/kernel.md` (kelp wiki)).
-//
-// They run at 0x10000 in their own address space, so the kernel copies the
-// section's bytes into the program's code page at boot. The copy works because
-// everything the programs reference is pc-relative: `la` and the numeric labels
-// are resolved inside the section, so the same bytes name their own strings
-// wherever they are placed. The code page is mapped `U|R|X`, not writable, so
-// the first program builds its marker line on its own stack instead of patching
-// the string in place.
-//
-// Neither function is ever called from Kelp: they are entered by `sret` from
-// `trap.enter_user`, which is the only thing `U|R|X` means.
+//! The two user programs, each a naked function whose whole body is the machine
+//! code it runs, in a section of its own (`language/kernel.md` (kelp wiki)).
 
 // The bounds of each section, so the loader has one contiguous range to copy.
 // The linker script defines the four symbols; a script that does not is the

@@ -1,10 +1,10 @@
-// Kernel stage 15's acceptance kernel: every compiler-inserted check in a
-// freestanding build routes through one compiler-emitted entry, which detects
-// a panic raised while the handler is already running and hands its message and
-// source location to `kp_panic`. This file exercises one check per boot
-// (`selector.which()` picks), and the assembly file `double_panic.s` beside the
-// project answers a double panic with `kelp_double_panic` instead of the weak
-// wait-for-interrupt fallback the compiler emits.
+//! Kernel stage 15's acceptance kernel: every compiler-inserted check in a
+//! freestanding build routes through one compiler-emitted entry, which detects
+//! a panic raised while the handler is already running and hands its message and
+//! source location to `kp_panic`. This file exercises one check per boot
+//! (`selector.which()` picks), and the assembly file `double_panic.s` beside the
+//! project answers a double panic with `kelp_double_panic` instead of the weak
+//! wait-for-interrupt fallback the compiler emits.
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 impl "std/str"
 impl "std/option"

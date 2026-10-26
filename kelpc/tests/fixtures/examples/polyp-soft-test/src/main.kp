@@ -1,11 +1,4 @@
-// Polyp v3 stage 2's raster tests, in plain Kelp with no display.
-//
-// Every primitive is checked against an independent per-pixel reference implementation written
-// here (full-precision integers, no shared geometry helper), on seeded LCG inputs that include
-// negative and zero sizes and clips on every edge. Three fixed scenes print golden FNV
-// checksums. The damage list's invariants are checked per pixel. Three API contracts are
-// exercised under `POLYP_SOFT_TEST`: `scale` (a text scale outside 1..=4), `clip_depth` (a ninth
-// push) and `clip_empty` (a pop past the base); `dump` writes a PPM for the Rust test to read.
+//! Polyp v3 stage 2's raster tests, in plain Kelp with no display.
 impl "deps/polyp/backends/soft/soft/damage"
 impl "deps/polyp/backends/soft/soft/debug" caps(fs = ["/**"])
 impl "deps/polyp/backends/soft/soft/draw"

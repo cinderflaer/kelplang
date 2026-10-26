@@ -1,22 +1,5 @@
-// Polyp's software backend: a retained widget tree, integer layout, damage-only painting and
-// input (Polyp v3 stage 3).
-//
-// This is stage 1's `core.Backend` implemented against the stage-2 raster instead of a toolkit.
-// It holds the same retained tree `headless_backend.kp` holds, applies the same `core.Patch`
-// lists, and hands out interactive ids by the same rule, so a program's counters, focus and
-// entry text are what the GTK and headless runs see. What is new is that the tree also carries
-// geometry and interaction state, and that every change ends as a list of dirty rectangles the
-// platform is asked to show.
-//
-// Nothing on the per-frame path allocates: `make` is the only operation that grows the tree (one
-// `SNode` and one `List` push per created widget), damage is the stage-2 fixed `Damage`, clips
-// are values, and the glyph mask `font.kp` builds is a stack array. The module dereferences no
-// pixel itself, so it is not on a consumer's `[unsafe]` list; the primitives and the two
-// platform modules are.
-//
-// `core.frame_step` runs one turn of the Elm loop, so a platform that owns a frame clock calls
-// `frame` and a program that lets the backend block calls `core.run`. Both take the same path
-// through `update`/`view`/`diff`/`apply`, which is why the counters cannot drift.
+//! Polyp's software backend: a retained widget tree, integer layout, damage-only painting and
+//! input (Polyp v3 stage 3).
 impl "deps/polyp/core/anim"
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/soft/soft/a11y"

@@ -1,15 +1,4 @@
-// The scripted platform the framebuffer kernels run on (Polyp v3 stage 4).
-//
-// It is the "custom operating system with a framebuffer" case the whole v3 design aims at: it owns
-// a `static mut [u32; N]` surface, hands it to the soft backend as an `fb.Fb`, counts the presents
-// it is asked for, and keeps a fake clock. There is no timer device on this machine, so the clock
-// advances 100 ms per presented frame and `poll_event` answers from a timed script against it,
-// exactly as `soft/headless_platform.kp` does. The todo scenario drives the programmatic
-// `core.Event` channel, so the platform's own script is empty here; the machinery is the same as
-// the hosted platform's, which is what makes a platform-level script portable.
-//
-// The surface is in `.bss` and the compiler's `_start` stub zeroes it, so it starts black, the way
-// `HeadlessPlatform` zeroes its own buffer.
+//! The scripted platform the framebuffer kernels run on (Polyp v3 stage 4).
 impl "deps/polyp/backends/soft/soft/damage"
 impl "deps/polyp/backends/soft/soft/event"
 impl "deps/polyp/backends/soft/soft/fb"

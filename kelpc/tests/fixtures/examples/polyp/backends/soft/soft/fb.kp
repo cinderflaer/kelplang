@@ -1,28 +1,4 @@
-// The software raster's framebuffer and rectangle types (Polyp v3 stage 2).
-//
-// `Fb` is a pixel pointer, a size and a stride: the only facts a platform hands a software
-// renderer. Pixels are 32-bit `0xAARRGGBB`, and the stride is in *pixels*, because that is the
-// unit a platform thinks in and the byte offset is `pixels.offset(y * stride_px + x)`. Nothing
-// here allocates, calls libc or names an OS: the module is usable from a freestanding image,
-// which is why it has no `impl` line at all.
-//
-// This module dereferences raw pixels (`get`, `put`, `checksum`), so a project that imports it
-// lists it under `[unsafe] modules`. Its geometry half (`Rect`) is pure integers and would not
-// need the entry on its own; the two live together because every drawing function wants both.
-//
-// `Rect` is total. A rectangle with `w <= 0` or `h <= 0` is empty, and every operation answers
-// something defined for one; `right`/`bottom`/`area` and `intersect`/`union`/`contains` widen to
-// `i64` before adding, so two rectangles at `i32::MAX` cannot wrap, and the single narrowing
-// step (`clamp_i32`) saturates rather than panicking.
-//
-// A caller with a `static mut [u32; N]` views it as
-//
-//     val base: Ptr<[u32; N]> = unsafe { Ptr.from_mut(FRAME) }
-//     val screen = fb.new(pixels = base.cast<u32>(), width = N.to_i32(), height = 1, stride_px = N.to_i32())
-//
-// The cast is a separate binding because Kelp refuses a method with explicit type arguments on
-// a call expression (`Ptr.from_mut(FRAME).cast<u32>()`), and there is no N-generic helper
-// because Kelp has no const generics.
+//! The software raster's framebuffer and rectangle types (Polyp v3 stage 2).
 
 const I32_MAX_I64: i64 = 2147483647
 const I32_MIN_I64: i64 = -2147483648
