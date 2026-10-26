@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1262 ran=618 c_refused=588 hosted_refused=9 excluded=47
+# counts candidates=1263 ran=619 c_refused=588 hosted_refused=9 excluded=47
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -824,6 +824,7 @@ fixture_stdlib_str_case	ran	exit 0		711c74eeb4693c12e4e9d398a16c63a03c2a6401b1e5
 fixture_stdlib_str_slice	ran	exit 0		e8356fc390daf99c0c8841cb15016187332a4ec20494627bcfa05039738ec9fc
 fixture_stdlib_tz_synthetic	ran	exit 0		eaf45019ab314f6a498acdf3971d24d291569bb14484636f5de18471e95bfb54
 fixture_stdlib_tz_zones	ran	exit 0		ccf1c207a9c1d707b220673ef9cd93826f049be0fee60cf66758267f3120e8e6
+fixture_stdlib_unwrap_or	ran	exit 0		fbc2058c109804faa9b4eba8d15a110152b83e9235cdea4546ac1f84c4199d42
 fixture_str_byte_at_len	ran	exit 1	panic: str.byte: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_str_byte_edges	ran	exit 0		e503d0e65099dd03f45122c37113adb7c506fe9837633f4a06b2ead544525057
 fixture_str_byte_empty	ran	exit 1	panic: str.byte: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

@@ -79,10 +79,11 @@ fun expect<T>(o: move Option<T>, message: &str) => T {
 // ---- methods ----
 //
 // The borrowing helpers, also callable on a value: `o.map(f)`. Each has one
-// definition, the method. The ones that take the option with `move`
-// (`unwrap_or`, `unwrap`, `expect`) stay free functions: a method always
-// borrows its receiver. The free `is_some` and `is_none` stay as the module's
-// public spelling, `option.is_none(o)`, and each one calls its method.
+// definition, the method. `unwrap_or` has a method form for a `Copy` payload;
+// the owned form takes the option with `move` and stays a free function, since
+// a method always borrows its receiver. `unwrap` and `expect` stay free too.
+// The free `is_some` and `is_none` stay as the module's public spelling,
+// `option.is_none(o)`, and each one calls its method.
 
 /// Whether the option holds a value.
 fun Option<T>.is_some() => bool = when self {
@@ -94,6 +95,15 @@ fun Option<T>.is_some() => bool = when self {
 fun Option<T>.is_none() => bool = when self {
     Some(_) -> false
     None -> true
+}
+
+/// The payload, or `fallback`, for a `Copy` payload: the receiver is a borrow,
+/// so the payload is copied out of it. `o.unwrap_or(0)`. An owned payload
+/// (`Option<String>`) uses the free `option.unwrap_or(o = ..., fallback = ...)`,
+/// which takes the option with `move`.
+fun Option<T>.unwrap_or(fallback: T) => T = when self {
+    Some(v) -> v
+    None -> fallback
 }
 
 /// Transform the payload through `f`, or pass `None` through. The callback

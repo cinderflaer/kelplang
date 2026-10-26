@@ -344,6 +344,13 @@ pub(crate) fn a_generic_enum_can_carry_methods_and_option_and_result_do() {
 }
 
 #[test]
+pub(crate) fn unwrap_or_is_a_method_on_option_and_result_and_the_free_forms_stay() {
+    // Issue #311: `o.unwrap_or(d)` for a `Copy` payload, `r.unwrap_or(d)` with
+    // the error dropped, and the free forms that take an owned option.
+    assert_fixture_runs("tests/fixtures/stdlib_unwrap_or.kp");
+}
+
+#[test]
 pub(crate) fn small_ergonomics_literal_float_math_f32_and_line_continuation() {
     // H-12: an integer literal where a float is expected is that float.
     assert_fixture_runs("tests/fixtures/literal_adapts_to_float.kp");
