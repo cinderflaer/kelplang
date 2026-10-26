@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1269 ran=622 c_refused=591 hosted_refused=9 excluded=47
+# counts candidates=1270 ran=623 c_refused=591 hosted_refused=9 excluded=47
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -753,6 +753,7 @@ fixture_repr_align_not_power_of_two	c-refused		error: 'repr(align(3))' needs a p
 fixture_repr_c_padded	ran	exit 0		f149535fe6483267ab410c371efc8c7f7fbc93d8f097ca6a2d01d491d51804c9
 fixture_repr_packed	ran	exit 0		b6c05609d75d1f4090ad5a69817fae974afc75483574f24efa3050189a242f37
 fixture_result_map_owned	ran	exit 0		437bcf922bfd55f1a43d998d42413292221fb1b9e57658cdb9167dff040fc363
+fixture_result_or_exit	ran	exit 2	bad port	5eab4b7190201cf7f6308297ef8eae74089aae672402847a0c8af46370ca365c
 fixture_result_unit_issue_223	ran	exit 0		1fa72706597bc4a0dd0789c92311e2b965fc48058f69159e0999810e9ad98625
 fixture_result_unit_ok	ran	exit 0		d718da9f5374c9d16137f2f6b320b5b516d5a999f81ede012e0ad97a9bd20295
 fixture_result_unit_payload	ran	exit 0		d2bc750cd9b209d146f904af555b5266dc51aeb798fac19c5d671a6d492932fc

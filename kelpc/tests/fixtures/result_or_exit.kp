@@ -1,0 +1,13 @@
+// `Result.orExit` (issue #263): the `Ok` value comes back as it is. On `Err`
+// the message goes to standard error and the program exits with status 2.
+// The golden row checks the exit status and the first line of stderr; the
+// stdout is what the `Ok` path printed before the failing call.
+impl "std/result"
+impl "std/str"
+
+fun main() {
+    val port = str.parse_u64("8080").orExit("bad port")
+    print(port.toText())
+    val bad = str.parse_u64("80x80").orExit("bad port")
+    print(bad.toText())
+}
