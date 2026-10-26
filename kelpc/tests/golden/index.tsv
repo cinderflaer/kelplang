@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1265 ran=620 c_refused=589 hosted_refused=9 excluded=47
+# counts candidates=1268 ran=621 c_refused=591 hosted_refused=9 excluded=47
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -831,6 +831,7 @@ fixture_str_byte_at_len	ran	exit 1	panic: str.byte: index out of bounds	e3b0c442
 fixture_str_byte_edges	ran	exit 0		e503d0e65099dd03f45122c37113adb7c506fe9837633f4a06b2ead544525057
 fixture_str_byte_empty	ran	exit 1	panic: str.byte: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_str_byte_negative	ran	exit 1	panic: str.byte: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_str_bytes_iter	ran	exit 0		1ab1f4e4c0e564f6dd95a61377263f5bbb7b6135ae99e2cf66f6131bf18d8d8b
 fixture_str_comparison	c-refused		error: cannot compare 'str' values with '=='	
 fixture_str_core	ran	exit 0		d42839eeefd039a4606165c824ca52575422c6abff37ba18039108af61b787a6
 fixture_str_search_edges	ran	exit 0		749221ee16158437366bfd2f665884fc2c9b2e791ce6e308a51ecc73e332018a
@@ -1147,8 +1148,10 @@ project_freestanding_std_result	c-refused		error: '/home/juniper/Projects/kelp-w
 project_freestanding_std_str	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_str' sets '[target] mode = "freestanding"', which only the llvm backend can build	
 project_freestanding_str	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_str' sets '[target] mode = "freestanding"', which only the llvm backend can build	
 project_freestanding_str_refused	c-refused		error: the call to 'std.str.char_count' is unavailable in a freestanding build	
+project_freestanding_str_unused_bytes	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_str_unused_bytes' sets '[target] mode = "freestanding"', which only the llvm backend can build	
 project_freestanding_string_float	c-refused		error: the call to 'std.str.from_f64' is unavailable in a freestanding build	
 project_freestanding_string_no_alloc	c-refused		error: the binding 's' has type 'String', which is unavailable in a freestanding build without an allocator	
+project_freestanding_string_struct_reached	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_string_struct_reached' sets '[target] mode = "freestanding"', which only the llvm backend can build	
 project_freestanding_try_alloc	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_try_alloc' sets '[target] mode = "freestanding"', which only the llvm backend can build	
 project_freestanding_try_alloc_no_alloc	c-refused		error: 'Ptr#try_alloc' is unavailable in a freestanding build	
 project_freestanding_view	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_view' sets '[target] mode = "freestanding"', which only the llvm backend can build	
