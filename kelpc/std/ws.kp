@@ -729,13 +729,13 @@ fun handshake(
     if str.is_empty(accept) {
         return result.Result.Err(error = WsErr.Handshake(
             status = status,
-            reason = String.from_str("ws.connect: the 101 response has no Sec-WebSocket-Accept header, so it is not a WebSocket server"),
+            reason = "ws.connect: the 101 response has no Sec-WebSocket-Accept header, so it is not a WebSocket server",
         ))
     }
     if !str.eq(accept, expected) {
         return result.Result.Err(error = WsErr.Handshake(
             status = status,
-            reason = String.from_str("ws.connect: Sec-WebSocket-Accept does not match the key this connection sent, so the peer did not compute it from the handshake"),
+            reason = "ws.connect: Sec-WebSocket-Accept does not match the key this connection sent, so the peer did not compute it from the handshake",
         ))
     }
     return result.Result.Ok(value = c)

@@ -18,7 +18,7 @@
 // still free nothing there.
 datac Named(val r: i64, val name: String)
 
-fun mkName() => Named = Named(r = 7, name = String.from_str("hi"))
+fun mkName() => Named = Named(r = 7, name = "hi")
 
 fun take(n: i64) {
     print(n)

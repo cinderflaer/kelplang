@@ -16,7 +16,7 @@ datac Named(val r: f64, val name: String)
 
 fun area(n: move Named) => f64 = n.r + n.name.len().to_f64()
 fun label(n: move Named) => f64 = n.r
-fun mkName() => Named = Named(r = 2.5, name = String.from_str("kelp"))
+fun mkName() => Named = Named(r = 2.5, name = "kelp")
 
 fun main() {
     print(area(mkName()))

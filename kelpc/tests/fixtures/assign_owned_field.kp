@@ -29,7 +29,7 @@ fun take(s: String) {
 
 fun plain_reassign() {
     var h = Holder(name = String.from_str("alpha"))
-    h.name = String.from_str("beta")
+    h.name = "beta"
     print(h.name)
 }
 
@@ -42,7 +42,7 @@ fun self_assign_field() {
 fun move_then_reassign_field() {
     var h = Holder(name = String.from_str("delta"))
     take(h.name)
-    h.name = String.from_str("epsilon")
+    h.name = "epsilon"
     print(h.name)
 }
 

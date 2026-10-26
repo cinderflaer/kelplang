@@ -8,19 +8,19 @@ datac Tag(val name: String, val on: bool, val mark: char, val n: i32)
 
 fun main() {
     var m: Map<Tag, i32> = Map.empty()
-    m.insert(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1), v = 10)
-    m.insert(key = Tag(name = String.from_str(s = "alpha"), on = false, mark = 'x', n = 1), v = 20)
+    m.insert(key = Tag(name = "alpha", on = true, mark = 'x', n = 1), v = 10)
+    m.insert(key = Tag(name = "alpha", on = false, mark = 'x', n = 1), v = 20)
     print(m.len())
-    print(m.get(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1)))
-    print(m.has(key = Tag(name = String.from_str(s = "alph"), on = true, mark = 'x', n = 1)))
+    print(m.get(key = Tag(name = "alpha", on = true, mark = 'x', n = 1)))
+    print(m.has(key = Tag(name = "alph", on = true, mark = 'x', n = 1)))
     // An equal key overwrites without growing the map.
-    m.insert(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1), v = 99)
+    m.insert(key = Tag(name = "alpha", on = true, mark = 'x', n = 1), v = 99)
     print(m.len())
-    print(m.get(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1)))
-    print(Tag(name = String.from_str(s = "a"), on = true, mark = 'y', n = 1) == Tag(name = String.from_str(s = "a"), on = true, mark = 'x', n = 1))
-    print(m.remove(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1)))
+    print(m.get(key = Tag(name = "alpha", on = true, mark = 'x', n = 1)))
+    print(Tag(name = "a", on = true, mark = 'y', n = 1) == Tag(name = "a", on = true, mark = 'x', n = 1))
+    print(m.remove(key = Tag(name = "alpha", on = true, mark = 'x', n = 1)))
     print(m.len())
-    print(m.has(key = Tag(name = String.from_str(s = "alpha"), on = false, mark = 'x', n = 1)))
+    print(m.has(key = Tag(name = "alpha", on = false, mark = 'x', n = 1)))
 }
 // stdout-begin
 // stdout: 2

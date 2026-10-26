@@ -2,17 +2,17 @@ impl "std/iter"
 
 fun main() {
     var names: List<String> = List.empty()
-    names.push(String.from_str(s = "ann"))
-    names.push(String.from_str(s = "bo"))
-    names.push(String.from_str(s = "cyrus"))
+    names.push("ann")
+    names.push("bo")
+    names.push("cyrus")
     var long = iter.filter(iter.into_iter(names), fun(s: &String) => bool = s.len() > 2)
     var lens = iter.map(long, fun(s: &String) => int = s.len())
     for n in lens {
         print(n)
     }
     var more: List<String> = List.empty()
-    more.push(String.from_str(s = "x"))
-    more.push(String.from_str(s = "yy"))
+    more.push("x")
+    more.push("yy")
     for p in iter.enumerate(iter.into_iter(more)) {
         val (i, s) = p
         print(i)

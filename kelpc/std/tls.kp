@@ -225,13 +225,13 @@ fun error_from(code: i32, reason: move String) => TlsError {
 /// they would have printed. `HandshakeFailed` and `Io` return OpenSSL's or
 /// the socket's own words, so the detail is not thrown away.
 fun error_text(e: move TlsError) => String = when e {
-    Untrusted -> String.from_str("tls: the certificate is not trusted by the system store")
-    Expired -> String.from_str("tls: the certificate has expired or is not yet valid")
-    HostMismatch -> String.from_str("tls: the certificate does not match the host name")
-    ProtocolTooOld -> String.from_str("tls: the peer does not speak TLS 1.2 or newer")
+    Untrusted -> "tls: the certificate is not trusted by the system store"
+    Expired -> "tls: the certificate has expired or is not yet valid"
+    HostMismatch -> "tls: the certificate does not match the host name"
+    ProtocolTooOld -> "tls: the peer does not speak TLS 1.2 or newer"
     HandshakeFailed(reason) -> reason
-    PeerClosedUncleanly -> String.from_str("tls: the peer closed the connection without a close_notify")
-    Timeout -> String.from_str("tls: the operation timed out")
+    PeerClosedUncleanly -> "tls: the peer closed the connection without a close_notify"
+    Timeout -> "tls: the operation timed out"
     Io(reason) -> reason
 }
 

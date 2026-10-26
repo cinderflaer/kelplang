@@ -14,7 +14,7 @@ enum Option<T> {
 
 fun half(n: i64) => Result<i64, String> {
     if n % 2 != 0 {
-        return Result.Err(error = String.from_str(s = "odd"))
+        return Result.Err(error = "odd")
     }
     return Result.Ok(value = n / 2)
 }
@@ -30,7 +30,7 @@ fun maybe_word(n: i64) => Option<String> {
     if n < 0 {
         return Option.None
     }
-    return Option.Some(value = String.from_str(s = "word"))
+    return Option.Some(value = "word")
 }
 
 fun loud(n: i64) => Option<String> {

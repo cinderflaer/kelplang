@@ -22,8 +22,8 @@ fun main() {
 
     // A `bool` key, and an owned value behind a `get` borrow.
     var names: Map<bool, String> = Map.empty()
-    names.insert(key = true, v = String.from_str(s = "yes"))
-    names.insert(key = false, v = String.from_str(s = "no"))
+    names.insert(key = true, v = "yes")
+    names.insert(key = false, v = "no")
     print(names.len())
     print(names.get(key = true).as_str())
     print(names.get(key = false).as_str())

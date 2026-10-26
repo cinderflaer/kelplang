@@ -21,14 +21,14 @@ fun ok(n: i64) => Res<i64, String> {
 }
 
 fun fail(n: i64) => Res<i64, String> {
-    return Res.Err(error = String.from_str(s = "no"))
+    return Res.Err(error = "no")
 }
 
 fun some_word(n: i64) => Opt<String> {
     if n < 0 {
         return Opt.None
     }
-    return Opt.Some(value = String.from_str(s = "word"))
+    return Opt.Some(value = "word")
 }
 
 // One owned local live at two `?` sites, one per branch of an `if`, so both

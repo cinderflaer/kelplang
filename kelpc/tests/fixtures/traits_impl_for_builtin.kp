@@ -16,7 +16,7 @@ impl Doubler for i32 {
 }
 
 impl Named for String {
-    fun Self.label() => String = String.from_str("a string")
+    fun Self.label() => String = "a string"
 }
 
 fun twice<T: Doubler>(x: T) => i32 = x.double() + x.double()

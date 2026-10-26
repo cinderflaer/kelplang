@@ -38,7 +38,7 @@ fun main() {
     }
 
     var ts: List<Token> = List.empty()
-    ts.push(Token.Word(text = String.from_str(s = "four")))
+    ts.push(Token.Word(text = "four"))
     ts.push(Token.Digits(n = 12))
     ts.push(Token.Blank)
     var j: int = 0

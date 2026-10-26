@@ -57,7 +57,7 @@ fun main() {
 
     // Ownership is part of the type.
     val g: fun(move String) => int = consume
-    print(g(String.from_str("abcd")))
+    print(g("abcd"))
 
     // An exclusive borrow too.
     var c = Counter(n = 0)

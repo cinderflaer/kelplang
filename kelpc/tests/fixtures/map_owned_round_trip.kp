@@ -12,9 +12,9 @@ impl "std/str"
 
 fun main() {
     var m: Map<String> = Map.empty()
-    m.insert("alpha", String.from_str("one"))
-    m.insert("beta", String.from_str("two"))
-    m.insert("gamma", String.from_str("three"))
+    m.insert("alpha", "one")
+    m.insert("beta", "two")
+    m.insert("gamma", "three")
     print(m.len())
 
     {

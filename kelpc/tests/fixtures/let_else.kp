@@ -59,7 +59,7 @@ fun main() {
     print(doubled(id = 0))
     print(radius(s = Shape.Circle(r = 2.0)))
     print(radius(s = Shape.Empty))
-    print(width(t = Token.Word(text = String.from_str(s = "four"))))
+    print(width(t = Token.Word(text = "four")))
     print(width(t = Token.Blank))
     print(total(ids = [1, 0, 2, 0]))
 }

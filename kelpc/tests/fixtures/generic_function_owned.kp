@@ -27,7 +27,7 @@ fun main() {
     val c = wrap(x = 3)
     print(is_some(o = c))
 
-    val d: Option<String> = Option.Some(value = String.from_str(s = "owned"))
+    val d: Option<String> = Option.Some(value = "owned")
     print(is_some(o = d))
     print(describe(o = d))
 }

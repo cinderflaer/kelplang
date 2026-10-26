@@ -7,7 +7,7 @@
 // that.
 datac Named(val name: String)
 
-fun mkName() => Named = Named(name = String.from_str("x"))
+fun mkName() => Named = Named(name = "x")
 
 fun main() {
     val r = &mkName().name

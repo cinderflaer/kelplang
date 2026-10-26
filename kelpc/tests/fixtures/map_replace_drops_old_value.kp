@@ -15,25 +15,25 @@ impl "std/str"
 
 fun main() {
     var m: Map<String> = Map.empty()
-    m.insert("alpha", String.from_str("one"))
-    m.insert("beta", String.from_str("two"))
+    m.insert("alpha", "one")
+    m.insert("beta", "two")
     print(m.len())
 
-    m.insert("alpha", String.from_str("ONE"))
-    print(m.len())
-    {
-        val v = m.get("alpha")
-        print(v)
-    }
-
-    m.insert("alpha", String.from_str("1"))
+    m.insert("alpha", "ONE")
     print(m.len())
     {
         val v = m.get("alpha")
         print(v)
     }
 
-    m.insert("beta", String.from_str("TWO"))
+    m.insert("alpha", "1")
+    print(m.len())
+    {
+        val v = m.get("alpha")
+        print(v)
+    }
+
+    m.insert("beta", "TWO")
     {
         val v = m.get("beta")
         print(v)
@@ -42,7 +42,7 @@ fun main() {
 
     val removed = m.remove("beta")
     print(removed)
-    m.insert("beta", String.from_str("two again"))
+    m.insert("beta", "two again")
     {
         val v = m.get("beta")
         print(v)

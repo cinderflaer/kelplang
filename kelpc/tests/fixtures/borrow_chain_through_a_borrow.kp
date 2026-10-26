@@ -18,7 +18,7 @@ datac Bag(val items: List<Holder>)
 
 fun main() {
     var xs: List<Holder> = List.empty()
-    xs.push(Holder(v = 42, name = String.from_str("forty-two")))
+    xs.push(Holder(v = 42, name = "forty-two"))
 
     // `List.get` hands back a borrow, so the field is the pointee's storage.
     val v = &xs.get(i = 0).v
@@ -33,7 +33,7 @@ fun main() {
     // One field further in: the root is a place, and the step that follows it
     // is the borrow `get` returns, so the whole path is still durable.
     var items: List<Holder> = List.empty()
-    items.push(Holder(v = 7, name = String.from_str("seven")))
+    items.push(Holder(v = 7, name = "seven"))
     var bag = Bag(items = items)
     val from_bag = &bag.items.get(i = 0).v
     print(*from_bag)

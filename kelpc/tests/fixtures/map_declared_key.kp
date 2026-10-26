@@ -23,29 +23,29 @@ fun Sample.eq(other: &Sample) => bool {
 
 fun main() {
     var m: Map<Sample, i32> = Map.empty()
-    m.insert(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha")), v = 10)
-    m.insert(key = Sample(ratio = 2.5, tag = 1, label = String.from_str(s = "alpha")), v = 20)
+    m.insert(key = Sample(ratio = 1.5, tag = 1, label = "alpha"), v = 10)
+    m.insert(key = Sample(ratio = 2.5, tag = 1, label = "alpha"), v = 20)
     print(m.len())
     // The same tag and label under two floats: the hash may collide, and `eq`
     // is what tells the entries apart, so both lookups have to find their own.
-    print(m.get(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha"))))
-    print(m.get(key = Sample(ratio = 2.5, tag = 1, label = String.from_str(s = "alpha"))))
-    print(m.has(key = Sample(ratio = 3.5, tag = 1, label = String.from_str(s = "alpha"))))
+    print(m.get(key = Sample(ratio = 1.5, tag = 1, label = "alpha")))
+    print(m.get(key = Sample(ratio = 2.5, tag = 1, label = "alpha")))
+    print(m.has(key = Sample(ratio = 3.5, tag = 1, label = "alpha")))
     // An equal key overwrites without growing: the map owns a clone of the key
     // it was given, and the probe reaches the entry through the declared pair.
-    m.insert(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha")), v = 99)
+    m.insert(key = Sample(ratio = 1.5, tag = 1, label = "alpha"), v = 99)
     print(m.len())
-    print(m.get(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha"))))
+    print(m.get(key = Sample(ratio = 1.5, tag = 1, label = "alpha")))
 
     val ks: List<Sample> = m.keys()
     print(ks.len())
     print(ks.get(i = 0).label.as_str())
     print(ks.get(i = 0).ratio)
 
-    print(m.remove(key = Sample(ratio = 2.5, tag = 1, label = String.from_str(s = "alpha"))))
+    print(m.remove(key = Sample(ratio = 2.5, tag = 1, label = "alpha")))
     print(m.len())
-    print(m.has(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha"))))
-    print(m.has(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "beta"))))
+    print(m.has(key = Sample(ratio = 1.5, tag = 1, label = "alpha")))
+    print(m.has(key = Sample(ratio = 1.5, tag = 1, label = "beta")))
 }
 // stdout-begin
 // stdout: 2

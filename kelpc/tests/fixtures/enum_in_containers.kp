@@ -40,7 +40,7 @@ fun wrapped_len(w: &Wrap) => int = when w {
 }
 
 fun make(n: i64) => Maybe<String> = if n > 0 {
-    Maybe.Yes(value = String.from_str(s = "held"))
+    Maybe.Yes(value = "held")
 } else {
     Maybe.No
 }
@@ -49,14 +49,14 @@ fun main() {
     // A `List` whose element owns, built by push and read back through a
     // borrow (`get` is the borrowing form for a non-`Copy` element).
     var xs: List<Maybe<String>> = List.empty()
-    xs.push(Maybe.Yes(value = String.from_str(s = "first")))
+    xs.push(Maybe.Yes(value = "first"))
     xs.push(Maybe.No)
     print(xs.len())
     print(tell(m = xs.get(i = 0)))
     print(tell(m = xs.get(i = 1)))
 
     // Replacing an element drops the old one, and so does `pop`.
-    xs.set(i = 0, v = Maybe.Yes(value = String.from_str(s = "second")))
+    xs.set(i = 0, v = Maybe.Yes(value = "second"))
     print(tell(m = xs.get(i = 0)))
     val taken = xs.pop()
     print(tell(m = taken))

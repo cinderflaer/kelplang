@@ -6,8 +6,8 @@ impl "std/str"
 
 fun main() {
     var m: Map<String> = Map.empty()
-    m.insert("alpha", String.from_str("one"))
-    m.insert("beta", String.from_str("two"))
+    m.insert("alpha", "one")
+    m.insert("beta", "two")
     print(m.len())
     {
         val v = m.get("beta")
@@ -17,7 +17,7 @@ fun main() {
     print(existing)
     val absent = m.get_or("gamma", String.from_str("fallback"))
     print(absent)
-    m.insert("beta", String.from_str("TWO"))
+    m.insert("beta", "TWO")
     {
         val v = m.get("beta")
         print(v)

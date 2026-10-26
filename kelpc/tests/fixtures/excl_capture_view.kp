@@ -35,8 +35,8 @@ fun view(s: Model) => Kids {
 
 fun main() {
     var m = Model(items = List.empty())
-    m.items.push(Item(title = String.from_str("a"), done = true))
-    m.items.push(Item(title = String.from_str("b"), done = false))
+    m.items.push(Item(title = "a", done = true))
+    m.items.push(Item(title = "b", done = false))
     val k = view(m)
     print(k.n)
     print(k.progress)

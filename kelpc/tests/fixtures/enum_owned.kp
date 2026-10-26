@@ -33,7 +33,7 @@ fun main() {
     var i: int = 0
     while i < 3 {
         val t = if i == 0 {
-            Token.Word(text = String.from_str(s = "loop"))
+            Token.Word(text = "loop")
         } else {
             Token.Blank
         }

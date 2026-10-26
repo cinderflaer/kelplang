@@ -4,9 +4,9 @@
 // a use-after-free and this fixture is in the sanitizer pass for exactly that.
 fun main() {
     var xs: List<(String, i32)> = List.empty()
-    xs.push((String.from_str("b"), 2))
-    xs.push((String.from_str("a"), 3))
-    xs.push((String.from_str("a"), 1))
+    xs.push(("b", 2))
+    xs.push(("a", 3))
+    xs.push(("a", 1))
 
     var copy = xs.clone()
     xs.clear()
@@ -27,7 +27,7 @@ fun main() {
 
     // `slice` is the same deep copy over a range, on a nested tuple.
     var deep: List<((i32, i32), String)> = List.empty()
-    deep.push(((3, 4), String.from_str("kept")))
+    deep.push(((3, 4), "kept"))
     var one = deep.slice(0, 1)
     deep.clear()
     val ((dx, dy), text) = one.pop()

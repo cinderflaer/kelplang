@@ -19,7 +19,7 @@ fun main() {
     val cv = Condvar.new()
     val cv2 = cv.share()
     cv2.notify_all()
-    val names: Mutex<List<String>> = Mutex.new(List.of(String.from_str("a")))
+    val names: Mutex<List<String>> = Mutex.new(List.of("a"))
     var taken = names.swap(List.empty())
     print(taken.remove(0))
     print(names.lock { l -> l.len() })

@@ -6,5 +6,5 @@ fun consume(s: move String) => int = s.len()
 fun forward(s: String) => int = consume(s)
 
 fun main() {
-    print(forward(String.from_str("x")))
+    print(forward("x"))
 }

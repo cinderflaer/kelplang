@@ -32,10 +32,10 @@ fun main() {
     // Block scope: every owned field of `row` drops at the closing brace.
     {
         val row = Row(
-            name = String.from_str("alpha"),
+            name = "alpha",
             tag = 7,
             data = Bytes.from_str("raw"),
-            inner = Label(text = String.from_str("nested")),
+            inner = Label(text = "nested"),
         )
         show(row)
         print(tag_of(row))
@@ -45,10 +45,10 @@ fun main() {
     // A move into a second binding: `owner` is dead, so `moved` frees the
     // three buffers exactly once.
     val owner = Row(
-        name = String.from_str("beta"),
+        name = "beta",
         tag = 9,
         data = Bytes.from_str("more"),
-        inner = Label(text = String.from_str("deep")),
+        inner = Label(text = "deep"),
     )
     val moved = owner
     show(moved)

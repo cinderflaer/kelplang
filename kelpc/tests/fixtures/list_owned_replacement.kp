@@ -7,19 +7,19 @@
 // new one double-frees. The empty `String` at the end is the other end of the
 // same path: a one-NUL buffer replacing a longer one.
 fun main() {
-    var words: List<String> = List.of(String.from_str("solo"))
+    var words: List<String> = List.of("solo")
     print(words.len())
     print(words.get(0))
-    words.set(0, String.from_str("replacement"))
+    words.set(0, "replacement")
     print(words.get(0))
-    words.push(String.from_str("tail"))
-    words.set(1, String.from_str("other"))
+    words.push("tail")
+    words.set(1, "other")
     print(words.get(0))
     print(words.get(1))
     // Twice in a row on one index: each `set` owns the buffer the next one
     // frees.
-    words.set(0, String.from_str("a"))
-    words.set(0, String.from_str("b"))
+    words.set(0, "a")
+    words.set(0, "b")
     print(words.get(0))
     print(words.len())
     words.set(0, String.empty())

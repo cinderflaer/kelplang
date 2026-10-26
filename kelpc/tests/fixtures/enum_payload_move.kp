@@ -5,7 +5,7 @@ enum Token {
 
 fun take(t: &Token) => String = when t {
     Word(text) -> text
-    Blank -> String.from_str(s = "")
+    Blank -> ""
 }
 
 fun main() {

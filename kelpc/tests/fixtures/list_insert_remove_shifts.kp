@@ -9,16 +9,16 @@
 // a one-element one.
 fun main() {
     var words: List<String> = List.empty()
-    words.push(String.from_str("a"))
-    words.push(String.from_str("c"))
-    words.insert(1, String.from_str("b"))
+    words.push("a")
+    words.push("c")
+    words.insert(1, "b")
     print(words.len())
     print(words.get(0))
     print(words.get(1))
     print(words.get(2))
     // The end of the list is a legal insertion point (`i == len`), so the
     // four-element case is reached by one insert rather than by four pushes.
-    words.insert(3, String.from_str("d"))
+    words.insert(3, "d")
     print(words.get(3))
     // From the middle: "b" comes out and "c"/"d" shift down over it.
     val middle = words.remove(1)
@@ -36,13 +36,13 @@ fun main() {
     val first = words.remove(0)
     print(first)
     print(words.len())
-    words.insert(0, String.from_str("e"))
+    words.insert(0, "e")
     print(words.get(0))
     print(words.get(1))
     // `reverse` twists a two-element list into the odd-length and empty cases,
     // which are the two the swap loop has to get right without moving a byte.
-    words.push(String.from_str("f"))
-    words.push(String.from_str("g"))
+    words.push("f")
+    words.push("g")
     words.reverse()
     print(words.get(0))
     print(words.get(1))

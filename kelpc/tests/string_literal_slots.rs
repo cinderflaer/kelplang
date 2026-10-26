@@ -16,8 +16,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Files that keep `String.from_str` around a literal on purpose, with the
-/// reason. The path is relative to the crate root.
-const ALLOWED: &[(&str, &str)] = &[];
+/// reason. The path is relative to the kelpc crate root (kelpc/).
+const ALLOWED: &[(&str, &str)] = &[
+    (
+        "tests/fixtures/generic_recursive.kp",
+        "the fixture tests type inference through Box.of and Box.empty, which a written type would change",
+    ),
+    (
+        "tests/fixtures/option_unwrap_owned.kp",
+        "the fixture tests Option payloads whose type is inferred from the use, which a bare literal would change",
+    ),
+    (
+        "tests/fixtures/owned_statement.kp",
+        "the subject is the refusal of an owned String value left unused in statement position",
+    ),
+];
 
 const NEEDLE: &str = "String.from_str(";
 
@@ -76,6 +89,32 @@ fn literal_argument_at(text: &str, after_open: usize) -> bool {
     false
 }
 
+/// True when `prefix` (the rest of the line before the call) holds an untyped
+/// `val NAME =` or `var NAME =`: the binding has no `: T` before its `=`.
+fn untyped_binding_before(prefix: &str) -> bool {
+    for keyword in ["val ", "var "] {
+        let mut from = 0;
+        while let Some(pos) = prefix[from..].find(keyword) {
+            let start = from + pos;
+            from = start + keyword.len();
+            let boundary = prefix[..start].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+            if !boundary {
+                continue;
+            }
+            let rest = prefix[from..].trim_start();
+            let name_len = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').count();
+            if name_len == 0 {
+                continue;
+            }
+            let after_name = rest[name_len..].trim_start();
+            if after_name.starts_with('=') && !after_name.starts_with("==") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn literal_hits(text: &str) -> Vec<usize> {
     let mut hits = Vec::new();
     let mut from = 0;
@@ -87,7 +126,11 @@ fn literal_hits(text: &str) -> Vec<usize> {
             .next_back()
             .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.');
         let after_open = at + NEEDLE.len();
-        if !preceded_by_ident && literal_argument_at(text, after_open) {
+        let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+        // An untyped `val` or `var` takes its type from the value, and a bare
+        // literal there would be a `str`, so the wrapper stays.
+        let untyped = untyped_binding_before(&text[line_start..at]);
+        if !preceded_by_ident && !untyped && literal_argument_at(text, after_open) {
             let line = text[..at].matches('\n').count() + 1;
             hits.push(line);
         }
@@ -130,12 +173,16 @@ fn std_and_fixtures_keep_no_string_from_str_around_a_literal() {
 
 #[test]
 fn the_scanner_sees_bare_and_named_literal_forms_only() {
-    assert_eq!(literal_hits(r#"val a = String.from_str("x")"#), vec![1]);
-    assert_eq!(literal_hits(r#"val a = String.from_str(s = "x")"#), vec![1]);
+    assert_eq!(literal_hits(r#"val a: String = String.from_str("x")"#), vec![1]);
+    assert_eq!(literal_hits(r#"val a: String = String.from_str(s = "x")"#), vec![1]);
     assert_eq!(literal_hits("\n\nreturn String.from_str(\"a \\\"q\\\" b\")"), vec![3]);
     // A non-literal argument, a method receiver and a longer name are not hits.
     assert!(literal_hits("val a = String.from_str(name)").is_empty());
     assert!(literal_hits(r#"val a = String.from_str("x").as_str()"#).is_empty());
     assert!(literal_hits(r#"val a = MyString.from_str("x")"#).is_empty());
     assert!(literal_hits(r#"val a = String.from_str(s = name)"#).is_empty());
+    // An untyped binding keeps the wrapper; a written type does not.
+    assert!(literal_hits(r#"val a = String.from_str("x")"#).is_empty());
+    assert!(literal_hits(r#"var b = String.from_str(s = "x")"#).is_empty());
+    assert_eq!(literal_hits(r#"names.push(Tag(a = String.from_str("x")), v = Some(String.from_str("y")))"#), vec![1, 1]);
 }

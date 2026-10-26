@@ -3,7 +3,7 @@
 // call hands out two shared borrows of the same storage, fine, because
 // neither writes. Before the borrow mode was computed, every reference to a
 // `pd var` was exclusive and this was refused with a borrow conflict.
-pd var app: String = String.from_str(s = "shapes")
+pd var app: String = "shapes"
 
 fun show(s: &String) {
     print(s.as_str())

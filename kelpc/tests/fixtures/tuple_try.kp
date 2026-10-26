@@ -8,7 +8,7 @@ enum Res<T, E> {
 
 fun mk(n: i32) => Res<(i32, i32), String> {
     if n < 0 {
-        return Res.Err(e = String.from_str("negative"))
+        return Res.Err(e = "negative")
     }
     return Res.Ok(v = (n, n + 1))
 }

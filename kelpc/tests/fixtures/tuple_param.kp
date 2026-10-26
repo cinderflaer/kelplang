@@ -15,7 +15,7 @@ fun take(p: move (String, i32)) => i32 {
 
 fun main() {
     print(sum((1, 2)))
-    print(take((String.from_str("moved"), 7)))
+    print(take(("moved", 7)))
 }
 // stdout-begin
 // stdout: 3

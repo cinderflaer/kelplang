@@ -37,7 +37,7 @@ fun main() {
     print(fs.is_dir_raw(root))
     print(fs.is_file_raw(root))
 
-    fs.write_text_raw(a, String.from_str("hello\n"))
+    fs.write_text_raw(a, "hello\n")
     val text = fs.read_raw(a)
     print(text.len())
     print(text)

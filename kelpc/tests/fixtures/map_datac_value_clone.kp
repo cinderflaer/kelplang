@@ -9,8 +9,8 @@ datac Digest(val path: String, val size: i32)
 
 fun main() {
     var m: Map<String, Digest> = Map.empty()
-    m.insert("a", Digest(path = String.from_str("alpha"), size = 10))
-    m.insert("b", Digest(path = String.from_str("beta"), size = 20))
+    m.insert("a", Digest(path = "alpha", size = 10))
+    m.insert("b", Digest(path = "beta", size = 20))
 
     val present = m.get_or(key = "a", fallback = Digest(path = String.from_str("none"), size = 0))
     print(present.path)

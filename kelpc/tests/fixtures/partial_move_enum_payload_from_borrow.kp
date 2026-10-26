@@ -10,7 +10,7 @@ fun take(h: &Held) => String {
     if let Held(text) = h {
         return text
     }
-    return String.from_str(s = "")
+    return ""
 }
 
 fun main() {

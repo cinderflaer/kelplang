@@ -15,7 +15,7 @@ fun main() {
     var names: List<String> = List.empty()
     each { n ->
         seen.push(n * 10)
-        names.push(String.from_str("n"))
+        names.push("n")
     }
     var i: int = 0
     while i < seen.len() {

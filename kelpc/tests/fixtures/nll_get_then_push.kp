@@ -6,11 +6,11 @@ impl "std/str"
 
 fun main() {
     var names: List<String> = List.empty()
-    names.push(String.from_str("alpha"))
-    names.push(String.from_str("beta"))
+    names.push("alpha")
+    names.push("beta")
     val first = names.get(0)
     print(first)
-    names.push(String.from_str("gamma"))
+    names.push("gamma")
     print(names.len())
 }
 // stdout-begin

@@ -30,7 +30,7 @@ fun span_of(re: mut regex.Regex, text: &str) => String {
     if let Some(x) = m {
         return str.concat("match ", x.text.as_str())
     }
-    return String.from_str("none")
+    return "none"
 }
 
 // The steps one `find` over `text` takes with a fresh counter.

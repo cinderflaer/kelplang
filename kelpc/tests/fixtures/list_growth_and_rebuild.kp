@@ -39,7 +39,7 @@ fun main() {
     var names: List<String> = List.empty()
     var n: i32 = 0
     while n < 300 {
-        names.push(String.from_str("element"))
+        names.push("element")
         n += 1
     }
     print(names.len())

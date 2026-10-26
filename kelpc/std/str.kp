@@ -607,7 +607,7 @@ fun concat(a: &str, b: &str) => String {
 /// algorithm, and the only allocation is the result.
 fun from_u64(n: u64) => String {
     if n == 0 {
-        return String.from_str("0")
+        return "0"
     }
     var rev: [u8; 20] = [0; 20]
     var count: int = 0
@@ -634,7 +634,7 @@ fun from_u64(n: u64) => String {
 /// only allocation.
 fun from_i64(n: i64) => String {
     if n == 0 {
-        return String.from_str("0")
+        return "0"
     }
     var neg = false
     var v = n

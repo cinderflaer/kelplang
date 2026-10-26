@@ -10,10 +10,10 @@ fun each(f: scoped fun(i32)) {
 
 fun main() {
     var s = State(items = List.empty())
-    s.items.push(String.from_str("a"))
+    s.items.push("a")
     val first = s.items.get(0)
     each { n ->
-        s.items.push(String.from_str("b"))
+        s.items.push("b")
     }
     print(first)
 }

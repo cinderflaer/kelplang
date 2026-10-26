@@ -24,7 +24,7 @@ fun main() {
     val h = thread.spawn(fun(u: move i64) => i64 {
         val back = tx.send(1)
         other.lock { v ->
-            v.push(String.from_str("held"))
+            v.push("held")
             panic("worker gives up")
         }
         return u

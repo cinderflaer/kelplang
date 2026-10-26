@@ -16,15 +16,15 @@ fun main() {
     print(parts.get(1).as_str())
 
     var all: List<String> = List.empty()
-    all.push(String.from_str("/a"))
-    all.push(String.from_str("b"))
-    all.push(String.from_str("c"))
+    all.push("/a")
+    all.push("b")
+    all.push("c")
     print(path.join_all(all))
 
     var abs: List<String> = List.empty()
-    abs.push(String.from_str("/a"))
-    abs.push(String.from_str("/etc"))
-    abs.push(String.from_str("x"))
+    abs.push("/a")
+    abs.push("/etc")
+    abs.push("x")
     print(path.join_all(abs))
 }
 // stdout-begin

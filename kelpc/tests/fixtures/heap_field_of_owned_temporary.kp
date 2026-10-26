@@ -22,7 +22,7 @@ enum Token {
     Blank
 }
 
-fun mkName() => Named = Named(r = String.from_str("aa"), name = String.from_str("bb"))
+fun mkName() => Named = Named(r = "aa", name = "bb")
 
 fun mkBag() => Bag {
     var xs: List<i32> = List.empty()
@@ -54,7 +54,7 @@ fun main() {
     // time its field is read.
     print(pass(mkName()).r)
     // An owned payload of a temporary `enum` scrutinee, bound as a borrow.
-    if let Word(t) = Token.Word(text = String.from_str("four")) {
+    if let Word(t) = Token.Word(text = "four") {
         print(t.len())
     } else {
         print(0)

@@ -1,7 +1,7 @@
 // Kernel stage 7: a static can hold only a Copy scalar, an array of integers,
 // a `datac` of those, or an `Atomic<T>`. A heap type needs a runtime to
 // allocate and free it, and a static has no lifetime to run one in.
-static S: String = String.from_str("x")
+static S: String = "x"
 
 fun main() {
     print(1)

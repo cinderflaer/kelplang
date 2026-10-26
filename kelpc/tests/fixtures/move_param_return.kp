@@ -33,10 +33,10 @@ fun measure(s: move String) => int {
 }
 
 fun main() {
-    print(option.expect(o = taken(String.from_str("abcd"), take = true), message = "x"))
-    print(option.is_none(o = taken(String.from_str("abcd"), take = false)))
-    print(length_if_any(String.from_str("abc"), n = 1))
-    print(measure(String.from_str("hello")))
+    print(option.expect(o = taken("abcd", take = true), message = "x"))
+    print(option.is_none(o = taken("abcd", take = false)))
+    print(length_if_any("abc", n = 1))
+    print(measure("hello"))
 }
 // stdout-begin
 // stdout: 4

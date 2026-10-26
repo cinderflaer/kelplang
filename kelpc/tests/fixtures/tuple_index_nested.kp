@@ -1,5 +1,5 @@
 fun mk() => (i32, (String, i32)) {
-    return (7, (String.from_str(s = "hi"), 9))
+    return (7, ("hi", 9))
 }
 fun main() {
     val t = mk()

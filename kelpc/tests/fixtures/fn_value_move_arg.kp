@@ -8,5 +8,5 @@ fun forward(s: String) => int {
 }
 
 fun main() {
-    print(forward(String.from_str("x")))
+    print(forward("x"))
 }

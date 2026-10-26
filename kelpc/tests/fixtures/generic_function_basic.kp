@@ -27,7 +27,7 @@ fun main() {
     print(repeat(x = "once", n = 0))
 
     var xs: List<String> = empty_of()
-    xs.push(String.from_str(s = "a"))
+    xs.push("a")
     print(length_of(xs = xs))
 
     val p = Pair(first = 4, second = 5)

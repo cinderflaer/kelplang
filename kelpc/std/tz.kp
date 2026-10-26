@@ -1200,7 +1200,7 @@ fun fixed(offset_seconds: i32) => Zone {
 /// `hh:mm`.
 fun fixed_name(offset_seconds: i32) => String {
     if offset_seconds == 0 {
-        return String.from_str("UTC")
+        return "UTC"
     }
     var out = String.empty()
     var secs = offset_seconds.to_i64()

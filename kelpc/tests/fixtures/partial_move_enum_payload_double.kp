@@ -18,5 +18,5 @@ fun take(h: move Held) => String {
 }
 
 fun main() {
-    print(take(Held.Two(text = String.from_str(s = "moved"), n = 1)))
+    print(take(Held.Two(text = "moved", n = 1)))
 }

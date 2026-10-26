@@ -25,11 +25,11 @@ fun overwrite_field(p: mut Holder, value: move String) {
 
 fun main() {
     var s = String.from_str("first")
-    overwrite(s, String.from_str("second"))
+    overwrite(s, "second")
     print(s)
 
     var h = Holder(name = String.from_str("alpha"))
-    overwrite_field(h, String.from_str("beta"))
+    overwrite_field(h, "beta")
     print(h.name)
 }
 // stdout-begin

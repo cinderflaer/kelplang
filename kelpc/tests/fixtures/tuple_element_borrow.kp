@@ -4,7 +4,7 @@
 // 10.2).
 fun main() {
     var xs: List<(String, i32)> = List.empty()
-    xs.push((String.from_str("a"), 1))
+    xs.push(("a", 1))
     val (text, n) = xs.get(i = 0)
     print(text)
     print(n)

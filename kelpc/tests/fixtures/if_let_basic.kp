@@ -33,7 +33,7 @@ fun main() {
 
     // An owned payload binds as a borrow, so reading through it is fine and
     // nothing is moved out of the matched value.
-    print(width(t = Token.Word(text = String.from_str(s = "four"))))
+    print(width(t = Token.Word(text = "four")))
     print(width(t = Token.Blank))
 
     // A temporary scrutinee, the shape the pattern form of `when` alone

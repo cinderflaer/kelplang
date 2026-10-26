@@ -18,8 +18,8 @@ fun main() {
     print(none.get(0))
 
     var names: List<String> = List.with_capacity(3)
-    names.push(String.from_str("a"))
-    names.push(String.from_str("b"))
+    names.push("a")
+    names.push("b")
     print(names.len())
     print(names.get(1).as_str())
 }

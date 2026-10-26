@@ -14,15 +14,15 @@ fun main() {
     // The error is hidden by the default: the `Err` payload is dropped, so
     // its type needs no `Copy`.
     val ok: result.Result<i32, String> = result.Result.Ok(value = 3)
-    val bad: result.Result<i32, String> = result.Result.Err(error = String.from_str("bad"))
+    val bad: result.Result<i32, String> = result.Result.Err(error = "bad")
     print(ok.unwrap_or(-1))
     print(bad.unwrap_or(-1))
 
     // The free forms still take their receiver as before.
-    val name: option.Option<String> = option.Option.Some(value = String.from_str("kelp"))
-    print(option.unwrap_or(o = name, fallback = String.from_str("none")))
+    val name: option.Option<String> = option.Option.Some(value = "kelp")
+    print(option.unwrap_or(o = name, fallback = "none"))
     val gone: option.Option<String> = option.Option.None
-    print(option.unwrap_or(o = gone, fallback = String.from_str("none")))
+    print(option.unwrap_or(o = gone, fallback = "none"))
     print(result.unwrap_or(r = ok, fallback = 0))
     print(result.unwrap_or(r = bad, fallback = 0))
 }

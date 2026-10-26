@@ -7,6 +7,6 @@ fun main() {
     var a = String.from_str("alpha")
     var b = String.from_str("beta")
     val w = if a.len() > 0 { a.as_str() } else { b.as_str() }
-    b = String.from_str("changed")
+    b = "changed"
     print(w)
 }

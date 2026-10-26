@@ -10,8 +10,8 @@ fun pick(a: option.Option<String>, b: option.Option<String>) => int {
 }
 
 fun main() {
-    print(pick(option.Option.Some(value = String.from_str(s = "ab")), option.Option.Some(value = String.from_str(s = "cde"))))
-    print(pick(option.Option.None, option.Option.Some(value = String.from_str(s = "cde"))))
+    print(pick(option.Option.Some(value = "ab"), option.Option.Some(value = "cde")))
+    print(pick(option.Option.None, option.Option.Some(value = "cde")))
 }
 // stdout-begin
 // stdout: 5

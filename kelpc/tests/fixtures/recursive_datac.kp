@@ -32,7 +32,7 @@ fun main() {
     var b = Branch(label = String.from_str("b1"), leaf = Box.empty())
     var l = Leaf(label = String.from_str("l1"), parent = Box.of(b))
     print(l.label)
-    b = Branch(label = String.from_str("b2"), leaf = Box.of(l))
+    b = Branch(label = "b2", leaf = Box.of(l))
     print(b.leaf.get().label)
     print(b.leaf.get().parent.get().label)
 }

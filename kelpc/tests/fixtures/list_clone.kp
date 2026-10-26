@@ -19,10 +19,10 @@ fun main() {
     print(xs.get(0))
 
     var words: List<String> = List.empty()
-    words.push(String.from_str(s = "alpha"))
-    words.push(String.from_str(s = "beta"))
+    words.push("alpha")
+    words.push("beta")
     val copy = words.clone()
-    words.set(0, String.from_str(s = "changed"))
+    words.set(0, "changed")
     print(copy.len())
     print(copy.get(0).as_str())
     print(words.get(0).as_str())

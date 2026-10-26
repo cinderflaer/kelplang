@@ -17,7 +17,7 @@ fun pick(flag: bool) => String {
     if flag {
         take(s)
     }
-    s = String.from_str("fresh")
+    s = "fresh"
     return s
 }
 

@@ -11,7 +11,7 @@ impl "std/result"
 
 fun half(n: i64) => result.Result<i64, String> {
     if n % 2 != 0 {
-        return result.Result.Err(error = String.from_str(s = "odd"))
+        return result.Result.Err(error = "odd")
     }
     return result.Result.Ok(value = n / 2)
 }
@@ -36,7 +36,7 @@ fun find(xs: &List<String>, needle: &str) => option.Option<i64> {
 // `?` on an `Option` out of the enclosing `Option`.
 fun index_of(xs: &List<String>, needle: &str) => option.Option<String> {
     val at = find(xs = xs, needle = needle)?
-    return option.Option.Some(value = String.from_str(s = "found"))
+    return option.Option.Some(value = "found")
 }
 
 fun main() {
@@ -50,8 +50,8 @@ fun main() {
     print(result.unwrap_or(r = bad, fallback = -1))
 
     var xs: List<String> = List.empty()
-    xs.push(String.from_str(s = "a"))
-    xs.push(String.from_str(s = "b"))
+    xs.push("a")
+    xs.push("b")
 
     // `unwrap` and `unwrap_or` take the option with `move` (A-11: the payload
     // is handed out by value), so each of them consumes the binding it is

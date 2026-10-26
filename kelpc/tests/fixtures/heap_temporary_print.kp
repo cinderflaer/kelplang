@@ -7,7 +7,7 @@ impl "std/str"
 
 fun main() {
     print(Bytes.from_str("x"))
-    print(String.from_str("y"))
+    print("y")
     print(str.to_upper("ab"))
     print("w = ${str.to_upper("cd")}")
 }

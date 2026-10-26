@@ -4,7 +4,7 @@ impl "std/fs"
 
 fun main() {
     val path = "/tmp/kelp_fs_set_mode.txt"
-    fs.write_text(path, String.from_str("x"))
+    fs.write_text(path, "x")
     fs.set_mode(path, 420)
     print(fs.metadata(path).mode)
     fs.set_mode(path, 493)

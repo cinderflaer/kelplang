@@ -5,7 +5,7 @@ datac Person(val name: Name)
 fun main() {
     var p = Person(name = Name(text = String.from_str("old")))
     val old = p.name.text
-    p.name.text = String.from_str("new")
+    p.name.text = "new"
     print(old)
     print(p.name.text)
 }

@@ -22,7 +22,7 @@ fun main() {
     print(words.len())
     print(str.join(words, "-"))
     print(str.split(s = "x", sep = "").len())
-    print(str.join(parts = List.of(String.from_str("solo")), sep = "-"))
+    print(str.join(parts = List.of("solo"), sep = "-"))
 }
 // stdout-begin
 // stdout: 4

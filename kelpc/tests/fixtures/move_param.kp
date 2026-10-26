@@ -32,19 +32,19 @@ fun main() {
     print(consume(a))
 
     // A temporary is already an owner: there is no binding to move out of.
-    print(consume(String.from_str("temp")))
+    print(consume("temp"))
 
-    print(pass_on(String.from_str("chained")))
+    print(pass_on("chained"))
 
     // Ownership comes back to the caller, which then drops it.
     val b = give_back(String.from_str("back"))
     print(b.len())
 
-    print(bag_size(Bag(name = String.from_str("bag"), items = List.of(String.from_str("one")))))
+    print(bag_size(Bag(name = "bag", items = List.of("one"))))
 
     var items: List<String> = List.empty()
-    items.push(String.from_str("x"))
-    items.push(String.from_str("y"))
+    items.push("x")
+    items.push("y")
     print(drain(items))
 }
 // stdout-begin

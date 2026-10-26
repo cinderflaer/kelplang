@@ -5,8 +5,8 @@ datac Person(val name: Name, val city: String)
 
 fun main() {
     val p = Person(
-        name = Name(text = String.from_str("Ada"), id = 7),
-        city = String.from_str("London")
+        name = Name(text = "Ada", id = 7),
+        city = "London"
     )
     val text = p.name.text
     print(text)

@@ -7,15 +7,15 @@ datac Name(val text: String, val id: i32)
 
 fun main() {
     var m: Map<Name, i32> = Map.empty()
-    m.insert(key = Name(text = String.from_str(s = "alpha"), id = 1), v = 10)
-    m.insert(key = Name(text = String.from_str(s = "beta"), id = 2), v = 20)
+    m.insert(key = Name(text = "alpha", id = 1), v = 10)
+    m.insert(key = Name(text = "beta", id = 2), v = 20)
     print(m.len())
-    print(m.get(key = Name(text = String.from_str(s = "alpha"), id = 1)))
-    print(m.has(key = Name(text = String.from_str(s = "alpha"), id = 2)))
-    print(m.get(key = Name(text = String.from_str(s = "beta"), id = 2)))
-    print(m.remove(key = Name(text = String.from_str(s = "alpha"), id = 1)))
+    print(m.get(key = Name(text = "alpha", id = 1)))
+    print(m.has(key = Name(text = "alpha", id = 2)))
+    print(m.get(key = Name(text = "beta", id = 2)))
+    print(m.remove(key = Name(text = "alpha", id = 1)))
     print(m.len())
-    print(m.has(key = Name(text = String.from_str(s = "beta"), id = 2)))
+    print(m.has(key = Name(text = "beta", id = 2)))
 }
 // stdout-begin
 // stdout: 2

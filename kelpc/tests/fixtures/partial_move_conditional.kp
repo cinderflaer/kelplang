@@ -19,8 +19,8 @@ fun take_it(bag: move Bag, take: bool) => i32 {
 }
 
 fun main() {
-    print(take_it(bag = Bag(xs = List.of(1), name = String.from_str("a")), take = true))
-    print(take_it(bag = Bag(xs = List.of(2), name = String.from_str("b")), take = false))
+    print(take_it(bag = Bag(xs = List.of(1), name = "a"), take = true))
+    print(take_it(bag = Bag(xs = List.of(2), name = "b"), take = false))
 }
 // stdout-begin
 // stdout: a

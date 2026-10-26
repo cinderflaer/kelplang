@@ -4,16 +4,16 @@
 // (it is in the AddressSanitizer pass).
 fun main() {
     var words: List<String> = List.empty()
-    words.push(String.from_str("pear"))
-    words.push(String.from_str("apple"))
-    words.push(String.from_str("fig"))
+    words.push("pear")
+    words.push("apple")
+    words.push("fig")
     // Byte order, length-aware: "apple" < "fig" < "pear".
     words.sort()
     print(words.get(0))
     print(words.get(1))
     print(words.get(2))
-    print(words.contains(String.from_str("fig")))
-    print(words.contains(String.from_str("kiwi")))
+    print(words.contains("fig"))
+    print(words.contains("kiwi"))
     // `contains` borrows the needle for an owned element type, so the
     // temporary above is never moved into the call.
     var middle = words.slice(1, 3)
@@ -21,7 +21,7 @@ fun main() {
     print(middle.get(0))
     middle.clear()
 
-    words.insert(0, String.from_str("fig"))
+    words.insert(0, "fig")
     print(words.len())
     print(words.get(0))
     print(words.get(1))

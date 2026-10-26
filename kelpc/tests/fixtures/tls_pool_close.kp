@@ -35,7 +35,7 @@ fun url_for(path: &str) => String {
 fun req_for(path: &str) => http.Request {
     val url = url_for(path)
     return http.Request(
-        method = String.from_str("GET"),
+        method = "GET",
         url = url,
         headers = hdrs(),
         body = Bytes.empty(),

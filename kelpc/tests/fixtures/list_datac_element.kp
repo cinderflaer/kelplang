@@ -7,8 +7,8 @@ datac Deck(val cards: List<Card>)
 
 fun main() {
     var cards: List<Card> = List.empty()
-    cards.push(Card(rank = 1, suit = String.from_str("hearts")))
-    cards.push(Card(rank = 2, suit = String.from_str("spades")))
+    cards.push(Card(rank = 1, suit = "hearts"))
+    cards.push(Card(rank = 2, suit = "spades"))
     var deck = Deck(cards = cards)
     print(deck.cards.len())
     print(deck.cards.get(1).suit)

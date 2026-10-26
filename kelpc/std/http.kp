@@ -1310,7 +1310,7 @@ fun follow_url_try(client: Client, base: Url, resp: Response, hops: i32) => resu
         return result.Result.Ok(value = String.empty())
     }
     if hops <= 0 {
-        return result.Result.Err(error = HttpErr.Redirects(reason = String.from_str("http: too many redirects")))
+        return result.Result.Err(error = HttpErr.Redirects(reason = "http: too many redirects"))
     }
     return result.Result.Ok(value = absolute_url(base, loc.as_str()))
 }
@@ -1393,7 +1393,7 @@ fun send_fresh_try(
     if keep_body_on(resp.status) {
         return send_fresh_try(client, method, next, headers, body, hops - 1)
     }
-    return send_fresh_try(client, String.from_str("GET"), next, headers, Bytes.empty(), hops - 1)
+    return send_fresh_try(client, "GET", next, headers, Bytes.empty(), hops - 1)
 }
 
 /// A single exchange on a connection the caller already holds: parse the URL,
@@ -1698,7 +1698,7 @@ fun pooled_hop_try(
         return pooled_hop_try(
             p,
             client,
-            String.from_str("GET"),
+            "GET",
             next,
             headers,
             Bytes.empty(),
@@ -1719,7 +1719,7 @@ fun pooled_hop_try(
     return pooled_hop_try(
         p,
         client,
-        String.from_str("GET"),
+        "GET",
         next,
         headers,
         Bytes.empty(),
@@ -1799,7 +1799,7 @@ fun send_tls_try(
     if keep_body_on(resp.status) {
         return send_tls_try(client, opts, method, next, headers, body, hops - 1)
     }
-    return send_tls_try(client, opts, String.from_str("GET"), next, headers, Bytes.empty(), hops - 1)
+    return send_tls_try(client, opts, "GET", next, headers, Bytes.empty(), hops - 1)
 }
 
 /// A `GET` with the TLS options: `try_get` for a private CA and mTLS.
@@ -1839,7 +1839,7 @@ fun try_get(url: &str) => result.Result<Response, HttpErr> {
 
 /// A GET request for `url`.
 fun make_get(url: &str) => Request = Request(
-    method = String.from_str("GET"),
+    method = "GET",
     url = String.from_str(url),
     headers = empty_headers(),
     body = Bytes.empty(),
@@ -1848,9 +1848,9 @@ fun make_get(url: &str) => Request = Request(
 /// Panics: as `get`.
 fun post_text(url: &str, body: &str, content_type: &str) => Response {
     var hs: List<Header> = List.empty()
-    hs.push(Header(name = String.from_str("Content-Type"), value = String.from_str(content_type)))
+    hs.push(Header(name = "Content-Type", value = String.from_str(content_type)))
     val req = Request(
-        method = String.from_str("POST"),
+        method = "POST",
         url = String.from_str(url),
         headers = hs,
         body = Bytes.from_str(body),
@@ -1973,9 +1973,9 @@ fun mut Multipart.finish() => Bytes {
 /// `Content-Type`.
 fun multipart_request(url: &str, form: mut Multipart) => Request {
     var hs: List<Header> = List.empty()
-    hs.push(Header(name = String.from_str("Content-Type"), value = form.content_type()))
+    hs.push(Header(name = "Content-Type", value = form.content_type()))
     return Request(
-        method = String.from_str("POST"),
+        method = "POST",
         url = String.from_str(url),
         headers = hs,
         body = form.finish(),
@@ -2168,115 +2168,115 @@ fun ServerRequest.path_segments() => List<String> {
 /// The reason phrase for a status code.
 fun srv_reason(code: i32) => String {
     if code == 100 {
-        return String.from_str("Continue")
+        return "Continue"
     }
     if code == 200 {
-        return String.from_str("OK")
+        return "OK"
     }
     if code == 201 {
-        return String.from_str("Created")
+        return "Created"
     }
     if code == 202 {
-        return String.from_str("Accepted")
+        return "Accepted"
     }
     if code == 204 {
-        return String.from_str("No Content")
+        return "No Content"
     }
     if code == 206 {
-        return String.from_str("Partial Content")
+        return "Partial Content"
     }
     if code == 301 {
-        return String.from_str("Moved Permanently")
+        return "Moved Permanently"
     }
     if code == 302 {
-        return String.from_str("Found")
+        return "Found"
     }
     if code == 303 {
-        return String.from_str("See Other")
+        return "See Other"
     }
     if code == 304 {
-        return String.from_str("Not Modified")
+        return "Not Modified"
     }
     if code == 307 {
-        return String.from_str("Temporary Redirect")
+        return "Temporary Redirect"
     }
     if code == 308 {
-        return String.from_str("Permanent Redirect")
+        return "Permanent Redirect"
     }
     if code == 400 {
-        return String.from_str("Bad Request")
+        return "Bad Request"
     }
     if code == 401 {
-        return String.from_str("Unauthorized")
+        return "Unauthorized"
     }
     if code == 403 {
-        return String.from_str("Forbidden")
+        return "Forbidden"
     }
     if code == 404 {
-        return String.from_str("Not Found")
+        return "Not Found"
     }
     if code == 405 {
-        return String.from_str("Method Not Allowed")
+        return "Method Not Allowed"
     }
     if code == 408 {
-        return String.from_str("Request Timeout")
+        return "Request Timeout"
     }
     if code == 409 {
-        return String.from_str("Conflict")
+        return "Conflict"
     }
     if code == 410 {
-        return String.from_str("Gone")
+        return "Gone"
     }
     if code == 411 {
-        return String.from_str("Length Required")
+        return "Length Required"
     }
     if code == 413 {
-        return String.from_str("Content Too Large")
+        return "Content Too Large"
     }
     if code == 414 {
-        return String.from_str("URI Too Long")
+        return "URI Too Long"
     }
     if code == 415 {
-        return String.from_str("Unsupported Media Type")
+        return "Unsupported Media Type"
     }
     if code == 417 {
-        return String.from_str("Expectation Failed")
+        return "Expectation Failed"
     }
     if code == 422 {
-        return String.from_str("Unprocessable Content")
+        return "Unprocessable Content"
     }
     if code == 429 {
-        return String.from_str("Too Many Requests")
+        return "Too Many Requests"
     }
     if code == 431 {
-        return String.from_str("Request Header Fields Too Large")
+        return "Request Header Fields Too Large"
     }
     if code == 500 {
-        return String.from_str("Internal Server Error")
+        return "Internal Server Error"
     }
     if code == 501 {
-        return String.from_str("Not Implemented")
+        return "Not Implemented"
     }
     if code == 502 {
-        return String.from_str("Bad Gateway")
+        return "Bad Gateway"
     }
     if code == 503 {
-        return String.from_str("Service Unavailable")
+        return "Service Unavailable"
     }
     if code == 504 {
-        return String.from_str("Gateway Timeout")
+        return "Gateway Timeout"
     }
     if code == 505 {
-        return String.from_str("HTTP Version Not Supported")
+        return "HTTP Version Not Supported"
     }
-    return String.from_str("Unknown")
+    return "Unknown"
 }
 
 /// A response with a status, a content type and a body.
 fun srv_response(code: i32, content_type: &str, body: move Bytes) => ServerResponse {
     var hs: List<Header> = List.empty()
     if !str.is_empty(content_type) {
-        hs.push(Header(name = String.from_str("Content-Type"), value = String.from_str(content_type)))
+        hs.push(Header(name = "Content-Type", value = String.from_str(content_type)))
     }
     return ServerResponse(status = code, headers = hs, body = body)
 }

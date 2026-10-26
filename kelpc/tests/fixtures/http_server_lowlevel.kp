@@ -9,7 +9,7 @@ impl "std/str"
 fun show_opt(o: move option.Option<String>) => String {
     return when o {
         Some(s) -> s
-        None -> String.from_str("<none>")
+        None -> "<none>"
     }
 }
 
@@ -32,13 +32,13 @@ fun main() {
 
     // The accessors on a request built by hand.
     var hs: List<http.Header> = List.empty()
-    hs.push(http.Header(name = String.from_str("X-One"), value = String.from_str("1")))
-    hs.push(http.Header(name = String.from_str("x-one"), value = String.from_str("2")))
+    hs.push(http.Header(name = "X-One", value = "1"))
+    hs.push(http.Header(name = "x-one", value = "2"))
     val req = http.ServerRequest(
-        method = String.from_str("GET"),
-        target = String.from_str("/a/b%20c//d/?x=1&y=%41+b&flag&e=&x=2&bad=%zz"),
-        path = String.from_str("/a/b%20c//d/"),
-        query = String.from_str("x=1&y=%41+b&flag&e=&x=2&bad=%zz"),
+        method = "GET",
+        target = "/a/b%20c//d/?x=1&y=%41+b&flag&e=&x=2&bad=%zz",
+        path = "/a/b%20c//d/",
+        query = "x=1&y=%41+b&flag&e=&x=2&bad=%zz",
         headers = hs,
         body = Bytes.empty(),
     )

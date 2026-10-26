@@ -12,7 +12,7 @@ fun main() {
         print(v * 10)
     }
     var n: Map<i32, String> = Map.empty()
-    n.insert(7, String.from_str(s = "seven"))
+    n.insert(7, "seven")
     for (key, name) in n {
         print(key)
         print(name.len())

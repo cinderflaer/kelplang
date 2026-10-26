@@ -29,7 +29,7 @@ fun main() {
     print(doubled)
 
     val name = loop {
-        break String.from_str(s = "done")
+        break "done"
     }
     print(name.len())
 

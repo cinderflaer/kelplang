@@ -12,7 +12,7 @@ enum Held {
 fun take(h: move Held) => String {
     val s = when h {
         Two(text, _) -> text
-        Empty -> String.from_str(s = "none")
+        Empty -> "none"
     }
     return s
 }
@@ -20,14 +20,14 @@ fun take(h: move Held) => String {
 fun main() {
     // A `move` parameter is an owned local in the callee, so its payload comes
     // out the same way a `val` binding's does.
-    print(take(Held.Two(text = String.from_str(s = "moved"), n = 1)))
+    print(take(Held.Two(text = "moved", n = 1)))
 
     // The payload that stayed is still readable: only the projection that was
     // moved out is gone.
     val h = Held.Two(text = String.from_str(s = "kept"), n = 2)
     val text = when h {
         Two(t, _) -> t
-        Empty -> String.from_str(s = "")
+        Empty -> ""
     }
     val n = when h {
         Two(_, m) -> m

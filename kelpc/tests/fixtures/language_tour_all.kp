@@ -35,7 +35,7 @@ impl ops.Add for Vec2 {
 }
 
 impl fmt.Display for Vec2 {
-    fun Self.to_text() => String = String.from_str("v")
+    fun Self.to_text() => String = "v"
 }
 
 datac Buf<const N: usize>(var data: [i32; N])

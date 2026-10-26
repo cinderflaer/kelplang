@@ -19,11 +19,11 @@ fun main() {
     val named = String.from_str("named")
     val view = "abcdef".view()
 
-    print("1 owned=${String.from_str("one")} scalar=${7} float=${1.5}")
+    print("1 owned=${"one"} scalar=${7} float=${1.5}")
     print("2 borrowed=$named after=${9}")
     print("3 view=${view.slice(1, 4)} tail=${42}")
     print("4 bytes=${Bytes.from_str("by")} len=${named.len()}")
-    print("5 two buffers=${str.to_upper("ab")}${String.from_str("cd")}")
+    print("5 two buffers=${str.to_upper("ab")}${"cd"}")
 }
 // stdout-begin
 // stdout: 1 owned=one scalar=7 float=1.500000

@@ -7,6 +7,6 @@ impl "std/str"
 fun main() {
     var s = String.from_str("hi")
     val v = s.view()
-    s = String.from_str("bye")
+    s = "bye"
     print(v)
 }
