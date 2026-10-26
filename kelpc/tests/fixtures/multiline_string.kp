@@ -1,0 +1,21 @@
+// Multi-line string literal (syntax issue 260). A `"""` block is the text
+// between its opening and its closing line, with the closing line's
+// indentation removed and a newline after every line. The value equals the
+// same text written with `\n` escapes, so the two compare equal.
+fun main() {
+    val block = """
+        first
+          indented
+
+        say "hi" and """quoted"""
+        \"""
+        """
+    val plain = "first\n  indented\n\nsay \"hi\" and \"\"\"quoted\"\"\"\n\"\"\"\n"
+    print(str.eq(block, plain))
+    print(str.len(block))
+    print(str.len(block) == str.len(plain))
+}
+// stdout-begin
+// stdout: true
+// stdout: 48
+// stdout: true

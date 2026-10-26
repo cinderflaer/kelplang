@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1263 ran=619 c_refused=588 hosted_refused=9 excluded=47
+# counts candidates=1265 ran=620 c_refused=589 hosted_refused=9 excluded=47
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -594,6 +594,8 @@ fixture_move_param_str	c-refused		error: 'move' cannot be written on 'str' — a
 fixture_move_param_use_after	c-refused		error: use of moved value 'a'	
 fixture_move_then_reinit	ran	exit 0		a26506a61d66cc295632c94567211745d278e5a12de843d3c3acfd110aaa4139
 fixture_move_while_borrowed	c-refused		error: cannot move 'p' while it is borrowed	
+fixture_multiline_string	ran	exit 0		975106c1f7ea1d7591512a1b09659c9f453ff96f1f0857db0a2909f8c08497fe
+fixture_multiline_string_less_indented	c-refused		error: line 6 of the multi-line string is less indented than its closing """	
 fixture_must_use_send_dropped	c-refused		error: the result of 'std.sync.Sender#send' must be used	
 fixture_must_use_user_dropped	c-refused		error: the result of 'check' must be used	
 fixture_must_use_user_fun	ran	exit 0		65a8fb85b2569b50f3416e07f76f1be70ea57ad05d45d220094a36fe32651c27

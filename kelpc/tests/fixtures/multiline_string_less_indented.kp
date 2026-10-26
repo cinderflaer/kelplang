@@ -1,0 +1,9 @@
+// A line of a multi-line string block that is less indented than its closing
+// line is refused: every line must start with the closing line's indentation.
+fun main() {
+    val s = """
+        ok
+      short
+        """
+    print(s)
+}
