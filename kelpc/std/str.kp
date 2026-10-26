@@ -2,7 +2,6 @@
 impl "std/mem"
 impl "std/option"
 impl "std/result"
-impl "std/iter"
 
 // BEGIN GENERATED: Unicode simple case table data (kelpc/tools/gen_case_table.pl)
 // Unicode 16.0.0 simple case mappings, one entry per code point that changes.
@@ -69,30 +68,30 @@ fun char_count(s: &str) => int {
     return count
 }
 
-/// The bytes of a `str`, one `u8` per pass, in order, from `str.bytes`.
+/// The bytes of a `str`, one `u8` per pass, in order. `str.bytes` makes one,
+/// with `S` = `String`: the iterator owns a copy of the text.
 ///
-/// The iterator owns a copy of the text. A `datac` may store a `View` only
-/// when its owner is moved into the same value, and a borrowed `str` field
-/// would need lifetime syntax, so the text is copied once when the walk starts.
-pub datac ByteIter(
+/// `S` is a type parameter so that no `datac` in this module holds a `String`
+/// field. A freestanding build without an allocator refuses such a field in
+/// any program that loads `std/str`, used or not, and a borrowed `str` or
+/// `View` cannot be stored in a `datac` (only a literal can). Written this way
+/// the owner type is instantiated only by a call to `str.bytes`.
+pub datac ByteIter<S>(
     /// The text being walked, owned by the iterator.
-    var text: String,
+    var text: S,
     /// The index of the next byte to yield.
     var at: int,
 )
 
-impl iter.Iterator for ByteIter {
-    type Item = u8
-    /// Yields the next byte of the text, or `None` once every byte has been yielded.
-    fun mut Self.next() => option.Option<u8> {
-        val sv = self.text.view()
-        if self.at >= sv.len() {
-            return option.Option.None
-        }
-        val b = sv.get(self.at)
-        self.at += 1
-        return option.Option.Some(value = b)
+/// Yields the next byte of the text, or `None` once every byte has been yielded.
+fun mut ByteIter<S>.next() => option.Option<u8> {
+    val sv = self.text.view()
+    if self.at >= sv.len() {
+        return option.Option.None
     }
+    val b = sv.get(self.at)
+    self.at += 1
+    return option.Option.Some(value = b)
 }
 
 /// The bytes of `s`, in order, for `for b in str.bytes(s) { ... }`.
@@ -100,7 +99,7 @@ impl iter.Iterator for ByteIter {
 /// Each item is one `u8`, so a multi-byte character yields its UTF-8 bytes
 /// one at a time and the count is `len(s)`, not `char_count(s)`. The empty
 /// string yields nothing. The walk copies `s` once, when it starts.
-pub fun bytes(s: &str) => ByteIter {
+pub fun bytes(s: &str) => ByteIter<String> {
     return ByteIter(text = String.from_str(s), at = 0)
 }
 
