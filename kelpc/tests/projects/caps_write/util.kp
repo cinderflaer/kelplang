@@ -1,23 +1,24 @@
 impl "std/fs"
+impl "std/result"
 
 pub fun exercise() {
     val text = String.from_str("hello")
-    fs.write_text("__KELP_SCRATCH__/kelp_caps_write/a.txt", text)
+    result.expect(fs.write_text("__KELP_SCRATCH__/kelp_caps_write/a.txt", text), "fs.write_text: the call failed")
     print(fs.exists("__KELP_SCRATCH__/kelp_caps_write/a.txt"))
     print(fs.size("__KELP_SCRATCH__/kelp_caps_write/a.txt"))
 
-    fs.rename("__KELP_SCRATCH__/kelp_caps_write/a.txt", "__KELP_SCRATCH__/kelp_caps_write/b.txt")
+    result.expect(fs.rename("__KELP_SCRATCH__/kelp_caps_write/a.txt", "__KELP_SCRATCH__/kelp_caps_write/b.txt"), "fs.rename: the call failed")
     print(fs.exists("__KELP_SCRATCH__/kelp_caps_write/a.txt"))
-    val back = fs.read("__KELP_SCRATCH__/kelp_caps_write/b.txt")
+    val back = result.expect(fs.read("__KELP_SCRATCH__/kelp_caps_write/b.txt"), "fs.read: the call failed")
     print(back)
 
-    fs.remove("__KELP_SCRATCH__/kelp_caps_write/b.txt")
+    result.expect(fs.remove("__KELP_SCRATCH__/kelp_caps_write/b.txt"), "fs.remove: the call failed")
     print(fs.exists("__KELP_SCRATCH__/kelp_caps_write/b.txt"))
 
     fs.mkdir("__KELP_SCRATCH__/kelp_caps_write/sub")
     print(fs.is_dir("__KELP_SCRATCH__/kelp_caps_write/sub"))
 
     val bytes = Bytes.from_str("raw")
-    fs.write("__KELP_SCRATCH__/kelp_caps_write/c.bin", bytes)
+    result.expect(fs.write("__KELP_SCRATCH__/kelp_caps_write/c.bin", bytes), "fs.write: the call failed")
     print(fs.size("__KELP_SCRATCH__/kelp_caps_write/c.bin"))
 }

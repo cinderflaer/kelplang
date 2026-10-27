@@ -376,8 +376,8 @@ fixture_from_conversion	ran	exit 0		831963a51c265769736ad376fdfaecccd89093ad9108
 fixture_from_duplicate_impl	c-refused		error: trait 'std.convert.From' already has an impl for 'T' (written in module 'from_duplicate_impl')	
 fixture_from_no_impl	c-refused		error: '?' cannot convert a failure	
 fixture_from_trait_name	ran	exit 0		41912244554878bbf7e5d2229e643eae81197531648d2e687302682e5fdf92e7
-fixture_fs_errno	ran	exit 1	panic: fs.read: cannot open file	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-fixture_fs_fallible	ran	exit 0		82806136f6dfec799b52f1244ea385d797f4068efaafdd13dc3224a2f7960070
+fixture_fs_errno	ran	exit 1	panic: fs.read: the call failed	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_fs_fallible	ran	exit 0		2e9a0e590ff159ded25427940e8f16089e81d09abe9657a2af522159cae2faa6
 fixture_fs_path_family	ran	exit 0		462641da31553a54fdf5397e9fc3130cf1a57e55093142256b65b98e3c6358fd
 fixture_fs_set_mode	ran	exit 0		494ba3921243417df1b58d7c1180209b755eade914fda5ab034b6175024cadde
 fixture_fs_symlink_kind	ran	exit 0		a19d813c8a80931580be266c6e0447dfc430e2cb0d2adf1bfbabf86e0ea332db
@@ -708,7 +708,7 @@ fixture_pool_panics	ran	exit 0		c6a456485a6e0e11260f7a00907500070f376fa7b22cf615
 fixture_pool_spawn_after_join	ran	exit 1	panic: Pool.spawn: the pool has been joined	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_pool_sum	ran	exit 0		c8dd0456c8fca3d7d7556b73ddbcd6efb60391447453eeb000e4bdbf5daa4499
 fixture_pool_zero_workers	ran	exit 1	panic: pool.new: a pool needs at least one worker	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-fixture_process_spawn	ran	exit 0		93044ad5e1d3331ec1c0158e243b6c828ed732a4cf2b4cf4a5a2c9e0f797c536
+fixture_process_spawn	ran	exit 0		92029bbd9edaf842393bca29429d73bc647c02645d72ab2831659593b1087133
 fixture_ptr_from_fn	ran	exit 0		6bbb4fb214212d1fd3d1a84b515b85180428fa070e3b98b9e1b75925b258c054
 fixture_ptr_from_fn_closure	c-refused		error: 'Ptr.from_fn' takes a function, but this is a closure	
 fixture_push_to_val_string	c-refused		error: cannot assign to 's'	
@@ -1066,7 +1066,7 @@ project_caps_dep_refused	c-refused		error: module 'deps/polyp/lib' uses the 'fs'
 project_caps_entry_pattern_denied	c-refused		error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_entry_pattern_denied/**' must start with '/'	
 project_caps_entry_restricted	c-refused		error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_entry_restricted/**' must start with '/'	
 project_caps_entry_ungranted	c-refused		error: 'std.fs.exists' needs the 'fs' capability, which module 'main' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(fs = ["<pattern>"])`)	
-project_caps_report	ran	exit 1	panic: fs.read: cannot open file	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+project_caps_report	ran	exit 1	panic: fs.read_text: the call failed	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 project_closure_datac_param	ran	exit 0		9898479bfabd961cde3c91327af8e70831a1eb0d93a55681d0c47b67ce3b0508
 project_convert_cross	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
 project_ffi_bad_domain	c-refused		error: 'disk' is not a capability domain; v1 has fs, net, process, env, time, rand, machine, ui, mmio, irq, frames	

@@ -18,8 +18,7 @@ fun main() {
     // marker and exits, so no drain loop is needed.
     print(runner.spawn_marker_code(dir))
 
-    // A directory the child cannot enter: code 126, with the reason on the
-    // child's stderr.
+    // A directory that is not there: refused before the fork, as `DirNotFound`.
     print(runner.bad_dir_code(dir))
     print(runner.bad_dir_message(dir))
 

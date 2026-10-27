@@ -7,6 +7,7 @@
 // covers `i64`/`bool`/`datac` elements and `float_datac_containers` covers a
 // `datac` whose field is a float, so the plain float element is the one shape
 // missing.
+impl "std/result"
 fun main() {
     var fs: List<f64> = List.empty()
     fs.push(3.5)

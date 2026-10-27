@@ -1,7 +1,8 @@
-// A syscall failure names its cause: the `panic: <msg>` line is unchanged,
-// and `errno` plus `strerror` follow on a second line (open item 47).
+// A failed `result.expect` panics with its message. The cause is the `Err`,
+// which a caller that wants the errno matches on (open item 47).
 impl "std/fs"
+impl "std/result"
 
 fun main() {
-    fs.read("/kelp-no-such-path/probe")
+    val _probe = result.expect(fs.read("/kelp-no-such-path/probe"), "fs.read: the call failed")
 }

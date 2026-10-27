@@ -73,7 +73,7 @@ fun main() {
     var pool = http.pool("127.0.0.1", server_port())
 
     // A 429 naming a delay and a spent per-route bucket.
-    val limited = pool.send(req_for("/limited"))
+    val limited = result.expect(pool.send(req_for("/limited")), "pool.send: the call failed")
     print(limited.status)
     print_u64_opt(limited.retry_after())
     val rl = limited.rate_limit()
@@ -86,7 +86,7 @@ fun main() {
     // A plain 200 with none of these headers: absence reads clean, not as a
     // panic, and it is not confused with a present-but-zero header (the 429
     // above already showed `remaining = 0` printing as `0`, not `none`).
-    val plain = pool.send(req_for("/plain"))
+    val plain = result.expect(pool.send(req_for("/plain")), "pool.send: the call failed")
     print(plain.status)
     print_u64_opt(plain.retry_after())
     val rl2 = plain.rate_limit()

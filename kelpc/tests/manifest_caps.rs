@@ -70,10 +70,10 @@ impl Project {
 }
 
 /// `util` reads `net` through `std/net` with a bare `impl`: no clause at all.
-const UTIL_BARE_NET: &str = "impl \"std/net\"\n\npub fun go() {\n    val s = net.connect(\"127.0.0.1\", 9)\n    net.close(s)\n}\n";
+const UTIL_BARE_NET: &str = "impl \"std/result\"\nimpl \"std/net\"\n\npub fun go() {\n    val s = result.expect(net.connect(\"127.0.0.1\", 9), \"net.connect: the call failed\")\n    net.close(s)\n}\n";
 
 /// `util` reads a file under `data/` through `std/fs` with a bare `impl`.
-const UTIL_BARE_FS: &str = "impl \"std/fs\"\n\npub fun go() {\n    print(fs.read_text(\"__T__/data/ok.txt\"))\n}\n";
+const UTIL_BARE_FS: &str = "impl \"std/fs\"\n\npub fun go() {\n    print(result.expect(fs.read_text(\"__T__/data/ok.txt\"), \"fs.read_text: the call failed\"))\n}\n";
 
 fn main_importing_util(clause: &str) -> String {
     format!("impl \"util\"{clause}\n\nfun main() {{\n    util.go()\n}}\n")

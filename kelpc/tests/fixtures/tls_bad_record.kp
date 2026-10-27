@@ -41,16 +41,16 @@ fun arg_port() => u16 {
 }
 
 fun main() {
-    var s = net.connect("127.0.0.1", arg_port())
+    var s = result.expect(net.connect("127.0.0.1", arg_port()), "net.connect: the call failed")
     s.set_timeout(5000)
-    val hs = tls.try_handshake(s, "127.0.0.1")
+    val hs = tls.handshake(s, "127.0.0.1")
     val t = when hs {
         Ok(v) -> v
         Err(e) -> fail(e)
     }
     var reading = true
     while reading {
-        val r = tls.try_read(t, 4096)
+        val r = tls.read(t, 4096)
         when r {
             Ok(b) -> {
                 if b.is_empty() {
@@ -66,6 +66,6 @@ fun main() {
     }
     // The failed read still left this side owning the `SSL*`, so the session is
     // ended before the socket goes: `try_shutdown` frees it either way.
-    val sd = tls.try_shutdown(t)
+    val sd = tls.shutdown(t)
     net.close(s)
 }

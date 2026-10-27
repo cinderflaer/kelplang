@@ -141,7 +141,7 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
 }
 
 fun fd_count() => int {
-    val listing = fs.list("/proc/self/fd")
+    val listing = result.expect(fs.list("/proc/self/fd"), "fs.list: the call failed")
     return listing.len()
 }
 

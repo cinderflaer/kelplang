@@ -4,6 +4,7 @@ impl "std/fs"
 impl "std/process"
 impl "std/str"
 impl "std/fmt"
+impl "std/result"
 
 fun usage() {
     print("usage: download <url> <output-path>")
@@ -26,7 +27,7 @@ fun main() {
     // Panics if the URL has no host, is not `http`, or the connection fails /
     // the capability denies the host, all of which are the programmer's
     // problem, not a caller's. A *response* that says "no" is not a panic.
-    val resp = http.get(url.as_str())
+    val resp = result.expect(http.get(url.as_str()), "http.get: the call failed")
 
     if !resp.is_ok() {
         print!("download failed: HTTP ")
@@ -49,9 +50,9 @@ fun main() {
     // this is the byte-exact path: no utf-8 validation, no text round trip. A
     // `String` in Kelp is validated utf-8 and could not hold an image.
     val part = str.concat(out.as_str(), ".part")
-    fs.write(part, resp.body)
+    result.expect(fs.write(part, resp.body), "fs.write: the call failed")
     fs.sync(part)
-    fs.rename(part, out.as_str())
+    result.expect(fs.rename(part, out.as_str()), "fs.rename: the call failed")
 
     // Read the size back off the disk rather than trusting the write: the
     // check that costs one syscall and catches the class of bug where a

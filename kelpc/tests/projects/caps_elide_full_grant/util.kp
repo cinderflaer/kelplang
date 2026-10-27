@@ -1,5 +1,6 @@
 impl "std/fs"
+impl "std/result"
 
 // A thin forwarding wrapper, the same shape `std/fs.kp`'s own `read_text`
 // takes over `read_raw`: one line, the path argument passed on unchanged.
-pub fun read_note() => String = fs.read_text("__KELP_SCRATCH__/kelp_caps_elide_full_grant/note.txt")
+pub fun read_note() => String = result.expect(fs.read_text("__KELP_SCRATCH__/kelp_caps_elide_full_grant/note.txt"), "fs.read_text: the call failed")

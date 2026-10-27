@@ -1,12 +1,13 @@
 impl "std/fs"
 impl "std/str"
+impl "std/result"
 
 // The helper declares no capability of its own: whatever it holds came in on
 // its importer's `caps(*)`. The two files are in unrelated trees, so no single
 // narrow `fs` pattern could have covered both; reading both is what proves the
 // whole-resource wildcard, not one pattern, was delegated.
 pub fun read_two() => String {
-    val first = fs.read_text("__KELP_SCRATCH__/kelp_caps_star/first.txt")
-    val second = fs.read_text("__KELP_SCRATCH__/kelp_caps_star_elsewhere/second.txt")
+    val first = result.expect(fs.read_text("__KELP_SCRATCH__/kelp_caps_star/first.txt"), "fs.read_text: the call failed")
+    val second = result.expect(fs.read_text("__KELP_SCRATCH__/kelp_caps_star_elsewhere/second.txt"), "fs.read_text: the call failed")
     return str.concat(first, second.as_str())
 }

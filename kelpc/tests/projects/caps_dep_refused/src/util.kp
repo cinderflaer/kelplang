@@ -1,3 +1,4 @@
 impl "std/fs"
+impl "std/result"
 
-pub fun read_note() => String = fs.read_text("/var/log/app/note.txt")
+pub fun read_note() => String = result.expect(fs.read_text("/var/log/app/note.txt"), "fs.read_text: the call failed")

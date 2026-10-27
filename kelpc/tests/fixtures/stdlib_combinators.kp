@@ -68,11 +68,10 @@ fun main() {
     print(result.expect_err(r = failed, message = "ok"))
 
     // `and_then` chains, `or_else` recovers, `each` observes.
-    val chained = parse_positive(4).and_then(parse_positive)
-    print(result.expect(r = chained, message = "err"))
+    print(result.expect(r = parse_positive(4).and_then(parse_positive), message = "err"))
     val recovered = parse_positive(-1).or_else(fun(e: &i32) => result.Result<i32, i32> = result.Result.Ok(value = e + 10))
     print(result.expect(r = recovered, message = "err"))
-    chained.each(fun(n: &i32) { print(n) })
+    parse_positive(4).and_then(parse_positive).each(fun(n: &i32) { print(n) })
 }
 // stdout-begin
 // stdout: 5

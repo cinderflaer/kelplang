@@ -1,6 +1,7 @@
 impl "std/os" caps(fs = ["__SCRATCH__/**"], machine = [])
 impl "std/fs" caps(fs = ["__SCRATCH__/**"])
 impl "std/str"
+impl "std/result"
 
 // Exit runs no destructor, so the runtime removes the temporary paths on the
 // way out. The paths are printed first so the test can check them afterwards.
@@ -14,7 +15,7 @@ fun main() {
     let Ok(f) = &fr else { panic("no temporary file") }
     val dp = d.path()
     val file = str.concat(dp, "/a.txt")
-    fs.write_text(file, String.from_str("x"))
+    result.expect(fs.write_text(file, String.from_str("x")), "fs.write_text: the call failed")
     print(dp)
     print(f.path())
     os.exit(3)

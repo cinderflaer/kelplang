@@ -15,7 +15,7 @@ fun mut Handle.drop() {
 }
 
 fun worker(n: i64) => i64 {
-    val h = Handle(f = fs.open("/dev/null", "w"))
+    val h = Handle(f = result.expect(fs.open("/dev/null", "w"), "fs.open: the call failed"))
     panic("boom")
 }
 

@@ -67,15 +67,15 @@ fun arg_reply_len() => int {
 
 fun main() {
     val reply_len = arg_reply_len()
-    var s = net.connect("127.0.0.1", arg_port())
+    var s = result.expect(net.connect("127.0.0.1", arg_port()), "net.connect: the call failed")
     s.set_timeout(30000)
-    val hs = tls.try_handshake(s, "127.0.0.1")
+    val hs = tls.handshake(s, "127.0.0.1")
     val t = when hs {
         Ok(v) -> v
         Err(e) -> fail(e)
     }
     val body = payload(1048576)
-    val sent = tls.try_write_all(t, body)
+    val sent = tls.write_all(t, body)
     when sent {
         Ok(n) -> print(n)
         Err(e) -> fail_unit(e)
@@ -87,7 +87,7 @@ fun main() {
     var got: int = 0
     var going = true
     while going {
-        val r = tls.try_read_into(t, buf, got)
+        val r = tls.read_into(t, buf, got)
         when r {
             Ok(n) -> {
                 if n == 0 {
@@ -102,6 +102,6 @@ fun main() {
     print(got)
     print(encoding.hex_encode(encoding.sha1(buf)))
     // Ending the session is what frees the `SSL*` the handshake allocated.
-    val sd = tls.try_shutdown(t)
+    val sd = tls.shutdown(t)
     net.close(s)
 }

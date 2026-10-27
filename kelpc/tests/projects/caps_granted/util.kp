@@ -2,5 +2,6 @@
 // never self-declared. The path below is inside the grant, so the
 // compiler-inserted check passes.
 impl "std/fs"
+impl "std/result"
 
-pub fun read_note() => String = fs.read_text("__KELP_SCRATCH__/kelp_caps_granted/note.txt")
+pub fun read_note() => String = result.expect(fs.read_text("__KELP_SCRATCH__/kelp_caps_granted/note.txt"), "fs.read_text: the call failed")

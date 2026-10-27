@@ -1,4 +1,5 @@
 impl "std/process"
+impl "std/result"
 
 fun sh(script: &str) => List<String> {
     var args: List<String> = List.empty()
@@ -7,7 +8,7 @@ fun sh(script: &str) => List<String> {
     return args
 }
 
-pub fun run_sh(script: &str) => process.RunResult = process.run("/bin/sh", sh(script))
+pub fun run_sh(script: &str) => process.RunResult = result.expect(process.run("/bin/sh", sh(script)), "process.run: the call failed")
 
 // A spawned child killed from outside reports the signal after `wait`.
 pub fun spawn_killed() => i32 {

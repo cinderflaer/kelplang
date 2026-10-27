@@ -5,6 +5,7 @@ impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/net"
 impl "std/option"
 impl "std/str"
+impl "std/result"
 
 fun show_opt(o: move option.Option<String>) => String {
     return when o {
@@ -59,10 +60,10 @@ fun main() {
 
     // The low-level loop: accept, read a request, answer, read the next.
     val server = http.listen(0)
-    val client = net.connect("127.0.0.1", server.port())
+    val client = result.expect(net.connect("127.0.0.1", server.port()), "net.connect: the call failed")
     net.send_text(client, "GET /p?q=1 HTTP/1.1\r\nHost: h\r\n\r\nPOST /e HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\n\r\nhi")
-    net.shutdown_write(client)
-    var conn = server.accept()
+    result.expect(net.shutdown_write(client), "net.shutdown_write: the call failed")
+    var conn = result.expect(server.accept(), "accept: the call failed")
     val first = conn.read_request(&lim)
     when first {
         Ok(r) -> {
@@ -97,14 +98,14 @@ fun main() {
     }
     print(conn.wants_close())
     conn.close()
-    val got = net.recv(client, 4096)
+    val got = result.expect(net.recv(client, 4096), "net.recv: the call failed")
     print(got)
     net.close(client)
 
     // A refused request is answered by `write_error` with its status.
-    val bad = net.connect("127.0.0.1", server.port())
+    val bad = result.expect(net.connect("127.0.0.1", server.port()), "net.connect: the call failed")
     net.send_text(bad, "GET / HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nContent-Length: 4\r\n\r\n")
-    var conn2 = server.accept()
+    var conn2 = result.expect(server.accept(), "accept: the call failed")
     val r2 = conn2.read_request(&lim)
     when r2 {
         Ok(_) -> print("unexpected request")
@@ -114,7 +115,7 @@ fun main() {
         }
     }
     conn2.close()
-    val got2 = net.recv(bad, 4096)
+    val got2 = result.expect(net.recv(bad, 4096), "net.recv: the call failed")
     print(got2)
     net.close(bad)
     server.close()

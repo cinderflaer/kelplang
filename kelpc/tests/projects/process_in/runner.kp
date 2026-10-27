@@ -2,6 +2,7 @@ impl "std/process"
 impl "std/path"
 impl "std/str"
 impl "std/option"
+impl "std/result"
 
 // This module holds `process` because `main.kp` delegated it. Every program
 // path below is checked against the patterns it received, before the fork.
@@ -16,12 +17,12 @@ fun sh(script: &str) => List<String> {
 // `run_in`: the child's cwd is `dir`, so `marker.txt` lands there rather than
 // in the parent's directory, which is the whole point of the `_in` form.
 pub fun marker_code(dir: &str) => i32 {
-    val r = process.run_in(dir, "/bin/sh", sh("printf hi > marker.txt"))
+    val r = result.expect(process.run_in(dir, "/bin/sh", sh("printf hi > marker.txt")), "process.run_in: the call failed")
     return r.code
 }
 
 pub fun pwd_is(dir: &str) => bool {
-    val r = process.run_in(dir, "/bin/sh", sh("pwd"))
+    val r = result.expect(process.run_in(dir, "/bin/sh", sh("pwd")), "process.run_in: the call failed")
     // `contains` rather than `ends_with`: `pwd` ends its line with a newline.
     return str.contains(r.out.as_str(), dir)
 }
@@ -36,23 +37,30 @@ pub fun spawn_marker_code(dir: &str) => i32 {
 
 // A `dir` the child cannot enter closes the child with 126 and a message on
 // its stderr, before any `exec`.
-pub fun bad_dir_code(dir: &str) => i32 {
+pub fun bad_dir_code(dir: &str) => String {
     val bad = path.join(dir, "nope")
-    val r = process.run_in(bad, "/bin/sh", sh("true"))
-    return r.code
+    return when process.run_in(bad, "/bin/sh", sh("true")) {
+        Ok(_) -> String.from_str("ran")
+        Err(e) -> err_name(e)
+    }
 }
 
 pub fun bad_dir_message(dir: &str) => bool {
     val bad = path.join(dir, "nope")
-    val r = process.run_in(bad, "/bin/sh", sh("true"))
-    val at = str.index_of(r.err.as_str(), "cannot enter")
-    return option.is_some(at)
+    return when process.run_in(bad, "/bin/sh", sh("true")) {
+        Ok(_) -> false
+        Err(e) -> when e {
+            DirNotFound -> true
+            NotFound -> false
+            NotExecutable -> false
+        }
+    }
 }
 
 // `/tmp` is not in the grant. If the check ever moved to argument 0 of the
 // `_in` forms, this call would be denied at the call site instead of running.
 pub fun dir_outside_grant() => String {
-    val r = process.run_in("/tmp", "/bin/sh", sh("printf out-of-grant-cwd"))
+    val r = result.expect(process.run_in("/tmp", "/bin/sh", sh("printf out-of-grant-cwd")), "process.run_in: the call failed")
     return String.from_str(r.out.as_str())
 }
 
@@ -71,7 +79,7 @@ fun err_name(e: &process.ProcErr) => String = when e {
 }
 
 pub fun try_ok(dir: &str) => String {
-    val r = process.try_run_in(dir, "/bin/sh", sh("printf there"))
+    val r = process.run_in(dir, "/bin/sh", sh("printf there"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)
@@ -82,7 +90,7 @@ pub fun try_ok(dir: &str) => String {
 // pre-check is what decides.
 pub fun try_missing(dir: &str) => String {
     val absent = path.join(dir, "missing-tool")
-    val r = process.try_run(absent, sh("x"))
+    val r = process.run(absent, sh("x"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)
@@ -93,7 +101,7 @@ pub fun try_missing(dir: &str) => String {
 // it.
 pub fun try_not_executable(dir: &str) => String {
     val file = path.join(dir, "not-exec")
-    val r = process.try_run(file, sh("x"))
+    val r = process.run(file, sh("x"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)
@@ -102,7 +110,7 @@ pub fun try_not_executable(dir: &str) => String {
 
 pub fun try_dir_missing(dir: &str) => String {
     val bad = path.join(dir, "nope")
-    val r = process.try_run_in(bad, "/bin/sh", sh("true"))
+    val r = process.run_in(bad, "/bin/sh", sh("true"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)
@@ -112,7 +120,7 @@ pub fun try_dir_missing(dir: &str) => String {
 // No directory at all: the parent's cwd is inherited, which is what `spawn`
 // and `run` pass.
 pub fun try_plain() => String {
-    val r = process.try_run("/bin/sh", sh("printf ok"))
+    val r = process.run("/bin/sh", sh("printf ok"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)

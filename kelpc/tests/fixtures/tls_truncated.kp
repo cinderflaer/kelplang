@@ -25,16 +25,16 @@ fun main() {
         r = str.parse_u64(args.get(1).as_str()),
         message = "tls_truncated: argv[1] is not a port number",
     )
-    var s = net.connect("127.0.0.1", parsed.to_u16())
+    var s = result.expect(net.connect("127.0.0.1", parsed.to_u16()), "net.connect: the call failed")
     s.set_timeout(4000)
-    val t = tls.handshake(s, "127.0.0.1")
-    val r = tls.try_read(t, 64)
+    val t = result.expect(tls.handshake(s, "127.0.0.1"), "tls.handshake: the call failed")
+    val r = tls.read(t, 64)
     when r {
         Ok(_) -> print("ok")
         Err(e) -> print(err_name(e))
     }
     // The session is ended either way: a stream that failed a read still owns
     // the `SSL*`, and only `try_shutdown` frees it.
-    val sd = tls.try_shutdown(t)
+    val sd = tls.shutdown(t)
     net.close(s)
 }

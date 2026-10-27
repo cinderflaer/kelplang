@@ -1123,7 +1123,7 @@ fun next_or_stop(e: TzErr, dirs: &List<String>, name: &str, i: int) => result.Re
 /// Reads and parses the zone file at `path`.
 /// One path: the bytes parsed, or the reason the caller should look elsewhere.
 fun read_zone(path: &str) => result.Result<Zone, TzErr> {
-    val data = fs.try_read(path)
+    val data = fs.read(path)
     return when data {
         Ok(bytes) -> parse(bytes)
         Err(err) -> errno_tz(err.errno)

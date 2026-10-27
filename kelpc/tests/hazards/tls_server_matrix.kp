@@ -128,17 +128,17 @@ fun serve_one(t: tls.TlsStream, sock: net.Socket, mode: &str) => String {
     if str.eq(mode, "unclean") {
         // Read the request first: closing with it unread would reset the
         // connection and the client would never see "partial".
-        val req = tls.try_read(t, 64)
-        val w = tls.try_write_all(t, Bytes.from_str("partial"))
+        val req = tls.read(t, 64)
+        val w = tls.write_all(t, Bytes.from_str("partial"))
         net.close(sock)
         return join3("server: unclean sent ", "alpn=", alpn.as_str())
     }
     var line = String.with_capacity(96)
-    val got = tls.try_read(t, 64)
+    val got = tls.read(t, 64)
     when got {
         Ok(b) -> {
             val n = b.len()
-            val w = tls.try_write_all(t, b)
+            val w = tls.write_all(t, b)
             line.push_str("server: ok alpn=")
             line.push_str(alpn)
             line.push_str(" peer=")
@@ -151,7 +151,7 @@ fun serve_one(t: tls.TlsStream, sock: net.Socket, mode: &str) => String {
             line = err_line("server", "read", e)
         }
     }
-    val sd = tls.try_shutdown(t)
+    val sd = tls.shutdown(t)
     net.close(sock)
     return line
 }
@@ -174,7 +174,7 @@ fun server_with_opts(opts: &tls.ServerOptions, job: &Job) => String {
 
 fun server_with_config(cfg: tls.ServerConfig, job: &Job) => String {
     val l = net.Listener(fd = job.fd)
-    val acc = net.try_accept(l)
+    val acc = net.accept(l)
     var line = String.empty()
     when acc {
         Ok(sock) -> {
@@ -243,8 +243,8 @@ fun client_with_opts(opts: &tls.TlsClientOptions, mode: &str, port: u16) => Stri
     if str.eq(mode, "wronghost") {
         host = "127.0.0.1"
     }
-    val s = net.connect("127.0.0.1", port)
-    val hs = tls.try_handshake_opts(s, host, opts)
+    val s = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
+    val hs = tls.handshake_opts(s, host, opts)
     var line = String.empty()
     when hs {
         Ok(t) -> {
@@ -261,13 +261,13 @@ fun client_with_opts(opts: &tls.TlsClientOptions, mode: &str, port: u16) => Stri
 fun client_talk(t: tls.TlsStream, mode: &str) => String {
     val alpn = opt_text(t.alpn())
     var line = String.with_capacity(96)
-    val w = tls.try_write_all(t, Bytes.from_str("hello"))
-    val r = tls.try_read(t, 64)
+    val w = tls.write_all(t, Bytes.from_str("hello"))
+    val r = tls.read(t, 64)
     when r {
         Ok(b) -> {
             if str.eq(mode, "unclean") {
                 // "partial" arrived; the next read must be a truncation, not a clean end.
-                val again = tls.try_read(t, 64)
+                val again = tls.read(t, 64)
                 when again {
                     Ok(_) -> {
                         line = String.from_str("client: unclean read ok (wrong)")
@@ -288,7 +288,7 @@ fun client_talk(t: tls.TlsStream, mode: &str) => String {
             line = err_line("client", "read", e)
         }
     }
-    val sd = tls.try_shutdown(t)
+    val sd = tls.shutdown(t)
     return line
 }
 
@@ -408,7 +408,7 @@ fun https_mode(dir: &str) {
     val url = join3("https://localhost:", pt.as_str(), "/hello?x=1")
     // A GET without the private CA first: the default store does not know it,
     // so the client refuses and the server goes on to the next connection.
-    val plain = http.try_get(url)
+    val plain = http.get(url)
     when plain {
         Ok(_) -> {
             say("untrusted get succeeded (wrong)")
@@ -418,7 +418,7 @@ fun https_mode(dir: &str) {
         }
     }
     val opts = tls.client_options().with_ca_pem(ca_bytes(ca)).with_timeout_ms(10000)
-    val got = http.try_get_tls(url, &opts)
+    val got = http.get_tls(url, &opts)
     when got {
         Ok(resp) -> {
             val st = fmt.int(resp.status.to_i64())
@@ -461,7 +461,7 @@ fun https_mtls_mode(dir: &str) {
     val pt = fmt.uint(port.to_u64())
     val url = join3("https://localhost:", pt.as_str(), "/hello")
     val bare = tls.client_options().with_ca_pem(ca_bytes(ca)).with_timeout_ms(10000)
-    val none = http.try_get_tls(url, &bare)
+    val none = http.get_tls(url, &bare)
     when none {
         Ok(_) -> {
             say("https mtls without a certificate succeeded (wrong)")
@@ -473,7 +473,7 @@ fun https_mtls_mode(dir: &str) {
     val with = client_cert(&bare, cert.as_str(), key.as_str())
     when with {
         Ok(o) -> {
-            val got = http.try_get_tls(url, &o)
+            val got = http.get_tls(url, &o)
             when got {
                 Ok(resp) -> {
                     val st = fmt.int(resp.status.to_i64())

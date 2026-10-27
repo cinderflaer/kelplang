@@ -171,7 +171,7 @@ pub(crate) fn a_child_gets_a_working_directory_and_a_fallible_run_reports_why() 
     assert_project_runs(
         "process_in",
         &caps_project("process_in").join("main.kp"),
-        "0\ntrue\n0\n126\ntrue\nout-of-grant-cwd\ntrue\nthere\nnot-found\nnot-executable\ndir-not-found\nok\n",
+        "0\ntrue\n0\ndir-not-found\ntrue\nout-of-grant-cwd\ntrue\nthere\nnot-found\nnot-executable\ndir-not-found\nok\n",
     );
     assert_eq!(
         std::fs::read_to_string(dir.join("marker.txt")).unwrap(),

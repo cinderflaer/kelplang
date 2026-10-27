@@ -29,16 +29,16 @@ fun main() {
         message = "tls_ca_file: argv[1] is not a port number",
     )
     val ca = args.get(2)
-    var s = net.connect("127.0.0.1", parsed.to_u16())
+    var s = result.expect(net.connect("127.0.0.1", parsed.to_u16()), "net.connect: the call failed")
     s.set_timeout(5000)
     when tlsfile.ca_pem(ca.as_str()) {
         Ok(pem) -> {
             val opts = tls.TlsOptions(ca_pem = pem, timeout_ms = 0)
-            val hs = tls.try_handshake_with(s, "127.0.0.1", opts)
+            val hs = tls.handshake_with(s, "127.0.0.1", opts)
             when hs {
                 Ok(t) -> {
                     print("ok")
-                    val sd = tls.try_shutdown(t)
+                    val sd = tls.shutdown(t)
                 }
                 Err(e) -> print(err_name(e))
             }

@@ -180,13 +180,34 @@ fun spawn_in(dir: &str, program: &str, args: List<String>) => Child = spawn(prog
 /// Runs `program` to completion with its stdin closed and both output streams
 /// captured, from the working directory `dir` (empty means the parent's).
 ///
-/// Panics: as `spawn_in`. Two failures are *not* panics: a missing binary,
-/// whose child `execvp` fails and exits 127, and a `dir` the child cannot enter,
-/// which exits 126, both are returned as the code, with the reason on `err`.
+/// A `dir` that is not a directory, and a program given as a path that does not
+/// exist or is not executable, are the `Err` (`ProcErr`), decided before the
+/// fork, so an `Err` always means the child never started. A program that starts and exits nonzero
+/// is an `Ok` carrying its code. A caller who wants a panic writes
+/// `result.expect(process.run(program, args), "...")`.
 ///
-/// `try_run_in` is the same call with `NotFound`, `NotExecutable` and
-/// `DirNotFound` as values instead.
-fun run(program: &str, args: List<String>, dir: &str = "") => RunResult {
+/// Panics: a `program` outside the granted capability (or a relative one, which
+/// the check refuses), and a pipe or fork failure.
+fun run(program: &str, args: List<String>, dir: &str = "") => result.Result<RunResult, ProcErr> {
+    if !str.is_empty(dir) && !is_dir_raw(dir) {
+        return result.Result.Err(error = ProcErr.DirNotFound)
+    }
+    // A bare name is looked up on PATH by the child, as it always was, and a
+    // missing one exits 127 rather than failing here. A path is checked first.
+    if str.index_of(program, "/").is_some() {
+        if !exists_raw(program) {
+            return result.Result.Err(error = ProcErr.NotFound)
+        }
+        if !executable_raw(program) {
+            return result.Result.Err(error = ProcErr.NotExecutable)
+        }
+    }
+    return result.Result.Ok(value = run_captured(program, args, dir))
+}
+
+/// The capture of `run` once the program is known to start: it panics where
+/// `spawn` does, and `run` has already refused the cases that are values.
+fun run_captured(program: &str, args: List<String>, dir: &str) => RunResult {
     var child = spawn(program, args, dir)
     child.stdin.close()
     var out = Bytes.empty()
@@ -225,8 +246,8 @@ fun run(program: &str, args: List<String>, dir: &str = "") => RunResult {
     return RunResult(code = code, signal = child.signal, out = out, err = err)
 }
 
-/// As `run` with `dir` written first. Kept for one cycle (issue #296).
-fun run_in(dir: &str, program: &str, args: List<String>) => RunResult = run(program, args, dir)
+/// As `run` with `dir` written first (issue #296).
+fun run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr> = run(program, args, dir)
 
 /// As `run_in`, but the child inherits this process's stdin, stdout and stderr
 /// instead of getting pipes: its output appears as it is written, its two
@@ -249,36 +270,18 @@ fun run_inherit_in(dir: &str, program: &str, args: List<String>) => RunResult = 
 
 /// Whether `program` is a regular file that could be executed: it exists, it is
 /// not a directory or a dangling link, and it carries an execute bit for this
-/// process. This is the pre-check `try_run` makes, and it is not the capability
+/// process. This is the pre-check `run` makes, and it is not the capability
 /// check, that one is the compiler's, at the call site.
 ///
 /// Because it takes a path, naming a program here is checked against the grant
 /// like every other resource argument.
 extern fun executable(program: &str) => bool = "executable_raw"
 
-/// As `run_in`, with the reason a program could not be started as a value
-/// instead of a panic. The three pre-checks run before the fork, so an `Err`
-/// always means the child never started; a program that starts and exits
-/// nonzero is still an `Ok` carrying its code. An empty `dir` skips the
-/// directory check, the same way it skips `chdir`.
-///
-/// Panics: a `program` outside the granted capability (or a relative one, which
-/// the check refuses), and a pipe or fork failure.
-fun try_run(program: &str, args: List<String>, dir: &str = "") => result.Result<RunResult, ProcErr> {
-    if !str.is_empty(dir) && !is_dir_raw(dir) {
-        return result.Result.Err(error = ProcErr.DirNotFound)
-    }
-    if !exists_raw(program) {
-        return result.Result.Err(error = ProcErr.NotFound)
-    }
-    if !executable_raw(program) {
-        return result.Result.Err(error = ProcErr.NotExecutable)
-    }
-    return result.Result.Ok(value = run(program, args, dir))
-}
+/// Retired (issue #264): the plain `run` returns this result. Kept for one cycle.
+fun try_run(program: &str, args: List<String>, dir: &str = "") => result.Result<RunResult, ProcErr> = run(program, args, dir)
 
-/// As `try_run` with `dir` written first. Kept for one cycle (issue #296).
-fun try_run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr> = try_run(program, args, dir)
+/// Retired (issue #264): the plain `run_in` returns this result. Kept for one cycle (issue #296).
+fun try_run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr> = run_in(dir, program, args)
 
 /// Blocks until the child exits and returns its code: the exit status, or
 /// `128 + signal` when it was killed (`signal` then holds the signal number).

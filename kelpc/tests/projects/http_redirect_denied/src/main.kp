@@ -49,6 +49,6 @@ fun req_for(path: &str) => http.Request {
 
 fun main() {
     var pool = http.pool("127.0.0.1", server_port())
-    val r = pool.send(req_for("/redirect-elsewhere"))
+    val r = result.expect(pool.send(req_for("/redirect-elsewhere")), "pool.send: the call failed")
     print(r.status)
 }

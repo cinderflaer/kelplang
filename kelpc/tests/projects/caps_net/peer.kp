@@ -1,6 +1,7 @@
 impl "std/net"
 impl "std/mem"
 impl "std/str"
+impl "std/result"
 
 // This module holds `net` because `main.kp` delegated it. The grant names one
 // host and any port, the vocabulary that could not be written at all before
@@ -22,8 +23,8 @@ fun push_num(out: mut String, n: u64) {
 pub fun report() => String {
     val listener = net.listen(0)
     val port = listener.port()
-    val client = net.connect("127.0.0.1", port)
-    val server = net.accept(listener)
+    val client = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
+    val server = result.expect(net.accept(listener), "net.accept: the call failed")
 
     // `send` is one `send(2)` and reports how much it took; `send_all` is the
     // one that finishes the job.
@@ -31,11 +32,11 @@ pub fun report() => String {
     // `recv_into` writes into a buffer the caller sized: the "read exactly the
     // bytes I know are coming" form. The buffer's length is its capacity.
     var buf = mem.alloc(4)
-    val first_recv = net.recv_into(server, buf, 0)
-    net.send_all(client, Bytes.from_str("+more"))
-    val second = net.recv(server, 64)
+    val first_recv = result.expect(net.recv_into(server, buf, 0), "net.recv_into: the call failed")
+    result.expect(net.send_all(client, Bytes.from_str("+more")), "net.send_all: the call failed")
+    val second = result.expect(net.recv(server, 64), "net.recv: the call failed")
     net.send_text(server, "pong")
-    val back = net.recv(client, 64)
+    val back = result.expect(net.recv(client, 64), "net.recv: the call failed")
 
     // The peer address is the *connected* address, so it starts with the
     // address the client named; the port is whatever the kernel assigned.

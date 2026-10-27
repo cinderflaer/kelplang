@@ -1,4 +1,5 @@
 impl "std/process"
+impl "std/result"
 
 // This module holds `process` because `main.kp` delegated it. Every call below
 // is checked against the patterns it received, before the fork happens.
@@ -14,11 +15,11 @@ fun sh(script: &str) => List<String> {
 // wants the exit code, the captured stderr and the output reads them off one
 // owned value (`val text = r.out` moves the field out). The type is spelled
 // `process.RunResult` because an imported type is always module-qualified.
-pub fun run_echo() => process.RunResult = process.run("/bin/sh", sh("printf hi"))
+pub fun run_echo() => process.RunResult = result.expect(process.run("/bin/sh", sh("printf hi")), "process.run: the call failed")
 
-pub fun run_exit() => process.RunResult = process.run("/bin/sh", sh("exit 3"))
+pub fun run_exit() => process.RunResult = result.expect(process.run("/bin/sh", sh("exit 3")), "process.run: the call failed")
 
-pub fun run_stderr() => process.RunResult = process.run("/bin/sh", sh("printf oops >&2"))
+pub fun run_stderr() => process.RunResult = result.expect(process.run("/bin/sh", sh("printf oops >&2")), "process.run: the call failed")
 
 // Everything after `argv[0]`, joined with commas. The arguments the harness
 // passes are the visible part of `process.args`.

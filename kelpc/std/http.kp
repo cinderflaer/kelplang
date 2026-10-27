@@ -56,8 +56,8 @@ impl "std/thread"
    is its design note.
 
    **HTTPS serving and client certificates (st3)**: `serve_tls`/`serve_tls_n`/
-   `serve_tls_on` serve over a `tls.ServerConfig`, and `try_get_tls`/`get_tls`/
-   `Client.try_send_tls` take `tls.TlsClientOptions` (private CA, mTLS, ALPN);
+   `serve_tls_on` serve over a `tls.ServerConfig`, and `get_tls`/`get_tls`/
+   `Client.send_tls` take `tls.TlsClientOptions` (private CA, mTLS, ALPN);
    `kelp wiki page stdlib/tls.md`.
 
    Not here, deliberately: gzip, HTTP/2, cookies, proxies, `Expect:
@@ -308,37 +308,37 @@ fun Conn.tls() => tls.TlsStream {
 /// Panics: as `tls.write_all`/`net.send_all`.
 fun conn_send_all(c: Conn, data: Bytes) => int {
     if c.is_tls() {
-        return tls.write_all(c.tls(), data)
+        return result.expect(tls.write_all(c.tls(), data), "http: the send failed")
     }
-    return net.send_all(net.Socket(fd = c.fd), data)
+    return result.expect(net.send_all(net.Socket(fd = c.fd), data), "http: the send failed")
 }
 
 /// Panics: as `tls.read`/`net.recv`.
 fun conn_recv(c: Conn, max: int) => Bytes {
     if c.is_tls() {
-        return tls.read(c.tls(), max)
+        return result.expect(tls.read(c.tls(), max), "http: the receive failed")
     }
-    return net.recv(net.Socket(fd = c.fd), max)
+    return result.expect(net.recv(net.Socket(fd = c.fd), max), "http: the receive failed")
 }
 
 /// Panics: as `tls.read_into`/`net.recv_into`.
 fun conn_recv_into(c: Conn, buf: mut Bytes, at: int) => int {
     if c.is_tls() {
-        return tls.read_into(c.tls(), buf, at)
+        return result.expect(tls.read_into(c.tls(), buf, at), "http: the receive failed")
     }
-    return net.recv_into(net.Socket(fd = c.fd), buf, at)
+    return result.expect(net.recv_into(net.Socket(fd = c.fd), buf, at), "http: the receive failed")
 }
 
 /// The fallible twins of the three calls above. A failure is `Exchange`: the
 /// connection was open, so the request may have reached the server.
 fun conn_send_all_try(c: Conn, data: Bytes) => result.Result<int, HttpErr> {
     if c.is_tls() {
-        return when tls.try_write_all(c.tls(), data) {
+        return when tls.write_all(c.tls(), data) {
             Ok(n) -> result.Result.Ok(value = n)
             Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = tls.error_text(e)))
         }
     }
-    return when net.try_send_all(net.Socket(fd = c.fd), data) {
+    return when net.send_all(net.Socket(fd = c.fd), data) {
         Ok(n) -> result.Result.Ok(value = n)
         Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
     }
@@ -347,12 +347,12 @@ fun conn_send_all_try(c: Conn, data: Bytes) => result.Result<int, HttpErr> {
 /// Reads up to `max` bytes, or the error.
 fun conn_recv_try(c: Conn, max: int) => result.Result<Bytes, HttpErr> {
     if c.is_tls() {
-        return when tls.try_read(c.tls(), max) {
+        return when tls.read(c.tls(), max) {
             Ok(b) -> result.Result.Ok(value = b)
             Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = tls.error_text(e)))
         }
     }
-    return when net.try_recv(net.Socket(fd = c.fd), max) {
+    return when net.recv(net.Socket(fd = c.fd), max) {
         Ok(b) -> result.Result.Ok(value = b)
         Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
     }
@@ -361,12 +361,12 @@ fun conn_recv_try(c: Conn, max: int) => result.Result<Bytes, HttpErr> {
 /// Reads into `buf` at `at`, returning the byte count or the error.
 fun conn_recv_into_try(c: Conn, buf: mut Bytes, at: int) => result.Result<int, HttpErr> {
     if c.is_tls() {
-        return when tls.try_read_into(c.tls(), buf, at) {
+        return when tls.read_into(c.tls(), buf, at) {
             Ok(n) -> result.Result.Ok(value = n)
             Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = tls.error_text(e)))
         }
     }
-    return when net.try_recv_into(net.Socket(fd = c.fd), buf, at) {
+    return when net.recv_into(net.Socket(fd = c.fd), buf, at) {
         Ok(n) -> result.Result.Ok(value = n)
         Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
     }
@@ -380,7 +380,7 @@ fun conn_recv_into_try(c: Conn, buf: mut Bytes, at: int) => result.Result<int, H
 /// `net.close`.
 fun conn_close(c: Conn) {
     if c.is_tls() {
-        val _ended = tls.try_shutdown(c.tls())
+        val _ended = tls.shutdown(c.tls())
     }
     net.close(net.Socket(fd = c.fd))
 }
@@ -404,9 +404,9 @@ fun connect_configured(host: &str, port: u16, timeout_ms: u64, use_tls: bool) =>
 /// sent yet.
 ///
 /// Panics: if the capability denies the host. That check is compiled into the
-/// caller and has no value-returning form, exactly as `net.try_connect`'s.
+/// caller and has no value-returning form, exactly as `net.connect`'s.
 fun connect_configured_try(host: &str, port: u16, timeout_ms: u64, use_tls: bool) => result.Result<Conn, HttpErr> {
-    val dialed = net.try_connect(host, port)
+    val dialed = net.connect(host, port)
     return when dialed {
         Ok(sock) -> finish_dial(sock, host, timeout_ms, use_tls)
         Err(e) -> result.Result.Err(error = HttpErr.Dial(reason = e.reason))
@@ -420,7 +420,7 @@ fun finish_dial(sock: net.Socket, host: &str, timeout_ms: u64, use_tls: bool) =>
         s.set_timeout(timeout_ms)
     }
     if use_tls {
-        return when tls.try_handshake(s, host) {
+        return when tls.handshake(s, host) {
             Ok(t) -> result.Result.Ok(value = Conn(fd = t.fd, tls_handle = option.Option.Some(value = t.handle)))
             Err(e) -> {
                 net.close(s)
@@ -1322,21 +1322,6 @@ fun default_client() => Client = Client(
     follow_redirects = true,
 )
 
-/// One request on a fresh connection, following redirects. Every hop connects
-/// again, which is the correct behavior for a redirect that changes host and
-/// the only option without a pool to consult.
-///
-/// Panics: if the connection fails, the capability denies the host, the
-/// response is malformed, or the redirect chain is too long. `try_send` is the
-/// same call with every one of those but the capability denial as a value.
-fun Client.send(req: Request) => Response {
-    val r = when self.try_send(req) {
-        Ok(v) -> v
-        Err(e) -> fail_http(e)
-    }
-    return r
-}
-
 /// `send`, with the failures as an `HttpErr` (MISSING-p7Kdm): `Dial` when nothing
 /// was sent, `Exchange` when the request may have reached the server, `Redirects`
 /// for a chain that is too long.
@@ -1344,7 +1329,7 @@ fun Client.send(req: Request) => Response {
 /// Panics: if the capability denies the host, or the URL is malformed. Both are
 /// mistakes in the program rather than conditions of the network, and the
 /// capability check has no value-returning form.
-fun Client.try_send(req: Request) => result.Result<Response, HttpErr> = send_fresh_try(
+fun Client.send(req: Request) => result.Result<Response, HttpErr> = send_fresh_try(
     self,
     req.method.clone(),
     req.url.clone(),
@@ -1487,28 +1472,10 @@ fun mut Pool.warm(use_tls: bool) {
     }
 }
 
-/// Hands out a connection: an idle one if there is one, a fresh one if there is
-/// not. The pool never refuses, the ceiling governs how many connections are
-/// *kept*, not how many may be in flight, so a caller holding two leases simply
-/// gets two connections, and only one of them is kept on release. An idle
-/// connection is reused only when its scheme is the one asked for: a kept
-/// connection of the other scheme (one `host:port` answering both `http` and
-/// `https`) is closed and replaced by a fresh one, so an `https` request is
-/// never sent over a plain connection and the reverse.
-///
-/// Panics: if connecting fails.
-fun mut Pool.checkout(use_tls: bool) => Lease {
-    val l = when self.try_checkout(use_tls) {
-        Ok(v) -> v
-        Err(e) -> fail_http(e)
-    }
-    return l
-}
-
 /// `checkout`, with a failed dial as `HttpErr.Dial`.
 ///
 /// Panics: if the capability denies the host.
-fun mut Pool.try_checkout(use_tls: bool) => result.Result<Lease, HttpErr> {
+fun mut Pool.checkout(use_tls: bool) => result.Result<Lease, HttpErr> {
     val none: option.Option<tls.TlsHandle> = option.Option.None
     while !idle.is_empty() {
         val fd = idle.pop()
@@ -1619,16 +1586,7 @@ fun pool_matches(p: Pool, u: Url) => bool {
     return str.eq(p.host, u.host.as_str()) && p.port == u.port
 }
 
-/// Sends a request, reusing an idle connection when one is free.
-fun mut Pool.send(req: Request) => Response {
-    val r = when self.try_send(req) {
-        Ok(v) -> v
-        Err(e) -> fail_http(e)
-    }
-    return r
-}
-
-/// `send`, with the failures as an `HttpErr` (MISSING-p7Kdm), as `Client.try_send`
+/// `send`, with the failures as an `HttpErr` (MISSING-p7Kdm), as `Client.send`
 /// reports them. A connection that failed mid-exchange is closed and not put
 /// back, so a pool never hands out a connection a failure left half read. An
 /// `Exchange` failure on a *reused* connection is the classic stale keep-alive
@@ -1636,8 +1594,8 @@ fun mut Pool.send(req: Request) => Response {
 /// is why a caller that retries an idempotent request once on `Exchange` is
 /// doing the ordinary thing.
 ///
-/// Panics: as `Client.try_send`.
-fun mut Pool.try_send(req: Request) => result.Result<Response, HttpErr> {
+/// Panics: as `Client.send`.
+fun mut Pool.send(req: Request) => result.Result<Response, HttpErr> {
     val c = default_client()
     return pooled_hop_try(
         self,
@@ -1679,7 +1637,7 @@ fun pooled_hop_try(
 ) => result.Result<Response, HttpErr> {
     val u = parse_url(url_text.as_str())
     if pool_matches(p, u) {
-        val lease = p.try_checkout(url_is_https(u))?
+        val lease = p.checkout(url_is_https(u))?
         val c = lease.conn()
         val got = one_exchange_try(c, method.as_str(), u, headers, body)
         if result.is_err(got) {
@@ -1734,7 +1692,7 @@ fun pooled_hop_try(
 /// mandatory, as in `connect_configured_try`. A failed handshake is
 /// `HttpErr.Dial`. Panics: if the capability denies the host.
 fun connect_tls_try(host: &str, port: u16, timeout_ms: u64, opts: &tls.TlsClientOptions) => result.Result<Conn, HttpErr> {
-    val dialed = net.try_connect(host, port)
+    val dialed = net.connect(host, port)
     return when dialed {
         Ok(sock) -> finish_dial_opts(sock, host, timeout_ms, opts)
         Err(e) -> result.Result.Err(error = HttpErr.Dial(reason = e.reason))
@@ -1747,7 +1705,7 @@ fun finish_dial_opts(sock: net.Socket, host: &str, timeout_ms: u64, opts: &tls.T
     if timeout_ms > 0 {
         s.set_timeout(timeout_ms)
     }
-    return when tls.try_handshake_opts(s, host, opts) {
+    return when tls.handshake_opts(s, host, opts) {
         Ok(t) -> result.Result.Ok(value = Conn(fd = t.fd, tls_handle = option.Option.Some(value = t.handle)))
         Err(e) -> {
             net.close(s)
@@ -1756,10 +1714,10 @@ fun finish_dial_opts(sock: net.Socket, host: &str, timeout_ms: u64, opts: &tls.T
     }
 }
 
-/// `Client.try_send` for a URL that may be `https`, with the TLS options above
+/// `Client.send` for a URL that may be `https`, with the TLS options above
 /// applied to every `https` hop (a plain `http` hop ignores them). Every hop is
-/// a fresh connection, as in `Client.try_send`.
-fun Client.try_send_tls(req: Request, opts: &tls.TlsClientOptions) => result.Result<Response, HttpErr> = send_tls_try(
+/// a fresh connection, as in `Client.send`.
+fun Client.send_tls(req: Request, opts: &tls.TlsClientOptions) => result.Result<Response, HttpErr> = send_tls_try(
     self,
     opts,
     req.method.clone(),
@@ -1802,39 +1760,18 @@ fun send_tls_try(
     return send_tls_try(client, opts, "GET", next, headers, Bytes.empty(), hops - 1)
 }
 
-/// A `GET` with the TLS options: `try_get` for a private CA and mTLS.
-fun try_get_tls(url: &str, opts: &tls.TlsClientOptions) => result.Result<Response, HttpErr> {
+/// A `GET` with the TLS options: `get` for a private CA and mTLS.
+fun get_tls(url: &str, opts: &tls.TlsClientOptions) => result.Result<Response, HttpErr> {
     val c = default_client()
-    return c.try_send_tls(make_get(url), opts)
-}
-
-/// Panics: as `get`, and if the TLS handshake fails.
-fun get_tls(url: &str, opts: &tls.TlsClientOptions) => Response {
-    val r = when try_get_tls(url, opts) {
-        Ok(v) -> v
-        Err(e) -> fail_http(e)
-    }
-    return r
+    return c.send_tls(make_get(url), opts)
 }
 
 // ----- the one-liners -----
 
-/// A `GET` on a fresh connection, no pool. Pooling is opt-in through an
-/// explicit `Pool` because a process-wide default pool would be shared mutable
-/// state, and threads (T1) would then need a lock around every request, see
-/// the plan's open item 61.
-///
-/// Panics: if the connection fails, the capability denies the host, or the
-/// response is malformed.
-fun get(url: &str) => Response {
+/// `get`, with the failures as an `HttpErr` (`Client.send`).
+fun get(url: &str) => result.Result<Response, HttpErr> {
     val c = default_client()
     return c.send(make_get(url))
-}
-
-/// `get`, with the failures as an `HttpErr` (`Client.try_send`).
-fun try_get(url: &str) => result.Result<Response, HttpErr> {
-    val c = default_client()
-    return c.try_send(make_get(url))
 }
 
 /// A GET request for `url`.
@@ -1856,7 +1793,7 @@ fun post_text(url: &str, body: &str, content_type: &str) => Response {
         body = Bytes.from_str(body),
     )
     val c = default_client()
-    return c.send(req)
+    return result.expect(c.send(req), "http.post_text: the request failed")
 }
 
 // ===== multipart/form-data bodies (MISSING-j2Wka) =====
@@ -2349,7 +2286,7 @@ fun Server.port() => u16 {
     return l.port()
 }
 
-/// Makes `accept`/`try_accept` give up after `ms` without a peer (0 = never).
+/// Makes `accept`/`accept` give up after `ms` without a peer (0 = never).
 /// The timeout belongs to the listening socket, so every thread accepting on it
 /// sees it.
 fun Server.set_accept_timeout(ms: u64) {
@@ -2424,18 +2361,11 @@ fun ServerConn.pending() => int {
     return 0
 }
 
-/// Blocks for the next client. Panics: if `accept` fails.
-fun Server.accept() => ServerConn {
-    val l = net.Listener(fd = fd)
-    val s = net.accept(l)
-    return new_conn(s.fd)
-}
-
 /// `accept` with a failure as a value: a listener with an accept timeout
 /// returns `Err` (reason `net.accept: timed out`) when nobody came.
-fun Server.try_accept() => result.Result<ServerConn, HttpErr> {
+fun Server.accept() => result.Result<ServerConn, HttpErr> {
     val l = net.Listener(fd = fd)
-    return when net.try_accept(l) {
+    return when net.accept(l) {
         Ok(s) -> result.Result.Ok(value = new_conn(s.fd))
         Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
     }
@@ -3169,10 +3099,10 @@ fun ServerConn.close() {
     // through the same half-close and drain: what is drained afterwards is
     // raw bytes, which is all it needs to be.
     if let Some(h) = tls_handle {
-        val ended = tls.try_shutdown(tls.TlsStream(fd = fd, handle = h))
+        val ended = tls.shutdown(tls.TlsStream(fd = fd, handle = h))
     }
     val sock = net.Socket(fd = fd)
-    if net.try_shutdown_write(sock) {
+    if net.shutdown_write(sock).is_ok() {
         val until = net.mono_ms() + 250
         var drained: int = 0
         var going = true
@@ -3183,7 +3113,7 @@ fun ServerConn.close() {
             } elif !sock.wait_readable((until - now).to_u64()) {
                 going = false
             } else {
-                when net.try_recv(sock, 4096) {
+                when net.recv(sock, 4096) {
                     Ok(b) -> {
                         if b.is_empty() {
                             going = false
@@ -3251,7 +3181,7 @@ fun serve_on(server: &Server, handler: fun(&ServerRequest) => ServerResponse, li
         if max_requests > 0 && total >= max_requests {
             going = false
         } else {
-            val acc = server.try_accept()
+            val acc = server.accept()
             when acc {
                 Ok(c) -> {
                     var conn = c
@@ -3309,7 +3239,7 @@ fun serve_tls_on(server: &Server, config: &tls.ServerConfig, handler: fun(&Serve
             going = false
         } else {
             val l = net.Listener(fd = server.fd)
-            val acc = net.try_accept(l)
+            val acc = net.accept(l)
             when acc {
                 Ok(sock) -> {
                     val hs = tls.accept(config, sock)
@@ -3417,3 +3347,25 @@ fun serve_threaded(port: u16, handler: fun(&ServerRequest) => ServerResponse, wo
     val limits = default_limits()
     val n = serve_threaded_on(&s, handler, &limits, workers, 0)
 }
+
+/// Retired (issue #264): each `try_` name is the plain name above, with the same
+/// result. Kept for one cycle, see the register in `kelpc/src/deprecated.rs`.
+fun try_get(url: &str) => result.Result<Response, HttpErr> = get(url)
+
+/// Retired (issue #264): see `get`.
+fun try_get_tls(url: &str, opts: &tls.TlsClientOptions) => result.Result<Response, HttpErr> = get_tls(url, opts)
+
+/// Retired (issue #264): see `get`.
+fun Client.try_send(req: Request) => result.Result<Response, HttpErr> = self.send(req)
+
+/// Retired (issue #264): see `get`.
+fun Client.try_send_tls(req: Request, opts: &tls.TlsClientOptions) => result.Result<Response, HttpErr> = self.send_tls(req, opts)
+
+/// Retired (issue #264): see `get`.
+fun mut Pool.try_send(req: Request) => result.Result<Response, HttpErr> = self.send(req)
+
+/// Retired (issue #264): see `get`.
+fun mut Pool.try_checkout(use_tls: bool) => result.Result<Lease, HttpErr> = self.checkout(use_tls)
+
+/// Retired (issue #264): see `get`.
+fun Server.try_accept() => result.Result<ServerConn, HttpErr> = self.accept()

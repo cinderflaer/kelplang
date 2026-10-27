@@ -42,7 +42,7 @@ fun main() {
     val u = ws.parse_url(url)
     print("url ${u.host} ${u.port} ${u.path}")
 
-    var c = ws.connect(u.host, u.port, u.path.as_str())
+    var c = result.expect(ws.connect(u.host, u.port, u.path.as_str()), "ws.connect: the call failed")
     print("connected")
 
     val m1 = c.recv()

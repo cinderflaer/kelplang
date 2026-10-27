@@ -1,4 +1,5 @@
 impl "std/fs"
+impl "std/result"
 
 // The call counter decides which path the next call to `mk()` names, so the
 // program itself shows whether the argument was read once or twice.
@@ -17,7 +18,7 @@ fun mk() => str {
     return "/etc/passwd"
 }
 
-pub fun inside_once() => String = fs.read_text(mk())
+pub fun inside_once() => String = result.expect(fs.read_text(mk()), "fs.read_text: the call failed")
 
 // The control: a path out of the grant, the same on every evaluation.
-pub fun outside() => String = fs.read_text("/etc/passwd")
+pub fun outside() => String = result.expect(fs.read_text("/etc/passwd"), "fs.read_text: the call failed")

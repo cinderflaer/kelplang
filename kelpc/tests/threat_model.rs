@@ -78,6 +78,10 @@ impl Lab {
         for i in imports {
             util.push_str(&format!("impl \"{i}\"\n"));
         }
+        // the `expect` form of a fallible call is `result.expect(...)` (issue #264)
+        if !imports.contains(&"std/result") {
+            util.push_str("impl \"std/result\"\n");
+        }
         util.push_str(&format!("\npub fun go() {{\n{body}\n}}\n"));
         self.src("util.kp", &util);
     }
@@ -226,7 +230,7 @@ fn data_grant(lab: &Lab) -> String {
 }
 
 fn read_prog(path_expr: &str) -> String {
-    format!("    print(fs.read_text({path_expr}))")
+    format!("    print(result.expect(fs.read_text({path_expr}), \"read\"))")
 }
 
 const FS: &[&str] = &["std/fs"];

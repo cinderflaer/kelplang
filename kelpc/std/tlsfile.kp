@@ -7,7 +7,7 @@ impl "std/str"
    (st3, `kelp wiki page stdlib/tls.md`).
 
    Why a module of its own: reading a file is the `fs` capability, and a
-   module that names `fs.try_read` needs the `fs` grant from every program that
+   module that names `fs.read` needs the `fs` grant from every program that
    imports it. `std/tls` is imported by every `https` client through
    `std/http`, so it cannot hold `std/fs`; this module can, because only a
    program that wants to load certificates from disk imports it, and it grants
@@ -27,7 +27,7 @@ impl "std/str"
 /// read is `TlsError.Io` with the path and the system's reason. `what` names the
 /// file's role for the sentence ("private key").
 fun read_pem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> {
-    return when fs.try_read(path) {
+    return when fs.read(path) {
         Ok(b) -> result.Result.Ok(value = b)
         Err(e) -> {
             var text = String.with_capacity(96)
@@ -76,7 +76,7 @@ fun ca_dir_error(dir: &str, reason: &str) => tls.TlsError {
 
 /// The names in the CA directory `dir`, through the `fs` gate, or the typed error.
 fun ca_dir_names(dir: &str) => result.Result<List<String>, tls.TlsError> {
-    return when fs.try_list(dir) {
+    return when fs.list(dir) {
         Ok(names) -> result.Result.Ok(value = names)
         Err(e) -> {
             val why = str.concat(" cannot be listed: ", e.message.as_str())

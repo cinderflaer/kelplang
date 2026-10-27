@@ -4,11 +4,12 @@
 // only that it is denied what it was not (caps_entry_ungranted,
 // caps_entry_pattern_denied).
 impl "std/fs"
+impl "std/result"
 
 fun main() {
     val note = "__KELP_SCRATCH__/kelp_caps_entry_restricted/note.txt"
-    fs.write_text(note, String.from_str("hi"))
+    result.expect(fs.write_text(note, String.from_str("hi")), "fs.write_text: the call failed")
     print(fs.exists(note))
-    val contents = fs.read_text(note)
+    val contents = result.expect(fs.read_text(note), "fs.read_text: the call failed")
     print(contents)
 }

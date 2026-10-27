@@ -3,7 +3,7 @@ use super::*;
 pub(crate) const NET: &[&str] = &["std/net"];
 
 pub(crate) fn connect_prog(host: &str, port: u16) -> String {
-    format!("    val s = net.connect(\"{host}\", {port})\n    print(\"connected\")\n    net.close(s)")
+    format!("    val s = result.expect(net.connect(\"{host}\", {port}), \"net.connect: the call failed\")\n    print(\"connected\")\n    net.close(s)")
 }
 
 /// N1: a host the grant does not name is denied before any dial: another
@@ -107,7 +107,7 @@ pub(crate) fn n05_a_loopback_grant_binds_loopback_only() {
         lab.simple(
             &format!("net = [\"{grant}\"], fs = [\"/proc/*/net/tcp\"]"),
             &["std/net", "std/fs", "std/io"],
-            "    val l = net.listen(0)\n    print(l.port())\n    val f = fs.open(\"/proc/net/tcp\", \"r\")\n    print(String.from_bytes(f.read_all()))\n    l.close()",
+            "    val l = net.listen(0)\n    print(l.port())\n    val f = result.expect(fs.open(\"/proc/net/tcp\", \"r\"), \"fs.open: the call failed\")\n    print(String.from_bytes(f.read_all()))\n    l.close()",
         );
         for out in lab.runs(&[]) {
             let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -135,7 +135,7 @@ pub(crate) fn n05b_the_http_server_binds_loopback_under_a_loopback_grant() {
     );
     lab.src(
         "probe.kp",
-        "impl \"std/fs\"\nimpl \"std/io\"\n\npub fun table() => String {\n    val f = fs.open(\"/proc/net/tcp\", \"r\")\n    return String.from_bytes(f.read_all())\n}\n",
+        "impl \"std/fs\"\nimpl \"std/io\"\n\npub fun table() => String {\n    val f = result.expect(fs.open(\"/proc/net/tcp\", \"r\"), \"fs.open: the call failed\")\n    return String.from_bytes(f.read_all())\n}\n",
     );
     for out in lab.runs(&[]) {
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -226,7 +226,7 @@ pub(crate) fn n07_a_redirect_to_an_unlisted_host_is_refused() {
         let lab = Lab::new("n07");
         lab.src(
             "main.kp",
-            "impl \"std/http\" caps(net = [\"127.0.0.1:*\"])\nimpl \"std/process\"\n\nfun main() {\n    val args = process.args()\n    val r = http.get(args.get(1).as_str())\n    print(r.status)\n}\n",
+            "impl \"std/http\" caps(net = [\"127.0.0.1:*\"])\nimpl \"std/process\"\n\nfun main() {\n    val args = process.args()\n    val r = result.expect(http.get(args.get(1).as_str()), \"http.get: the call failed\")\n    print(r.status)\n}\n",
         );
         let (port, server) = redirect_server(location);
         let url = format!("http://127.0.0.1:{port}/start");
@@ -249,7 +249,7 @@ pub(crate) fn n07_a_redirect_to_an_unlisted_host_is_refused() {
 #[test]
 pub(crate) fn n08_ws_and_tls_are_behind_the_net_gate() {
     for (import, body) in [
-        ("std/ws", "    val c = ws.connect(\"127.0.0.1\", 9, \"/\")"),
+        ("std/ws", "    val c = result.expect(ws.connect(\"127.0.0.1\", 9, \"/\"), \"ws.connect: the call failed\")"),
         ("std/tls", "    print(tls.server_options().floor)"),
     ] {
         let lab = Lab::new("n08a");
@@ -263,7 +263,7 @@ pub(crate) fn n08_ws_and_tls_are_behind_the_net_gate() {
     );
     lab.src(
         "util.kp",
-        "impl \"std/ws\" caps(net = [\"127.0.0.1:9\"], rand = [])\n\npub fun go() {\n    val c = ws.connect(\"127.0.0.1\", 10, \"/\")\n}\n",
+        "impl \"std/ws\" caps(net = [\"127.0.0.1:9\"], rand = [])\n\npub fun go() {\n    val c = result.expect(ws.connect(\"127.0.0.1\", 10, \"/\"), \"ws.connect: the call failed\")\n}\n",
     );
     lab.denied("is outside the net capability");
 }
@@ -373,11 +373,14 @@ pub(crate) fn h01_a_module_without_a_grant_cannot_forge_a_descriptor_handle() {
         );
         lab.src(
             "opener.kp",
-            "impl \"std/fs\"\n\npub fun open_and_leak() {\n    val f = fs.open(\"__T__/secret/s.txt\", \"r\")\n}\n",
+            "impl \"std/fs\"\n\npub fun open_and_leak() {\n    val f = result.expect(fs.open(\"__T__/secret/s.txt\", \"r\"), \"fs.open: the call failed\")\n}\n",
         );
         let mut util = String::new();
         for i in imports {
             util.push_str(&format!("impl \"{i}\"\n"));
+        }
+        if !imports.contains(&"std/result") {
+            util.push_str("impl \"std/result\"\n");
         }
         util.push_str(&format!("\npub fun go() {{\n{body}\n}}\n"));
         lab.src("util.kp", &util);
@@ -419,7 +422,7 @@ pub(crate) fn h03_a_granted_module_can_read_a_descriptor_another_module_opened()
     );
     lab.src(
         "opener.kp",
-        "impl \"std/fs\"\n\npub fun open_and_leak() {\n    val f = fs.open(\"__T__/secret/s.txt\", \"r\")\n}\n",
+        "impl \"std/fs\"\n\npub fun open_and_leak() {\n    val f = result.expect(fs.open(\"__T__/secret/s.txt\", \"r\"), \"fs.open: the call failed\")\n}\n",
     );
     lab.src(
         "util.kp",

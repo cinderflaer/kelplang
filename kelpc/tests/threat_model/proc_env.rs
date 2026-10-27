@@ -24,7 +24,7 @@ pub(crate) fn run_prog(program_expr: &str, args: &[&str]) -> String {
         s.push_str(&format!("    args.push(String.from_str(\"{a}\"))\n"));
     }
     s.push_str(&format!(
-        "    val r = process.run({program_expr}, args)\n    print(r.code)\n    print(r.out)"
+        "    val r = result.expect(process.run({program_expr}, args), \"run\")\n    print(r.code)\n    print(r.out)"
     ));
     s
 }

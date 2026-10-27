@@ -48,7 +48,7 @@ fun main() {
     var pool = http.pool("127.0.0.1", server_port())
 
     // 301 -> /a, same host, so hop 2 reuses hop 1's connection.
-    val r = pool.send(req_for("/redirect"))
+    val r = result.expect(pool.send(req_for("/redirect")), "pool.send: the call failed")
     print(r.status)
     print(r.body)
     print(pool.len())

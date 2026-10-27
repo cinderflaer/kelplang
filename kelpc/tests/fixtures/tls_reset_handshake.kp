@@ -40,9 +40,9 @@ fun arg_port() => u16 {
 }
 
 fun main() {
-    var s = net.connect("127.0.0.1", arg_port())
+    var s = result.expect(net.connect("127.0.0.1", arg_port()), "net.connect: the call failed")
     s.set_timeout(5000)
-    val hs = tls.try_handshake(s, "127.0.0.1")
+    val hs = tls.handshake(s, "127.0.0.1")
     when hs {
         Ok(_) -> print("ok")
         Err(e) -> print(err_name(e))

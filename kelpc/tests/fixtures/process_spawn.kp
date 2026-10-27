@@ -1,5 +1,6 @@
 impl "std/process"
 impl "std/str"
+impl "std/result"
 
 // `process`: argv, running a program and capturing it, and the spawn form
 // that keeps the pipes (S2). The entry module holds every capability, so no
@@ -23,17 +24,17 @@ fun main() {
     positional.push("sh")
     positional.push("one")
     positional.push("two")
-    val greeting = process.run("/bin/sh", positional)
+    val greeting = result.expect(process.run("/bin/sh", positional), "process.run: the call failed")
     print(greeting.code)
     print(greeting.out)
 
     // A nonzero exit code, with nothing on stdout.
-    val bad = process.run("/bin/sh", sh("exit 7"))
+    val bad = result.expect(process.run("/bin/sh", sh("exit 7")), "process.run: the call failed")
     print(bad.code)
     print(bad.out.len())
 
     // stderr is captured separately, and stderr alone.
-    val noisy = process.run("/bin/sh", sh("printf oops >&2"))
+    val noisy = result.expect(process.run("/bin/sh", sh("printf oops >&2")), "process.run: the call failed")
     print(noisy.out.len())
     print(noisy.err)
 
@@ -67,12 +68,16 @@ fun main() {
     print(blocked.wait())
     print(blocked.is_running())
 
-    // A program that passes the capability check but does not exist: the fork
-    // succeeds, the `exec` does not, and the child reports it and exits 127
-    // (which `run` returns as the code, with the message in `err`).
-    val missing = process.run("/definitely/not/a/program", sh("x"))
-    print(missing.code)
-    print(str.starts_with(missing.err.as_str(), "process.spawn: cannot exec"))
+    // A path that names no program passes the capability check and is refused
+    // before the fork: the `Err` is `NotFound`, and no child was started.
+    when process.run("/definitely/not/a/program", sh("x")) {
+        Ok(_) -> print("ran")
+        Err(e) -> when e {
+            NotFound -> print("not-found")
+            NotExecutable -> print("not-executable")
+            DirNotFound -> print("dir-not-found")
+        }
+    }
 
     // `argv` is this process's, saved by the emitted `main`. Bound to a local
     // rather than read twice: each `process.args()` builds a fresh list.
@@ -94,8 +99,7 @@ fun main() {
 // stdout: true
 // stdout: 137
 // stdout: false
-// stdout: 127
-// stdout: true
+// stdout: not-found
 // stdout: 1
 // stdout: true
 // stdout: true

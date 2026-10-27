@@ -6,6 +6,7 @@
 impl "std/fs"
 impl "std/mem"
 impl "std/time"
+impl "std/result"
 
 const MIB: int = 1048576
 const TOTAL: int = 21474836480
@@ -17,7 +18,7 @@ fun main() {
     val work_start = time.now_mono_ns()
     var written: int = 0
     while written < TOTAL {
-        fs.append(path, chunk)
+        result.expect(fs.append(path, chunk), "fs.append: the call failed")
         written = written + MIB
     }
     val work_ns = time.now_mono_ns() - work_start
@@ -30,7 +31,7 @@ fun main() {
     print("BYTES $size")
 
     val delete_start = time.now_mono_ns()
-    fs.remove(path)
+    result.expect(fs.remove(path), "fs.remove: the call failed")
     val delete_ns = time.now_mono_ns() - delete_start
 
     print("WORK_NS $work_ns")

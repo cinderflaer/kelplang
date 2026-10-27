@@ -32,9 +32,18 @@ fun url_for(path: &str) => String {
     return out
 }
 
+// The reason of a failed request is the panic text, as `http.get` gave it.
+fun fail_text(e: &http.HttpErr) => http.Response {
+    val text = http.http_error_text(e)
+    panic(text.as_str())
+}
+
 fun main() {
     val url = url_for("/a")
-    val r = http.get(url)
+    val r = when http.get(url) {
+        Ok(v) -> v
+        Err(e) -> fail_text(&e)
+    }
     print(r.status)
     print(r.body)
     print(r.is_ok())

@@ -18,7 +18,7 @@ impl "std/rand"
    `net` reaches the socket, and its half of the check is the host-and-port
    check `net.connect` already gives: the grant matches the host as written and
    the port beside it, before `getaddrinfo` runs, and a call for anything else
-   is denied at `connect` or `try_connect` with the message `net` produces.
+   is denied at `connect` or `connect` with the message `net` produces.
    `rand` is here because RFC 6455 requires the sixteen bytes of
    `Sec-WebSocket-Key` and the four-byte masking key of every client frame to
    be unpredictable. A module
@@ -33,7 +33,7 @@ impl "std/rand"
    the connected socket before the `GET` goes out. Nothing about the framing
    depends on the transport: `Conn` carries the TLS handle beside the fd and
    the send/recv helpers dispatch on it once. `parse_url` accepts both
-   schemes and `try_connect_url`/`connect_url` read the scheme off the
+   schemes and `connect_url`/`connect_url` read the scheme off the
    parsed URL; the older `connect(host, port, path)` remains the plain `ws`
    spelling. A refused handshake is `WsErr.Tls` in the fallible form.
 
@@ -61,7 +61,7 @@ impl "std/rand"
    caller's: `close` sends one frame and does not wait, so a caller that wants
    the peer's answer reads until it sees `Msg.Close` (or end of file) first.
 
-   A dial or a handshake that fails is a value in `try_connect` (`WsErr.Dial`
+   A dial or a handshake that fails is a value in `connect` (`WsErr.Dial`
    for the network half, `WsErr.Handshake` for a peer that answered something
    other than `101 Switching Protocols`) and a panic in `connect`, which stays
    as the convenience wrapper over the same code. The fallible form is what a
@@ -224,25 +224,25 @@ datac Conn(
 /// struct field.
 fun conn_send_all(fd: i32, tls_handle: option.Option<tls.TlsHandle>, data: Bytes) => int {
     if let Some(h) = tls_handle {
-        return tls.write_all(tls.TlsStream(fd = fd, handle = h), data)
+        return result.expect(tls.write_all(tls.TlsStream(fd = fd, handle = h), data), "ws: the send failed")
     }
-    return net.send_all(net.Socket(fd = fd), data)
+    return result.expect(net.send_all(net.Socket(fd = fd), data), "ws: the send failed")
 }
 
 /// Reads up to `max` bytes from the connection, over TLS when `tls_handle` is set.
 fun conn_recv(fd: i32, tls_handle: option.Option<tls.TlsHandle>, max: int) => Bytes {
     if let Some(h) = tls_handle {
-        return tls.read(tls.TlsStream(fd = fd, handle = h), max)
+        return result.expect(tls.read(tls.TlsStream(fd = fd, handle = h), max), "ws: the receive failed")
     }
-    return net.recv(net.Socket(fd = fd), max)
+    return result.expect(net.recv(net.Socket(fd = fd), max), "ws: the receive failed")
 }
 
 /// Reads into `buf` from offset `at`, over TLS when `tls_handle` is set. Returns the number of bytes read.
 fun conn_recv_into(fd: i32, tls_handle: option.Option<tls.TlsHandle>, buf: mut Bytes, at: int) => int {
     if let Some(h) = tls_handle {
-        return tls.read_into(tls.TlsStream(fd = fd, handle = h), buf, at)
+        return result.expect(tls.read_into(tls.TlsStream(fd = fd, handle = h), buf, at), "ws: the receive failed")
     }
-    return net.recv_into(net.Socket(fd = fd), buf, at)
+    return result.expect(net.recv_into(net.Socket(fd = fd), buf, at), "ws: the receive failed")
 }
 
 /// Closes the connection. A TLS session is shut down first, then the socket is closed.
@@ -251,7 +251,7 @@ fun conn_recv_into(fd: i32, tls_handle: option.Option<tls.TlsHandle>, buf: mut B
 /// routine at the end of a connection) and then closes the socket.
 fun conn_close(fd: i32, tls_handle: option.Option<tls.TlsHandle>) {
     if let Some(h) = tls_handle {
-        val _ended = tls.try_shutdown(tls.TlsStream(fd = fd, handle = h))
+        val _ended = tls.shutdown(tls.TlsStream(fd = fd, handle = h))
     }
     net.close(net.Socket(fd = fd))
 }
@@ -578,7 +578,7 @@ fun mut Conn.read_head() => String {
 /// Why a fallible connect refused, as a value a caller can branch on.
 ///
 /// `Dial` is the network half: the name did not resolve, or nothing answered,
-/// and `reason` is the text `net.try_connect` gave back. `Handshake` is the
+/// and `reason` is the text `net.connect` gave back. `Handshake` is the
 /// peer half: something answered, and it was not a WebSocket handshake
 /// (`status` is what it answered with, `101` included, since a `101` with the
 /// wrong `Sec-WebSocket-Accept` is a handshake failure too), with `reason` the
@@ -590,7 +590,7 @@ fun mut Conn.read_head() => String {
 /// sentence for it (`std/tls`'s own `TlsError` is not this enum, so a caller
 /// that only needs "the secure half failed" can match one variant).
 enum WsErr {
-    /// The network half failed: the name did not resolve, or nothing answered. `reason` is the text from `net.try_connect`.
+    /// The network half failed: the name did not resolve, or nothing answered. `reason` is the text from `net.connect`.
     Dial(val reason: String)
     /// The peer answered, but not with a WebSocket handshake. `status` is the code it answered with, and `101` is
     /// included, because a `101` with a wrong accept value is still a failed handshake.
@@ -603,10 +603,8 @@ enum WsErr {
 /// reason it was refused. This is the fallible form of `connect`.
 ///
 /// Opens a WebSocket to `host:port` and completes the handshake, or returns why
-/// it could not: the fallible twin of `connect` (MISSING-w9Kda), for a caller
-/// that reconnects instead of ending. Each variant's `reason` is the text
-/// `connect` panics with for that failure, so the two forms report the same
-/// cause and a caller can log what the panicking form would have printed.
+/// it could not, for a caller that reconnects instead of ending (MISSING-w9Kda).
+/// Each variant's `reason` is the text of that failure, so a caller can log it.
 ///
 /// `path` is the request target, path and query together (`/gateway?v=10`).
 /// `host` is checked against the importing module's `net` grant, as written,
@@ -616,7 +614,7 @@ enum WsErr {
 /// HTTP response at all (`parse_status`), and on a peer that closes before the
 /// head arrives (`read_head`). Those last two carry no status to report, and a
 /// peer that answers neither is not something a reconnect loop can act on.
-fun try_connect(host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = try_connect_scheme(
+fun connect(host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = connect_scheme(
     DEFAULT_SCHEME,
     host,
     port,
@@ -627,7 +625,7 @@ fun try_connect(host: &str, port: u16, path: &str) => result.Result<Conn, WsErr>
 ///
 /// The same dial for a parsed URL, which is the spelling that can reach
 /// `wss`: the scheme comes off `u` rather than being fixed to `ws`.
-fun try_connect_url(u: Url) => result.Result<Conn, WsErr> = try_connect_scheme(
+fun connect_url(u: Url) => result.Result<Conn, WsErr> = connect_scheme(
     u.scheme.as_str(),
     u.host.as_str(),
     u.port,
@@ -635,14 +633,14 @@ fun try_connect_url(u: Url) => result.Result<Conn, WsErr> = try_connect_scheme(
 )
 
 /// Opens a WebSocket over the given scheme, and returns the connection or the reason it was refused.
-fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> {
+fun connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> {
     // A fresh 16-byte key per connection (RFC 6455 4.1): it must not be a
     // fixed value, or a peer can precompute what a client will send.
     val key = rand.bytes(16)
     val key_text = encoding.base64_encode(key)
     val expected = accept_for(key_text)
 
-    val dialed = net.try_connect(host, port)
+    val dialed = net.connect(host, port)
     val out = when dialed {
         Ok(s) -> {
             val secure = connect_tls(scheme, s, host)
@@ -669,13 +667,13 @@ fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => resul
 ///
 /// The `wss` half of a connect: `Ok(None)` for a plain `ws` (the value a plain
 /// `Conn` carries), or the opaque `tls.TlsHandle` a completed
-/// `tls.try_handshake` returned. A refused handshake is `WsErr.Tls`, so a
+/// `tls.handshake` returned. A refused handshake is `WsErr.Tls`, so a
 /// reconnect loop can tell "the peer is not TLS" from "nothing is listening".
 fun connect_tls(scheme: &str, s: net.Socket, host: &str) => result.Result<option.Option<tls.TlsHandle>, WsErr> {
     if !str.eq(scheme, WSS_SCHEME) {
         return result.Result.Ok(value = option.Option.None)
     }
-    val hs = tls.try_handshake(s, host)
+    val hs = tls.handshake(s, host)
     return when hs {
         Ok(t) -> result.Result.Ok(value = option.Option.Some(value = t.handle))
         Err(e) -> result.Result.Err(error = WsErr.Tls(reason = tls.error_text(e)))
@@ -693,7 +691,7 @@ fun connect_tls(scheme: &str, s: net.Socket, host: &str) => result.Result<option
 /// WebSocket. `tls_handle` is `None` for a plain socket; `conn_send_all` is what
 /// chooses the transport.
 ///
-/// Panics: as `try_connect` does for the errors with no status to report.
+/// Panics: as `connect` does for the errors with no status to report.
 fun handshake(
     scheme: &str,
     fd: i32,
@@ -745,69 +743,11 @@ fun handshake(
 ///
 /// The text a `WsErr` panics with. Every variant carries the whole message, so
 /// this is the same answer for any of them; it exists so `connect` can be one
-/// `panic` over the reason a `try_connect` handed it.
+/// `panic` over the reason a `connect` handed it.
 fun refusal_text(e: move WsErr) => String = when e {
     Dial(reason) -> reason
     Handshake(_, reason) -> reason
     Tls(reason) -> reason
-}
-
-/// Panics with the message of a refused connect. Its return type is `Conn` so that `connect` can call it as a value.
-///
-/// The panicking end of a refused connect. Every message `connect` prints comes
-/// out of here and nothing else, so the text a `try_connect` caller reads and
-/// the text `connect` panics with cannot drift.
-fun fail_connect(e: move WsErr) => Conn {
-    val reason = refusal_text(e)
-    panic(reason)
-}
-
-/// Opens a WebSocket to `host:port` over `ws` and completes the handshake, or panics.
-///
-/// Use `try_connect` when a refused dial should not end the process.
-///
-/// Opens a WebSocket to `host:port` and completes the handshake, or panics.
-///
-/// `path` is the request target, path and query together (`/gateway?v=10`).
-/// `host` is checked against the importing module's `net` grant, as written,
-/// before anything connects.
-///
-/// The four refusals of the handshake, each with its own message: a status
-/// other than 101, a `101` with no `Sec-WebSocket-Accept`, an accept value that
-/// does not match the key this call sent, and a head that is not HTTP at all
-/// (`parse_status`). The accept check is what makes the `101` mean WebSocket:
-/// keys are per-connection, so a peer that is not the one the key was sent to
-/// cannot produce the digest. RFC 6455 4.1 also asks for `Upgrade: websocket`
-/// and `Connection: Upgrade` to be validated, and they are not checked
-/// separately here: the accept value is the stronger test of the same thing,
-/// and a peer that cannot produce it is refused whatever its other headers say.
-/// What this side *sends* does carry both, and the loopback gate asserts it.
-///
-/// This is the convenience wrapper for a caller for whom a refused dial really
-/// is fatal; `try_connect` is the same call with the refusal as a value. The
-/// shape is `std/process`'s (`run` beside `try_run`, with `ProcErr`).
-///
-/// Panics: if the connect fails, the head is malformed or refused, or the peer
-/// closes during the handshake.
-fun connect(host: &str, port: u16, path: &str) => Conn = connect_scheme(DEFAULT_SCHEME, host, port, path)
-
-/// Opens a WebSocket to a parsed URL, over `ws` or `wss`, or panics.
-///
-/// The panicking form for a parsed URL, the `wss`-capable twin of `connect`.
-fun connect_url(u: Url) => Conn = connect_scheme(
-    u.scheme.as_str(),
-    u.host.as_str(),
-    u.port,
-    u.path.as_str(),
-)
-
-/// Opens a WebSocket over the given scheme, or panics.
-fun connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => Conn {
-    val up = when try_connect_scheme(scheme, host, port, path) {
-        Ok(c) -> c
-        Err(e) -> fail_connect(e)
-    }
-    return up
 }
 
 /* ----- sending ----- */
@@ -1143,3 +1083,13 @@ fun mut Conn.recv() => Msg {
     // Unreachable, like the tail of `read_head`.
     return Msg.Binary(data = Bytes.empty())
 }
+
+/// Retired (issue #264): each `try_` name is the plain name above, with the same
+/// result. Kept for one cycle, see the register in `kelpc/src/deprecated.rs`.
+fun try_connect(host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = connect(host, port, path)
+
+/// Retired (issue #264): see `connect`.
+fun try_connect_url(u: Url) => result.Result<Conn, WsErr> = connect_url(u)
+
+/// Retired (issue #264): see `connect`.
+fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = connect_scheme(scheme, host, port, path)

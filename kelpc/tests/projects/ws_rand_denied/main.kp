@@ -9,8 +9,9 @@
 // resource argument, so an empty pattern list admits the module, the same
 // spelling `caps(process = [])` uses for argv.
 impl "std/ws" caps(net = ["127.0.0.1:*"])
+impl "std/result"
 
 fun main() {
-    var c = ws.connect("127.0.0.1", 8080, "/")
+    var c = result.expect(ws.connect("127.0.0.1", 8080, "/"), "ws.connect: the call failed")
     print("connected")
 }

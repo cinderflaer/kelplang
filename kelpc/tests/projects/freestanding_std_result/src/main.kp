@@ -8,7 +8,7 @@ section(".text.boot") fun kmain() {
         n = n + result.unwrap_err(r = &bad)
     }
     if result.is_ok(r = &ok) {
-        n = n + result.expect(r = &ok, message = "not ok")
+        n = n + result.expect(r = ok, message = "not ok")
     }
     while true { n = n + 1 }
 }

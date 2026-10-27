@@ -71,7 +71,7 @@ pub(crate) fn f06_an_embedded_nul_cannot_hide_a_second_path() {
     lab.simple(
         &data_grant(&lab),
         &["std/fs", "std/mem", "std/str"],
-        "    val head = \"__T__/data/ok.txt\"\n    val tail = \"/../../secret/s.txt\"\n    val hv = head.view()\n    val tv = tail.view()\n    val hn = str.len(head)\n    val tn = str.len(tail)\n    var b = mem.alloc(hn + 1 + tn)\n    var i: int = 0\n    while i < hn {\n        b.set(i, hv.get(i))\n        i = i + 1\n    }\n    b.set(hn, 0)\n    var j: int = 0\n    while j < tn {\n        b.set(hn + 1 + j, tv.get(j))\n        j = j + 1\n    }\n    val p = String.from_bytes(b)\n    print(fs.read_text(p.as_str()))",
+        "    val head = \"__T__/data/ok.txt\"\n    val tail = \"/../../secret/s.txt\"\n    val hv = head.view()\n    val tv = tail.view()\n    val hn = str.len(head)\n    val tn = str.len(tail)\n    var b = mem.alloc(hn + 1 + tn)\n    var i: int = 0\n    while i < hn {\n        b.set(i, hv.get(i))\n        i = i + 1\n    }\n    b.set(hn, 0)\n    var j: int = 0\n    while j < tn {\n        b.set(hn + 1 + j, tv.get(j))\n        j = j + 1\n    }\n    val p = String.from_bytes(b)\n    print(result.expect(fs.read_text(p.as_str()), \"fs.read_text: the call failed\"))",
     );
     // Either the check sees the whole text (outside: denied) or the NUL ends
     // both views (inside: reads ok.txt); the one thing it must not do is read
@@ -121,7 +121,7 @@ pub(crate) fn f09_a_symlink_out_of_the_grant_cannot_be_created() {
     lab.simple(
         &data_grant(&lab),
         FS,
-        "    fs.symlink(\"__T__/secret\", \"__T__/data/esc\")\n    print(fs.read_text(\"__T__/data/esc/s.txt\"))",
+        "    result.expect(fs.symlink(\"__T__/secret\", \"__T__/data/esc\"), \"fs.symlink: the call failed\")\n    print(result.expect(fs.read_text(\"__T__/data/esc/s.txt\"), \"fs.read_text: the call failed\"))",
     );
     lab.denied("is outside the fs capability");
     assert!(!lab.root.join("data/esc").exists());
@@ -136,26 +136,26 @@ pub(crate) fn f09_a_symlink_out_of_the_grant_cannot_be_created() {
 #[test]
 pub(crate) fn f10_links_out_of_the_grant_are_followed_before_matching() {
     for (what, body) in [
-        ("read", "    print(fs.read_text(\"__T__/data/esc/s.txt\"))"),
+        ("read", "    print(result.expect(fs.read_text(\"__T__/data/esc/s.txt\"), \"fs.read_text: the call failed\"))"),
         (
             "dangling_write",
-            "    fs.write_text(\"__T__/data/dangling\", String.from_str(\"pwn\"))\n    print(\"wrote\")",
+            "    result.expect(fs.write_text(\"__T__/data/dangling\", String.from_str(\"pwn\")), \"fs.write_text: the call failed\")\n    print(\"wrote\")",
         ),
         (
             "dangling_write_in_dir",
-            "    fs.write_text(\"__T__/data/dangling_dir/new.txt\", String.from_str(\"pwn\"))\n    print(\"wrote\")",
+            "    result.expect(fs.write_text(\"__T__/data/dangling_dir/new.txt\", String.from_str(\"pwn\")), \"fs.write_text: the call failed\")\n    print(\"wrote\")",
         ),
         (
             "dangling_relative",
-            "    fs.write_text(\"__T__/data/rel\", String.from_str(\"pwn\"))\n    print(\"wrote\")",
+            "    result.expect(fs.write_text(\"__T__/data/rel\", String.from_str(\"pwn\")), \"fs.write_text: the call failed\")\n    print(\"wrote\")",
         ),
         (
             "dangling_chain",
-            "    fs.write_text(\"__T__/data/chain1\", String.from_str(\"pwn\"))\n    print(\"wrote\")",
+            "    result.expect(fs.write_text(\"__T__/data/chain1\", String.from_str(\"pwn\")), \"fs.write_text: the call failed\")\n    print(\"wrote\")",
         ),
         (
             "mkdir",
-            "    fs.mkdir_all(\"__T__/data/dangling_dir/sub\")\n    print(\"made\")",
+            "    result.expect(fs.mkdir_all(\"__T__/data/dangling_dir/sub\"), \"fs.mkdir_all: the call failed\")\n    print(\"made\")",
         ),
         ("read_link", "    print(fs.read_link(\"__T__/data/esc\"))"),
         (
@@ -259,7 +259,7 @@ pub(crate) fn f15_a_grant_pattern_cannot_contain_dotdot_or_be_relative() {
 #[test]
 pub(crate) fn f16_a_module_without_the_grant_cannot_name_fs() {
     for body in [
-        "    print(fs.read_text(\"__T__/secret/s.txt\"))",
+        "    print(result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\"))",
         "    print(fs.read_raw(\"__T__/secret/s.txt\").len())",
         "    print(fs.exists(\"__T__/secret/s.txt\"))",
     ] {
@@ -274,8 +274,8 @@ pub(crate) fn f16_a_module_without_the_grant_cannot_name_fs() {
 #[test]
 pub(crate) fn f17_rename_checks_both_paths() {
     for body in [
-        "    fs.rename(\"__T__/secret/s.txt\", \"__T__/data/stolen.txt\")\n    print(fs.read_text(\"__T__/data/stolen.txt\"))",
-        "    fs.rename(\"__T__/data/ok.txt\", \"__T__/secret/planted.txt\")",
+        "    result.expect(fs.rename(\"__T__/secret/s.txt\", \"__T__/data/stolen.txt\"), \"fs.rename: the call failed\")\n    print(result.expect(fs.read_text(\"__T__/data/stolen.txt\"), \"fs.read_text: the call failed\"))",
+        "    result.expect(fs.rename(\"__T__/data/ok.txt\", \"__T__/secret/planted.txt\"), \"fs.rename: the call failed\")",
     ] {
         let lab = Lab::new("f17");
         lab.simple(&data_grant(&lab), FS, body);
@@ -287,7 +287,7 @@ pub(crate) fn f17_rename_checks_both_paths() {
 #[test]
 pub(crate) fn f18_copy_checks_both_paths() {
     for body in [
-        "    fs.copy(\"__T__/secret/s.txt\", \"__T__/data/stolen.txt\")\n    print(fs.read_text(\"__T__/data/stolen.txt\"))",
+        "    fs.copy(\"__T__/secret/s.txt\", \"__T__/data/stolen.txt\")\n    print(result.expect(fs.read_text(\"__T__/data/stolen.txt\"), \"fs.read_text: the call failed\"))",
         "    fs.copy(\"__T__/data/ok.txt\", \"__T__/secret/planted.txt\")",
     ] {
         let lab = Lab::new("f18");
@@ -302,7 +302,7 @@ pub(crate) fn f18_copy_checks_both_paths() {
 #[test]
 pub(crate) fn f19_walk_and_remove_all_do_not_follow_links_out() {
     let lab = Lab::new("f19a");
-    lab.simple(&data_grant(&lab), FS, "    print(fs.list(\"__T__\").len())");
+    lab.simple(&data_grant(&lab), FS, "    print(result.expect(fs.list(\"__T__\"), \"fs.list: the call failed\").len())");
     lab.denied("is outside the fs capability");
 
     let lab = Lab::new("f19b");
@@ -318,7 +318,7 @@ pub(crate) fn f19_walk_and_remove_all_do_not_follow_links_out() {
 
     let lab = Lab::new("f19c");
     lab.symlink(&lab.p("secret"), "data/esc");
-    lab.simple(&data_grant(&lab), FS, "    fs.remove_all(\"__T__/data\")\n    print(\"gone\")");
+    lab.simple(&data_grant(&lab), FS, "    result.expect(fs.remove_all(\"__T__/data\"), \"fs.remove_all: the call failed\")\n    print(\"gone\")");
     // `remove_all` panics on the link out of the grant or unlinks it; either
     // way the secret is untouched (checked by the helper).
     for out in lab.runs(&[]) {
@@ -360,7 +360,7 @@ pub(crate) fn f21_open_checks_the_path_and_not_the_mode() {
     lab.simple(
         &data_grant(&lab),
         FS,
-        "    val f = fs.open(\"__T__/secret/s.txt\", \"r\")\n    print(1)",
+        "    val f = result.expect(fs.open(\"__T__/secret/s.txt\", \"r\"), \"fs.open: the call failed\")\n    print(1)",
     );
     lab.denied("is outside the fs capability");
 }

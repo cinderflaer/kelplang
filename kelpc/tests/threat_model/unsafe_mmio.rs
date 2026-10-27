@@ -308,7 +308,7 @@ pub(crate) fn i01_a_closure_from_a_granted_module_keeps_its_makers_grant() {
     );
     lab.src(
         "util.kp",
-        "impl \"std/fs\"\n\npub fun reader() => fun(&str) => String = fun(p: &str) => String = fs.read_text(p)\n",
+        "impl \"std/result\"\nimpl \"std/fs\"\n\npub fun reader() => fun(&str) => String = fun(p: &str) => String = result.expect(fs.read_text(p), \"fs.read_text: the call failed\")\n",
     );
     lab.src("evil.kp", "pub fun go(f: fun(&str) => String) {\n    print(f(\"__T__/secret/s.txt\"))\n}\n");
     lab.denied("granted to module 'util'");
@@ -321,14 +321,14 @@ pub(crate) fn i01_a_closure_from_a_granted_module_keeps_its_makers_grant() {
 pub(crate) fn i02_generics_do_not_change_whose_grant_applies() {
     let lab = indirect(
         "i02a",
-        "impl \"std/fs\"\n\npub fun get<T>(p: &str, x: T) => String = fs.read_text(p)\n",
+        "impl \"std/fs\"\n\npub fun get<T>(p: &str, x: T) => String = result.expect(fs.read_text(p), \"fs.read_text: the call failed\")\n",
         "impl \"util\"\n\npub fun go() {\n    print(util.get(\"__T__/secret/s.txt\", 1))\n}\n",
     );
     lab.denied("granted to module 'util'");
     let lab = indirect(
         "i02b",
         "pub fun x() {\n}\n",
-        "impl \"std/fs\"\n\nfun get<T>(p: &str, x: T) => String = fs.read_text(p)\n\npub fun go() {\n    print(get(\"__T__/secret/s.txt\", 1))\n}\n",
+        "impl \"std/fs\"\n\nfun get<T>(p: &str, x: T) => String = result.expect(fs.read_text(p), \"fs.read_text: the call failed\")\n\npub fun go() {\n    print(get(\"__T__/secret/s.txt\", 1))\n}\n",
     );
     lab.refused(&[NEEDS_FS]);
 }
@@ -339,7 +339,7 @@ pub(crate) fn i02_generics_do_not_change_whose_grant_applies() {
 /// writes it (or of the impl's module), and is checked as such.
 #[test]
 pub(crate) fn i03_traits_drop_defer_scoped_and_initializers_do_not_launder_a_grant() {
-    let util = "impl \"std/fs\"\n\npub trait Loader {\n    fun Self.path() => String\n    fun Self.load() => String {\n        return fs.read_text(self.path().as_str())\n    }\n}\n\npub fun with(cb: scoped fun() => i32) => i32 = cb()\n";
+    let util = "impl \"std/fs\"\n\npub trait Loader {\n    fun Self.path() => String\n    fun Self.load() => String {\n        return result.expect(fs.read_text(self.path().as_str()), \"fs.read_text: the call failed\")\n    }\n}\n\npub fun with(cb: scoped fun() => i32) => i32 = cb()\n";
     for (what, evil) in [
         (
             "trait_default",
@@ -347,23 +347,23 @@ pub(crate) fn i03_traits_drop_defer_scoped_and_initializers_do_not_launder_a_gra
         ),
         (
             "trait_impl",
-            "impl \"std/fs\"\nimpl \"util\"\n\npub datac L(val p: String)\n\nimpl util.Loader for L {\n    fun Self.path() => String = fs.read_text(\"__T__/secret/s.txt\")\n}\n\npub fun go() {\n}\n",
+            "impl \"std/fs\"\nimpl \"util\"\n\npub datac L(val p: String)\n\nimpl util.Loader for L {\n    fun Self.path() => String = result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\")\n}\n\npub fun go() {\n}\n",
         ),
         (
             "drop",
-            "impl \"std/fs\"\n\ndatac Guard(val n: i32)\n\nfun mut Guard.drop() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n\npub fun go() {\n    val g = Guard(n = 1)\n}\n",
+            "impl \"std/fs\"\n\ndatac Guard(val n: i32)\n\nfun mut Guard.drop() {\n    print(result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\"))\n}\n\npub fun go() {\n    val g = Guard(n = 1)\n}\n",
         ),
         (
             "defer",
-            "impl \"std/fs\"\n\npub fun go() {\n    defer print(fs.read_text(\"__T__/secret/s.txt\"))\n    print(1)\n}\n",
+            "impl \"std/fs\"\n\npub fun go() {\n    defer print(result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\"))\n    print(1)\n}\n",
         ),
         (
             "scoped",
-            "impl \"util\"\nimpl \"std/fs\"\n\npub fun go() {\n    print(util.with(fun() => i32 = fs.read_text(\"__T__/secret/s.txt\").len()))\n}\n",
+            "impl \"util\"\nimpl \"std/fs\"\n\npub fun go() {\n    print(util.with(fun() => i32 = result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\").len()))\n}\n",
         ),
         (
             "pd_initializer",
-            "impl \"std/fs\"\n\npd val S: String = fs.read_text(\"__T__/secret/s.txt\")\n\npub fun go() {\n    print(S.len())\n}\n",
+            "impl \"std/fs\"\n\npd val S: String = result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\")\n\npub fun go() {\n    print(S.len())\n}\n",
         ),
     ] {
         let lab = indirect(&format!("i03_{what}"), util, evil);
@@ -379,13 +379,13 @@ pub(crate) fn i04_importing_a_granted_module_does_not_import_its_grant() {
     let lab = indirect(
         "i04a",
         "impl \"std/fs\"\n\npub fun x() {\n}\n",
-        "impl \"util\"\n\npub fun go() {\n    print(util.fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+        "impl \"std/result\"\nimpl \"util\"\n\npub fun go() {\n    print(result.expect(util.fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\"))\n}\n",
     );
     lab.refused(&["util"]);
     let lab = indirect(
         "i04b",
         "pub fun x() {\n}\n",
-        "impl \"std/fs\" caps(fs = [\"/**\"])\n\npub fun go() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+        "impl \"std/fs\" caps(fs = [\"/**\"])\n\npub fun go() {\n    print(result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\"))\n}\n",
     );
     lab.refused(&["cannot grant"]);
 }
@@ -449,7 +449,7 @@ pub(crate) fn d02_the_wildcard_delegation_is_bounded_by_the_importer() {
     lab.src("mid.kp", "impl \"leaf\" caps(*)\n\npub fun go() {\n    leaf.go()\n}\n");
     lab.src(
         "leaf.kp",
-        "impl \"std/fs\"\n\npub fun go() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+        "impl \"std/fs\"\n\npub fun go() {\n    print(result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\"))\n}\n",
     );
     lab.refused(&["whole-resource wildcard"]);
 }
@@ -464,7 +464,7 @@ pub(crate) fn d03_the_manifest_narrows_the_entry_module() {
         "name = \"d\"\n\n[caps]\nfs = [\"__T__/data/**\"]\n",
         &[(
             "main.kp",
-            "impl \"std/fs\"\n\nfun main() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+            "impl \"std/fs\"\n\nfun main() {\n    print(result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\"))\n}\n",
         )],
     );
     lab.denied("granted to module 'main'");
@@ -473,7 +473,7 @@ pub(crate) fn d03_the_manifest_narrows_the_entry_module() {
         "name = \"d\"\n\n[caps]\nfs = [\"__T__/data/**\"]\n",
         &[
             ("main.kp", "impl \"util\" caps(fs = [\"__T__/**\"])\n\nfun main() {\n    util.go()\n}\n"),
-            ("util.kp", "impl \"std/fs\"\n\npub fun go() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n"),
+            ("util.kp", "impl \"std/fs\"\n\npub fun go() {\n    print(result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\"))\n}\n"),
         ],
     );
     lab.refused(&["cannot grant"]);
@@ -501,7 +501,7 @@ pub(crate) fn d04_module_ids_cannot_escape_or_shadow_the_library() {
             ),
             (
                 "util.kp",
-                "impl \"std/fs\"\n\npub fun go() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+                "impl \"std/fs\"\n\npub fun go() {\n    print(result.expect(fs.read_text(\"__T__/secret/s.txt\"), \"fs.read_text: the call failed\"))\n}\n",
             ),
         ],
     );

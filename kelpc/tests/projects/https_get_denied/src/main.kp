@@ -31,6 +31,6 @@ fun url_for(path: &str) => String {
 
 fun main() {
     val url = url_for("/a")
-    val r = http.get(url)
+    val r = result.expect(http.get(url), "http.get: the call failed")
     print(r.status)
 }

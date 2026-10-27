@@ -8,6 +8,7 @@ See [`Shape`](#shape) for the trait and [`Circle`](#circle) for a type that impl
 
 - `impl "std/fs" caps(fs = ["/tmp/**"])`
 - `impl "std/str"`
+- `impl "std/result"`
 
 ## Types
 

@@ -71,8 +71,13 @@ fun unwrap_err<T, E>(r: &Result<T, E>) => E {
     panic("Result.unwrap_err: value is Ok")
 }
 
-/// The success payload, or a panic carrying `message`. `T` must be `Copy`.
-fun expect<T, E>(r: &Result<T, E>, message: &str) => T {
+/// The success payload, or a panic carrying `message`: the panicking form of a
+/// fallible call, `result.expect(fs.read(path), "cannot read the config")`. The
+/// result is taken by value, so a payload that is not `Copy` comes out whole. A
+/// method cannot do this, since a receiver is always borrowed. Use it where a
+/// failure is a bug or a fatal condition; a failure the caller can handle
+/// belongs in a `when`, `?` or `map_err`.
+fun expect<T, E>(r: move Result<T, E>, message: &str) => T {
     if let Ok(v) = r {
         return v
     }

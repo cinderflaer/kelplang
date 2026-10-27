@@ -1,4 +1,4 @@
-// MISSING-k7Rwq: the fallible twins of the `std/fs` mutators. `None` is success;
+// MISSING-k7Rwq: the fallible mutators of `std/fs`. `Ok` is success;
 // a failure is an `io.IoErr` carrying the errno and its text, not a panic.
 impl "std/fs"
 impl "std/io"
@@ -6,47 +6,50 @@ impl "std/mem"
 impl "std/option"
 impl "std/result"
 
-fun report(label: &str, r: option.Option<io.IoErr>) {
-    if let Some(e) = r {
-        print(label)
-        print(e.errno.to_i64())
-    } else {
-        print(label)
-        print(0)
+fun report(label: &str, r: result.Result<unit, io.IoErr>) {
+    when r {
+        Err(e) -> {
+            print(label)
+            print(e.errno.to_i64())
+        }
+        Ok(_) -> {
+            print(label)
+            print(0)
+        }
     }
 }
 
 fun main() {
     val dir = "/tmp/kelp_fs_try_mut"
     if fs.exists(dir) {
-        fs.remove_all(dir)
+        result.expect(fs.remove_all(dir), "fs.remove_all: the call failed")
     }
-    report("mkdir_all", fs.try_mkdir_all("/tmp/kelp_fs_try_mut/a/b"))
-    report("write_text", fs.try_write_text("/tmp/kelp_fs_try_mut/a/f.txt", "one"))
-    report("append", fs.try_append("/tmp/kelp_fs_try_mut/a/f.txt", mem.alloc(0)))
-    report("write", fs.try_write("/tmp/kelp_fs_try_mut/a/g.bin", mem.alloc(2)))
-    report("rename", fs.try_rename("/tmp/kelp_fs_try_mut/a/g.bin", "/tmp/kelp_fs_try_mut/a/h.bin"))
-    report("symlink", fs.try_symlink("/tmp/kelp_fs_try_mut/a/f.txt", "/tmp/kelp_fs_try_mut/a/l"))
-    report("remove", fs.try_remove("/tmp/kelp_fs_try_mut/a/h.bin"))
+    report("mkdir_all", fs.mkdir_all("/tmp/kelp_fs_try_mut/a/b"))
+    report("write_text", fs.write_text("/tmp/kelp_fs_try_mut/a/f.txt", "one"))
+    report("append", fs.append("/tmp/kelp_fs_try_mut/a/f.txt", mem.alloc(0)))
+    report("write", fs.write("/tmp/kelp_fs_try_mut/a/g.bin", mem.alloc(2)))
+    report("rename", fs.rename("/tmp/kelp_fs_try_mut/a/g.bin", "/tmp/kelp_fs_try_mut/a/h.bin"))
+    report("symlink", fs.symlink("/tmp/kelp_fs_try_mut/a/f.txt", "/tmp/kelp_fs_try_mut/a/l"))
+    report("remove", fs.remove("/tmp/kelp_fs_try_mut/a/h.bin"))
 
     // Every one of these fails, and the run goes on.
-    report("write_text_missing_dir", fs.try_write_text("/tmp/kelp_fs_try_mut/nope/f.txt", "x"))
-    report("write_missing_dir", fs.try_write("/tmp/kelp_fs_try_mut/nope/f.bin", mem.alloc(1)))
-    report("append_missing_dir", fs.try_append("/tmp/kelp_fs_try_mut/nope/f.bin", mem.alloc(1)))
-    report("remove_missing", fs.try_remove("/tmp/kelp_fs_try_mut/a/h.bin"))
-    report("rename_missing", fs.try_rename("/tmp/kelp_fs_try_mut/a/h.bin", "/tmp/kelp_fs_try_mut/a/i.bin"))
-    report("symlink_exists", fs.try_symlink("/tmp/kelp_fs_try_mut/a/f.txt", "/tmp/kelp_fs_try_mut/a/l"))
-    report("mkdir_all_under_file", fs.try_mkdir_all("/tmp/kelp_fs_try_mut/a/f.txt/x"))
-    val listed = fs.try_list("/tmp/kelp_fs_try_mut/a")
+    report("write_text_missing_dir", fs.write_text("/tmp/kelp_fs_try_mut/nope/f.txt", "x"))
+    report("write_missing_dir", fs.write("/tmp/kelp_fs_try_mut/nope/f.bin", mem.alloc(1)))
+    report("append_missing_dir", fs.append("/tmp/kelp_fs_try_mut/nope/f.bin", mem.alloc(1)))
+    report("remove_missing", fs.remove("/tmp/kelp_fs_try_mut/a/h.bin"))
+    report("rename_missing", fs.rename("/tmp/kelp_fs_try_mut/a/h.bin", "/tmp/kelp_fs_try_mut/a/i.bin"))
+    report("symlink_exists", fs.symlink("/tmp/kelp_fs_try_mut/a/f.txt", "/tmp/kelp_fs_try_mut/a/l"))
+    report("mkdir_all_under_file", fs.mkdir_all("/tmp/kelp_fs_try_mut/a/f.txt/x"))
+    val listed = fs.list("/tmp/kelp_fs_try_mut/a")
     if let Ok(names) = listed {
         print(names.len())
     }
-    val unlisted = fs.try_list("/tmp/kelp_fs_try_mut/nope")
+    val unlisted = fs.list("/tmp/kelp_fs_try_mut/nope")
     if let Err(e) = unlisted {
         print(e.errno.to_i64())
     }
-    report("remove_all", fs.try_remove_all(dir))
+    report("remove_all", fs.remove_all(dir))
     print(fs.exists(dir))
-    report("remove_all_missing", fs.try_remove_all(dir))
+    report("remove_all_missing", fs.remove_all(dir))
     print("done")
 }

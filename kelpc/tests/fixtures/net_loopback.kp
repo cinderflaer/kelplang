@@ -1,4 +1,5 @@
 impl "std/net"
+impl "std/result"
 
 // A single-file program: the entry module implicitly holds every domain with a
 // `*` pattern (open item 18), so `net` resolves here with no `caps(...)`
@@ -10,11 +11,11 @@ impl "std/net"
 fun main() {
     val l = net.listen(0)
     val port = l.port()
-    val c = net.connect("127.0.0.1", port)
-    val s = net.accept(l)
+    val c = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
+    val s = result.expect(net.accept(l), "net.accept: the call failed")
 
     net.send_text(c, "hello")
-    val got = net.recv(s, 32)
+    val got = result.expect(net.recv(s, 32), "net.recv: the call failed")
     print(got)
 
     net.close(c)

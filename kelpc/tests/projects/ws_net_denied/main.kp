@@ -8,8 +8,9 @@
 // No server and no DNS: the denial happens before any socket is opened, which
 // is why this fixture needs nothing running.
 impl "std/ws" caps(net = ["127.0.0.1:*"], rand = [])
+impl "std/result"
 
 fun main() {
-    var c = ws.connect("example.com", 80, "/")
+    var c = result.expect(ws.connect("example.com", 80, "/"), "ws.connect: the call failed")
     print("connected")
 }

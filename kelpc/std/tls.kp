@@ -249,7 +249,7 @@ fun error_text(e: move TlsError) => String = when e {
 /// The socket is consumed by value (as `net.Socket` is always passed), and
 /// its descriptor lives on inside the returned `TlsStream`; there is no
 /// remaining `Socket` to close separately afterward, only the `TlsStream`.
-fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> {
+fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val handle = handshake_try_raw(
@@ -271,9 +271,9 @@ fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Re
 
 /// The fallible handshake with the default options, for a caller that can act on an untrusted certificate.
 ///
-/// The fallible twin of `handshake` with the default options, for a caller
+/// The fallible form of `handshake` with the default options, for a caller
 /// that has somewhere to go when the peer's certificate is not trusted.
-fun try_handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsError> = try_handshake_with(
+fun handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsError> = handshake_with(
     s,
     host,
     default_options(),
@@ -287,64 +287,11 @@ fun try_handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsErro
 /// `SO_RCVTIMEO`/`SO_SNDTIMEO` before the handshake starts. A silent peer is
 /// then `Err(Timeout)` instead of a hang, and the settings stay on the socket
 /// for the reads and writes that follow.
-fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = try_handshake_with(
+fun handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = handshake_with(
     s,
     host,
     TlsOptions(ca_pem = Bytes.empty(), timeout_ms = ms),
 )
-
-/// Panics with the text of a refused handshake. Its return type is `TlsStream` so that `handshake` can call it as a value.
-fun fail_stream(e: move TlsError) => TlsStream {
-    val text = error_text(e)
-    panic(text)
-}
-
-/// Performs the TLS client handshake with the default options, or panics with the error's text.
-///
-/// Panics if the handshake fails, including a certificate that the system store does not trust, or a name mismatch.
-///
-/// Performs the TLS client handshake, or panics with the error's text.
-///
-/// Panics: if the handshake fails, including a certificate the system trust
-/// store does not vouch for or a name mismatch.
-fun handshake(s: net.Socket, host: &str) => TlsStream {
-    val r = try_handshake(s, host)
-    return when r {
-        Ok(t) -> t
-        Err(e) -> fail_stream(e)
-    }
-}
-
-/// The same as `handshake`, with the given options.
-///
-/// Panics as `handshake` does.
-///
-/// The same as `handshake`, with a private CA and/or a timeout.
-///
-/// Panics: as `handshake`.
-fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => TlsStream {
-    val r = try_handshake_with(s, host, opts)
-    return when r {
-        Ok(t) -> t
-        Err(e) -> fail_stream(e)
-    }
-}
-
-/// The same as `handshake`, with a deadline in milliseconds.
-///
-/// Panics as `handshake` does, and with `TlsError.Timeout` when the peer stays silent past `ms`.
-///
-/// The same as `handshake`, with a deadline in milliseconds.
-///
-/// Panics: as `handshake`, and `TlsError.Timeout` when the peer stays silent
-/// past `ms`.
-fun handshake_timeout(s: net.Socket, host: &str, ms: u64) => TlsStream {
-    val r = try_handshake_timeout(s, host, ms)
-    return when r {
-        Ok(t) -> t
-        Err(e) -> fail_stream(e)
-    }
-}
 
 /// Sets the receive and send timeouts on the stream's socket. `ms` of 0 means no timeout.
 ///
@@ -366,17 +313,11 @@ fun fail_bytes(e: move TlsError) => Bytes {
     panic(text)
 }
 
-/// Panics with the text of a failed TLS operation that returns a count.
-fun fail_usize(e: move TlsError) => int {
-    val text = error_text(e)
-    panic(text)
-}
-
 /// Writes some of `data` and returns how many bytes were written, or why the write failed. Like `net.send`, it may write fewer bytes than given.
 ///
 /// One `SSL_write`, or why it failed: like `net.send`, it may write fewer
 /// bytes than given.
-fun try_write(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
+fun write(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = write_try_raw(t.handle, data, &mut code, &mut reason)
@@ -390,7 +331,7 @@ fun try_write(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
 ///
 /// The whole buffer, looping over short writes, or why it stopped: the TLS
 /// twin of `net.send_all`.
-fun try_write_all(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
+fun write_all(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = write_all_try_raw(t.handle, data, &mut code, &mut reason)
@@ -406,7 +347,7 @@ fun try_write_all(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
 /// One `SSL_read`: up to `max` bytes, whatever is available. A clean
 /// `close_notify` is `Ok` with an empty `Bytes`; a stream that ends without
 /// one is `Err(PeerClosedUncleanly)`.
-fun try_read(t: TlsStream, max: int) => result.Result<Bytes, TlsError> {
+fun read(t: TlsStream, max: int) => result.Result<Bytes, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val data = read_try_raw(t.handle, max, &mut code, &mut reason)
@@ -421,9 +362,9 @@ fun try_read(t: TlsStream, max: int) => result.Result<Bytes, TlsError> {
 /// It is the TLS form of `net.recv_into`, for a message of known size.
 ///
 /// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
-/// a clean close), or why the read failed: the TLS twin of
+/// a clean close), or why the read failed: the TLS form of
 /// `net.recv_into`, for a message of known size.
-fun try_read_into(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, TlsError> {
+fun read_into(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = read_into_try_raw(t.handle, buf, at, &mut code, &mut reason)
@@ -441,7 +382,7 @@ fun try_read_into(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, T
 /// it) and frees the OpenSSL handle, or returns why `close_notify` did not go
 /// out. The handle is freed either way. It does not close `t.fd`; see
 /// `shutdown` for the closing sequence.
-fun try_shutdown(t: TlsStream) => result.Result<bool, TlsError> {
+fun shutdown(t: TlsStream) => result.Result<bool, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     shutdown_try_raw(t.handle, &mut code, &mut reason)
@@ -451,104 +392,11 @@ fun try_shutdown(t: TlsStream) => result.Result<bool, TlsError> {
     return result.Result.Ok(value = true)
 }
 
-/// Writes some of `data` over TLS and returns how many bytes were written.
-///
-/// Panics if the write fails or the peer has closed.
-///
-/// One `SSL_write`.
-///
-/// Panics: if the write fails or the peer has closed.
-fun write(t: TlsStream, data: Bytes) => int {
-    val r = try_write(t, data)
-    return when r {
-        Ok(n) -> n
-        Err(e) -> fail_usize(e)
-    }
-}
-
-/// Writes the whole buffer over TLS, looping over short writes.
-///
-/// Panics as `write` does.
-///
-/// The whole buffer, looping over short writes: the TLS twin of
-/// `net.send_all`.
-///
-/// Panics: as `write`.
-fun write_all(t: TlsStream, data: Bytes) => int {
-    val r = try_write_all(t, data)
-    return when r {
-        Ok(n) -> n
-        Err(e) -> fail_usize(e)
-    }
-}
-
-/// Reads up to `max` bytes over TLS. An empty result means the peer sent a clean `close_notify`.
-///
-/// Panics if the read fails, including a stream that ended without a `close_notify`.
-///
-/// One `SSL_read`: up to `max` bytes, whatever is available. Empty means the
-/// peer sent a clean `close_notify`.
-///
-/// Panics: if the read fails, including a stream that ended without a
-/// `close_notify` (`TlsError.PeerClosedUncleanly`).
-fun read(t: TlsStream, max: int) => Bytes {
-    val r = try_read(t, max)
-    return when r {
-        Ok(b) -> b
-        Err(e) -> fail_bytes(e)
-    }
-}
-
-/// Fills `buf` from byte `at` onward over TLS and returns how many bytes arrived, 0 on a clean close.
-///
-/// Panics as `read` does.
-///
-/// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
-/// a clean close): the TLS twin of `net.recv_into`, for a message of known
-/// size.
-///
-/// Panics: as `read`.
-fun read_into(t: TlsStream, buf: mut Bytes, at: int) => int {
-    val r = try_read_into(t, buf, at)
-    return when r {
-        Ok(n) -> n
-        Err(e) -> fail_usize(e)
-    }
-}
-
-/// Ends the TLS session and frees the OpenSSL handle. The socket is not closed.
-///
-/// The caller closes the socket itself, after this, as it does for a plain socket. Panics if `close_notify` could not be sent at all.
-/// A peer that has already gone is routine, and `try_shutdown` lets a caller ignore that case.
-///
-/// Ends the TLS session and frees the OpenSSL handle. It does not close
-/// `t.fd`: this module cannot call `net.close` (see the header comment), so
-/// the caller closes the socket itself right after, exactly as it does for a
-/// plain `net.Socket`:
-///
-///     tls.shutdown(t)
-///     net.close(net.Socket(fd = t.fd))
-///
-/// Panics: if `close_notify` could not be sent at all. A peer that has
-/// already gone away is the common case, and a caller that wants to treat it
-/// as routine uses `try_shutdown` and ignores the `Err`, which is what
-/// `std/http` does at the end of a connection.
-fun shutdown(t: TlsStream) {
-    val r = try_shutdown(t)
-    when r {
-        Ok(_) -> {}
-        Err(e) -> {
-            val text = error_text(e)
-            panic(text)
-        }
-    }
-}
-
 // ===== ALPN, client certificates and serving (st3) =====
 //
 // `kelp wiki page stdlib/tls.md` is the design note. This module takes certificates and
 // keys as PEM *bytes*: it must not import `std/fs`, because a module that names
-// `fs.try_read` needs the `fs` grant from every program that imports it, and
+// `fs.read` needs the `fs` grant from every program that imports it, and
 // every `https` client does. `std/tlsfile` is the thin layer that reads the
 // files through the `fs` gate and calls the `_pem` functions here; the C side
 // only ever sees PEM bytes. A private key is never put in an
@@ -802,7 +650,7 @@ fun ServerConfig.free() {
 ///
 /// The server handshake over a socket `net.accept` returned, within the
 /// configuration's deadline. The descriptor lives on in the returned
-/// `TlsStream`, as for `try_handshake`. Failures are values: a client
+/// `TlsStream`, as for `handshake`. Failures are values: a client
 /// certificate from another CA is `Untrusted`, an expired one `Expired`, a
 /// missing one, no common ALPN protocol or a version below the floor is
 /// `HandshakeFailed`, a silent client is `Timeout`.
@@ -953,10 +801,10 @@ fun TlsClientOptions.with_timeout_ms(ms: u64) => TlsClientOptions = TlsClientOpt
 ///
 /// It verifies the same way, checks the host name in the same way and keeps the TLS 1.2 floor, and adds ALPN and a client certificate when the options carry them.
 ///
-/// The client handshake with every option, `try_handshake_with`'s superset:
+/// The client handshake with every option, `handshake_with`'s superset:
 /// the same verification, hostname check and TLS 1.2 floor, plus ALPN and a
 /// client certificate when the options carry them.
-fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> {
+fun handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val handle = handshake_try_raw(
@@ -975,3 +823,31 @@ fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => re
     }
     return result.Result.Ok(value = TlsStream(fd = s.fd, handle = handle))
 }
+
+/// Retired (issue #264): each `try_` name is the plain name above, with the same
+/// result. Kept for one cycle, see the register in `kelpc/src/deprecated.rs`.
+fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> = handshake_with(s, host, opts)
+
+/// Retired (issue #264): see `handshake_with`.
+fun try_handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsError> = handshake(s, host)
+
+/// Retired (issue #264): see `handshake_with`.
+fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = handshake_timeout(s, host, ms)
+
+/// Retired (issue #264): see `handshake_with`.
+fun try_write(t: TlsStream, data: Bytes) => result.Result<int, TlsError> = write(t, data)
+
+/// Retired (issue #264): see `handshake_with`.
+fun try_write_all(t: TlsStream, data: Bytes) => result.Result<int, TlsError> = write_all(t, data)
+
+/// Retired (issue #264): see `handshake_with`.
+fun try_read(t: TlsStream, max: int) => result.Result<Bytes, TlsError> = read(t, max)
+
+/// Retired (issue #264): see `handshake_with`.
+fun try_read_into(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, TlsError> = read_into(t, buf, at)
+
+/// Retired (issue #264): see `handshake_with`.
+fun try_shutdown(t: TlsStream) => result.Result<bool, TlsError> = shutdown(t)
+
+/// Retired (issue #264): see `handshake_with`.
+fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> = handshake_opts(s, host, opts)

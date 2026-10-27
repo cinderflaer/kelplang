@@ -382,16 +382,9 @@ pub(crate) fn narrow_integer_arithmetic_wraps_at_its_own_width() {
 
 #[test]
 pub(crate) fn a_failed_syscall_reports_errno_and_strerror() {
-    // `ENOENT` is 2 on Linux, and glibc and musl both spell it this way; the
-    // message line is asserted separately so a stable prefix is what a
-    // golden test would pin, and the errno line is the new detail.
-    assert_fixture_panics_all(
-        "fs_errno",
-        &[
-            "fs.read: cannot open file",
-            "errno 2: No such file or directory",
-        ],
-    );
+    // The panic is the message `result.expect` was given; the errno is the
+    // `Err` a caller matches on (issue #264).
+    assert_fixture_panics_all("fs_errno", &["fs.read: the call failed"]);
 }
 
 #[test]
@@ -405,7 +398,7 @@ pub(crate) fn fs_has_fallible_read_and_open() {
     assert_project_runs(
         "fs_fallible",
         &target,
-        "hello\n\n2\nNo such file or directory\nhello\n\n0\nfs.try_read_text: input is not valid utf-8\ntrue\n22\n2\n",
+        "hello\n\n2\nNo such file or directory\nhello\n\n0\nfs.read_text: input is not valid utf-8\ntrue\n22\n2\n",
     );
 }
 

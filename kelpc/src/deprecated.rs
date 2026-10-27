@@ -64,6 +64,8 @@ pub struct Outdated {
 /// `try_to_byte` are their spellings, and the six text names (issue #262):
 /// `fmt.int`, `fmt.uint`, `fmt.float`, `str.from_u64`, `str.from_i64` and
 /// `str.from_f64` still build, and `toText` on the number is their spelling.
+/// The `try_` twins of the fallible std names (issue #264): `fs.try_read` and the
+/// rest of the pairs still build, and the plain name returns the same `Result`.
 ///
 /// The register stays the mechanism for the next deprecation: add an entry here,
 /// raise its finding where the spelling is read (`scan_tokens` for a method
@@ -115,6 +117,175 @@ pub const REGISTER: &[Outdated] = &[
         id: "str-from-f64",
         what: "`str.from_f64(`",
         instead: "write `x.toText(decimals)`, which gives the same text with `decimals` digits after the point",
+    },    Outdated {
+        id: "try-fs-read",
+        what: "`fs.try_read(`",
+        instead: "write `fs.read(`, which returns the same `Result`; a panic is `result.expect(fs.read(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-fs-read-text",
+        what: "`fs.try_read_text(`",
+        instead: "write `fs.read_text(`, which returns the same `Result`; a panic is `result.expect(fs.read_text(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-fs-write",
+        what: "`fs.try_write(`",
+        instead: "write `fs.write(`, which returns `Result<unit, io.IoErr>`: match `Err(e)` where this matched `Some(e)`, or write `.expect(\"...\")` for a panic",
+    },
+    Outdated {
+        id: "try-fs-write-text",
+        what: "`fs.try_write_text(`",
+        instead: "write `fs.write_text(`, which returns `Result<unit, io.IoErr>`: match `Err(e)` where this matched `Some(e)`, or write `.expect(\"...\")` for a panic",
+    },
+    Outdated {
+        id: "try-fs-remove",
+        what: "`fs.try_remove(`",
+        instead: "write `fs.remove(`, which returns `Result<unit, io.IoErr>`: match `Err(e)` where this matched `Some(e)`, or write `.expect(\"...\")` for a panic",
+    },
+    Outdated {
+        id: "try-fs-rename",
+        what: "`fs.try_rename(`",
+        instead: "write `fs.rename(`, which returns `Result<unit, io.IoErr>`: match `Err(e)` where this matched `Some(e)`, or write `.expect(\"...\")` for a panic",
+    },
+    Outdated {
+        id: "try-fs-append",
+        what: "`fs.try_append(`",
+        instead: "write `fs.append(`, which returns `Result<unit, io.IoErr>`: match `Err(e)` where this matched `Some(e)`, or write `.expect(\"...\")` for a panic",
+    },
+    Outdated {
+        id: "try-fs-list",
+        what: "`fs.try_list(`",
+        instead: "write `fs.list(`, which returns the same `Result`; a panic is `result.expect(fs.list(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-fs-mkdir-all",
+        what: "`fs.try_mkdir_all(`",
+        instead: "write `fs.mkdir_all(`, which returns `Result<unit, io.IoErr>`: match `Err(e)` where this matched `Some(e)`, or write `.expect(\"...\")` for a panic",
+    },
+    Outdated {
+        id: "try-fs-remove-all",
+        what: "`fs.try_remove_all(`",
+        instead: "write `fs.remove_all(`, which returns `Result<unit, io.IoErr>`: match `Err(e)` where this matched `Some(e)`, or write `.expect(\"...\")` for a panic",
+    },
+    Outdated {
+        id: "try-fs-symlink",
+        what: "`fs.try_symlink(`",
+        instead: "write `fs.symlink(`, which returns `Result<unit, io.IoErr>`: match `Err(e)` where this matched `Some(e)`, or write `.expect(\"...\")` for a panic",
+    },
+    Outdated {
+        id: "try-fs-open",
+        what: "`fs.try_open(`",
+        instead: "write `fs.open(`, which returns the same `Result`; a panic is `result.expect(fs.open(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-process-run",
+        what: "`process.try_run(`",
+        instead: "write `process.run(`, which returns the same `Result`; a panic is `result.expect(process.run(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-process-run-in",
+        what: "`process.try_run_in(`",
+        instead: "write `process.run_in(`, which returns the same `Result`; a panic is `result.expect(process.run_in(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-net-connect",
+        what: "`net.try_connect(`",
+        instead: "write `net.connect(`, which returns the same `Result`; a panic is `result.expect(net.connect(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-net-send-all",
+        what: "`net.try_send_all(`",
+        instead: "write `net.send_all(`, which returns the same `Result`; a panic is `result.expect(net.send_all(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-net-recv",
+        what: "`net.try_recv(`",
+        instead: "write `net.recv(`, which returns the same `Result`; a panic is `result.expect(net.recv(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-net-recv-into",
+        what: "`net.try_recv_into(`",
+        instead: "write `net.recv_into(`, which returns the same `Result`; a panic is `result.expect(net.recv_into(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-net-accept",
+        what: "`net.try_accept(`",
+        instead: "write `net.accept(`, which returns the same `Result`; a panic is `result.expect(net.accept(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-tls-handshake",
+        what: "`tls.try_handshake(`",
+        instead: "write `tls.handshake(`, which returns the same `Result`; a panic is `result.expect(tls.handshake(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-tls-handshake-with",
+        what: "`tls.try_handshake_with(`",
+        instead: "write `tls.handshake_with(`, which returns the same `Result`; a panic is `result.expect(tls.handshake_with(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-tls-handshake-timeout",
+        what: "`tls.try_handshake_timeout(`",
+        instead: "write `tls.handshake_timeout(`, which returns the same `Result`; a panic is `result.expect(tls.handshake_timeout(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-tls-write",
+        what: "`tls.try_write(`",
+        instead: "write `tls.write(`, which returns the same `Result`; a panic is `result.expect(tls.write(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-tls-write-all",
+        what: "`tls.try_write_all(`",
+        instead: "write `tls.write_all(`, which returns the same `Result`; a panic is `result.expect(tls.write_all(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-tls-read",
+        what: "`tls.try_read(`",
+        instead: "write `tls.read(`, which returns the same `Result`; a panic is `result.expect(tls.read(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-tls-read-into",
+        what: "`tls.try_read_into(`",
+        instead: "write `tls.read_into(`, which returns the same `Result`; a panic is `result.expect(tls.read_into(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-tls-shutdown",
+        what: "`tls.try_shutdown(`",
+        instead: "write `tls.shutdown(`, which returns the same `Result`; a panic is `result.expect(tls.shutdown(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-tls-handshake-opts",
+        what: "`tls.try_handshake_opts(`",
+        instead: "write `tls.handshake_opts(`, which returns the same `Result`; a panic is `result.expect(tls.handshake_opts(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-ws-connect",
+        what: "`ws.try_connect(`",
+        instead: "write `ws.connect(`, which returns the same `Result`; a panic is `result.expect(ws.connect(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-ws-connect-url",
+        what: "`ws.try_connect_url(`",
+        instead: "write `ws.connect_url(`, which returns the same `Result`; a panic is `result.expect(ws.connect_url(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-ws-connect-scheme",
+        what: "`ws.try_connect_scheme(`",
+        instead: "write `ws.connect_scheme(`, which returns the same `Result`; a panic is `result.expect(ws.connect_scheme(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-http-get",
+        what: "`http.try_get(`",
+        instead: "write `http.get(`, which returns the same `Result`; a panic is `result.expect(http.get(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-http-get-tls",
+        what: "`http.try_get_tls(`",
+        instead: "write `http.get_tls(`, which returns the same `Result`; a panic is `result.expect(http.get_tls(...), \"...\")`",
+    },
+    Outdated {
+        id: "try-net-shutdown-write",
+        what: "`net.try_shutdown_write(`",
+        instead: "write `net.shutdown_write(`, which returns `Result<unit, NetErr>`: `.is_ok()` where this returned a `bool`",
     },
 ];
 
@@ -143,6 +314,48 @@ fn finding_for(entry: &Outdated, span: Span, module: &str) -> Diagnostic {
 /// The finding for the registered entry `id`, at `span` in `module`.
 pub fn finding(id: &str, span: Span, module: &str) -> Diagnostic {
     finding_for(find(id), span, module)
+}
+
+/// The register id of a retired `try_` twin, by its owner module and name
+/// (issue #264). `None` for every other spelling.
+fn twin_id(owner: &str, name: &str) -> Option<&'static str> {
+    Some(match (owner, name) {
+        ("fs", "try_read") => "try-fs-read",
+        ("fs", "try_read_text") => "try-fs-read-text",
+        ("fs", "try_write") => "try-fs-write",
+        ("fs", "try_write_text") => "try-fs-write-text",
+        ("fs", "try_remove") => "try-fs-remove",
+        ("fs", "try_rename") => "try-fs-rename",
+        ("fs", "try_append") => "try-fs-append",
+        ("fs", "try_list") => "try-fs-list",
+        ("fs", "try_mkdir_all") => "try-fs-mkdir-all",
+        ("fs", "try_remove_all") => "try-fs-remove-all",
+        ("fs", "try_symlink") => "try-fs-symlink",
+        ("fs", "try_open") => "try-fs-open",
+        ("process", "try_run") => "try-process-run",
+        ("process", "try_run_in") => "try-process-run-in",
+        ("net", "try_connect") => "try-net-connect",
+        ("net", "try_send_all") => "try-net-send-all",
+        ("net", "try_recv") => "try-net-recv",
+        ("net", "try_recv_into") => "try-net-recv-into",
+        ("net", "try_accept") => "try-net-accept",
+        ("tls", "try_handshake") => "try-tls-handshake",
+        ("tls", "try_handshake_with") => "try-tls-handshake-with",
+        ("tls", "try_handshake_timeout") => "try-tls-handshake-timeout",
+        ("tls", "try_write") => "try-tls-write",
+        ("tls", "try_write_all") => "try-tls-write-all",
+        ("tls", "try_read") => "try-tls-read",
+        ("tls", "try_read_into") => "try-tls-read-into",
+        ("tls", "try_shutdown") => "try-tls-shutdown",
+        ("tls", "try_handshake_opts") => "try-tls-handshake-opts",
+        ("ws", "try_connect") => "try-ws-connect",
+        ("ws", "try_connect_url") => "try-ws-connect-url",
+        ("ws", "try_connect_scheme") => "try-ws-connect-scheme",
+        ("http", "try_get") => "try-http-get",
+        ("http", "try_get_tls") => "try-http-get-tls",
+        ("net", "try_shutdown_write") => "try-net-shutdown-write",
+        _ => return None,
+    })
 }
 
 /// The outdated names a token stream uses: each `Map.new(` call, one finding per
@@ -179,15 +392,30 @@ pub fn scan_tokens(tokens: &[Token], module: &str) -> Vec<Diagnostic> {
             continue;
         };
         let id = match (owner.as_str(), name.as_str()) {
-            ("fmt", "int") => "fmt-int",
-            ("fmt", "uint") => "fmt-uint",
-            ("fmt", "float") => "fmt-float",
-            ("str", "from_u64") => "str-from-u64",
-            ("str", "from_i64") => "str-from-i64",
-            ("str", "from_f64") => "str-from-f64",
+        ("fmt", "int") => "fmt-int",
+        ("fmt", "uint") => "fmt-uint",
+        ("fmt", "float") => "fmt-float",
+        ("str", "from_u64") => "str-from-u64",
+        ("str", "from_i64") => "str-from-i64",
+        ("str", "from_f64") => "str-from-f64",
             _ => continue,
         };
         found.push(finding(id, name_tok.span, module));
+    }
+    // The `try_` twins of the fallible std names (issue #264): `owner.try_x(`
+    // for each module that owns one. The finding names the plain name to write,
+    // and the spelling still builds for one cycle.
+    for window in tokens.windows(4) {
+        let [owner_tok, dot, name_tok, open] = window else { continue };
+        if !matches!(dot.kind, TokenKind::Dot) || !matches!(open.kind, TokenKind::LParen) {
+            continue;
+        }
+        let (TokenKind::Ident(owner), TokenKind::Ident(name)) = (&owner_tok.kind, &name_tok.kind) else {
+            continue;
+        };
+        if let Some(id) = twin_id(owner, name) {
+            found.push(finding(id, name_tok.span, module));
+        }
     }
     for window in tokens.windows(3) {
         let [dot, name, open] = window else { continue };
@@ -303,6 +531,38 @@ mod tests {
     }
 
     #[test]
+    fn the_try_twins_are_flagged_by_their_owner_module() {
+        // The `try_` twins of the fallible std names are flagged where the owner
+        // is the module that owns them (issue #264), and the finding names the
+        // plain name the caller writes instead. A plain name, a `try_` name on
+        // another owner and an unknown `try_` name are left alone.
+        let text = "val a = fs.try_read(p)\nval b = fs.try_write(p, d)\nval c = process.try_run(a, b)\n\
+                    val d2 = process.try_run_in(d, a, b)\nval e = net.try_connect(h, 1)\n\
+                    val f = tls.try_write(t, d)\nval g = ws.try_connect(h, 1, p)\nval h2 = http.try_get(u)\n\
+                    val i = fs.read(p)\nval j = fs.try_no_such(x)\nval k = local.try_read(x)\n";
+        let tokens = Lexer::new(text).tokenize().expect("the sample lexes");
+        let found = scan_tokens(&tokens, "m");
+        let messages: Vec<&str> = found.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(found.len(), 8, "{messages:?}");
+        for (spelling, plain) in [
+            ("`fs.try_read(`", "`fs.read(`"),
+            ("`fs.try_write(`", "`fs.write(`"),
+            ("`process.try_run(`", "`process.run(`"),
+            ("`process.try_run_in(`", "`process.run_in(`"),
+            ("`net.try_connect(`", "`net.connect(`"),
+            ("`tls.try_write(`", "`tls.write(`"),
+            ("`ws.try_connect(`", "`ws.connect(`"),
+            ("`http.try_get(`", "`http.get(`"),
+        ] {
+            let m = messages
+                .iter()
+                .find(|m| m.starts_with(spelling))
+                .unwrap_or_else(|| panic!("{spelling} not flagged: {messages:?}"));
+            assert!(m.contains(plain), "the finding for {spelling} does not name {plain}: {m}");
+        }
+    }
+
+    #[test]
     fn the_shipped_sources_carry_no_outdated_spelling() {
         // A deprecation in the stdlib is the worst kind: every program that
         // imports that module would be warned about a file it cannot edit.
@@ -313,7 +573,8 @@ mod tests {
         // The next entry adds its own spelling to the list.
         const RETIRED: &[&str] = &[
             "with caps(", ").R:", ").R ", ".to_u8(", ".try_to_u8(", "Map.new(", "fmt.int(", "fmt.uint(",
-            "fmt.float(", "str.from_u64(", "str.from_i64(", "str.from_f64(",
+            "fmt.float(", "str.from_u64(", "str.from_i64(", "str.from_f64(", "fs.try_", "process.try_",
+            "net.try_", "tls.try_", "ws.try_", "http.try_",
         ];
         let mut ids: Vec<&str> = crate::stdlib::shipped().to_vec();
         ids.push(crate::stdlib::RT_MODULE);

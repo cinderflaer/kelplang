@@ -1,6 +1,7 @@
 impl "std/os" caps(fs = ["__SCRATCH__/**"], machine = [])
 impl "std/fs" caps(fs = ["__SCRATCH__/**"])
 impl "std/str"
+impl "std/result"
 
 // A helper's temporary directory is removed when the helper returns, because
 // the TempDir it owns is dropped at the end of its scope.
@@ -11,7 +12,7 @@ fun scoped() => String {
     let Ok(d) = &dr else { panic("no temporary directory") }
     val p = d.path()
     val file = str.concat(p, "/a.txt")
-    fs.write_text(file, String.from_str("x"))
+    result.expect(fs.write_text(file, String.from_str("x")), "fs.write_text: the call failed")
     return p
 }
 

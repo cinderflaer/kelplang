@@ -1,5 +1,6 @@
 impl "std/fs"
 impl "std/path"
+impl "std/result"
 
 // This module holds `fs` because `main.kp` delegated it, so every path below
 // is checked against the patterns it received.
@@ -7,22 +8,22 @@ pub fun build() {
     val dir = "__KELP_SCRATCH__/kelp_caps_link"
     val target = path.join(dir, "target.txt")
     val link = path.join(dir, "link.txt")
-    fs.write_text(target, String.from_str("hello link"))
-    fs.symlink(target, link.as_str())
+    result.expect(fs.write_text(target, String.from_str("hello link")), "fs.write_text: the call failed")
+    result.expect(fs.symlink(target, link.as_str()), "fs.symlink: the call failed")
 
     // Both ends are inside the grant, so following the link resolves to a path
     // the check admits: a link is transparent to every access below it.
     print(fs.is_file(link))
-    print(fs.read_text(link))
+    print(result.expect(fs.read_text(link), "fs.read_text: the call failed"))
 
     // Removing the target leaves the link dangling, and `exists` follows it,
     // which is the proof that this is a link and not a copy.
-    fs.remove(target)
+    result.expect(fs.remove(target), "fs.remove: the call failed")
     print(fs.exists(link))
 
     // A dangling link is still removable: the check resolves the *link's* path,
     // which is inside the grant. The directory is empty afterwards, so the link
     // is gone rather than left behind.
-    fs.remove(link)
-    print(fs.list(dir).len())
+    result.expect(fs.remove(link), "fs.remove: the call failed")
+    print(result.expect(fs.list(dir), "fs.list: the call failed").len())
 }

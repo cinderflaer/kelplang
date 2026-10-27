@@ -23,7 +23,7 @@ fun arg_port(at: int) => u16 {
 }
 
 fun main() {
-    val refused = ws.try_connect("127.0.0.1", arg_port(1), "/gateway")
+    val refused = ws.connect("127.0.0.1", arg_port(1), "/gateway")
     when refused {
         Err(e) -> {
             when e {
@@ -35,7 +35,7 @@ fun main() {
         else -> print("dial connected, so something was listening after all")
     }
 
-    val answered = ws.try_connect("127.0.0.1", arg_port(2), "/gateway")
+    val answered = ws.connect("127.0.0.1", arg_port(2), "/gateway")
     when answered {
         Err(e) -> {
             when e {

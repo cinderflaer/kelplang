@@ -48,7 +48,7 @@ fun fetch_all(worker: int) => Outcome {
             headers = http.empty_headers(),
             body = Bytes.empty(),
         )
-        val resp = pool.send(req)
+        val resp = result.expect(pool.send(req), "pool.send: the call failed")
         if resp.is_ok() {
             ok = ok + 1
             bytes = bytes + resp.body.len().to_u64()

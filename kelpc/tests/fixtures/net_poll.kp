@@ -1,4 +1,5 @@
 impl "std/net"
+impl "std/result"
 
 // `poll` readiness: one thread can serve many sockets by asking which of them
 // has something to say instead of blocking on one. Every wait here is bounded,
@@ -6,8 +7,8 @@ impl "std/net"
 fun main() {
     val l = net.listen(0)
     val port = l.port()
-    val c = net.connect("127.0.0.1", port)
-    val s = net.accept(l)
+    val c = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
+    val s = result.expect(net.accept(l), "net.accept: the call failed")
 
     // Nothing has been sent yet, so a short wait reports false. This is a
     // timeout rather than a hang, the whole point of `wait_readable`.
@@ -17,14 +18,14 @@ fun main() {
 
     net.send_text(c, "now")
     print(s.wait_readable(2000))
-    val got = net.recv(s, 8)
+    val got = result.expect(net.recv(s, 8), "net.recv: the call failed")
     print(got)
 
     // After the peer closes its writing half the socket is readable again, and
     // the read reports end of file, a readiness a loop must not spin on.
-    net.shutdown_write(c)
+    result.expect(net.shutdown_write(c), "net.shutdown_write: the call failed")
     print(s.wait_readable(2000))
-    val eof = net.recv(s, 8)
+    val eof = result.expect(net.recv(s, 8), "net.recv: the call failed")
     print(eof.is_empty())
 
     net.close(c)

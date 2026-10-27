@@ -5,6 +5,7 @@
 impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/net"
 impl "std/thread"
+impl "std/result"
 
 fun show(label: &str, n: int) {
     print("${label} ${n}")
@@ -24,7 +25,7 @@ fun main() {
     p.warm(false)
     p.set_idle_timeout(1)
     thread.sleep_ms(30)
-    val lease = p.checkout(false)
+    val lease = result.expect(p.checkout(false), "checkout: the call failed")
     print(lease.reused)
     show("after stale checkout", p.len())
     p.release(lease, false)

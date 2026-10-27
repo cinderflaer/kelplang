@@ -27,16 +27,16 @@ fun main() {
         r = str.parse_u64(args.get(1).as_str()),
         message = "tls_timeout_write: argv[1] is not a port number",
     )
-    var s = net.connect("127.0.0.1", parsed.to_u16())
+    var s = result.expect(net.connect("127.0.0.1", parsed.to_u16()), "net.connect: the call failed")
     s.set_timeout(4000)
-    val t = tls.handshake(s, "127.0.0.1")
+    val t = result.expect(tls.handshake(s, "127.0.0.1"), "tls.handshake: the call failed")
     tls.set_timeout(t, 500)
     val body = mem.alloc(67108864)
-    val r = tls.try_write_all(t, body)
+    val r = tls.write_all(t, body)
     when r {
         Ok(_) -> print("ok")
         Err(e) -> print(err_name(e))
     }
-    val sd = tls.try_shutdown(t)
+    val sd = tls.shutdown(t)
     net.close(s)
 }

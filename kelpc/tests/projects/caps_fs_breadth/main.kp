@@ -4,15 +4,16 @@
 // nothing already on disk.
 impl "std/str"
 impl "std/fs" caps(fs = ["/tmp/kelp_fs_breadth_test/**"])
+impl "std/result"
 
 fun main() {
     val root = "/tmp/kelp_fs_breadth_test"
     if fs.exists(root) {
-        fs.remove_all(root)
+        result.expect(fs.remove_all(root), "fs.remove_all: the call failed")
     }
-    fs.mkdir_all("/tmp/kelp_fs_breadth_test/a/b/c")
-    fs.write_text("/tmp/kelp_fs_breadth_test/a/b/c/note.txt", String.from_str("line one\nline two\n"))
-    fs.write_text("/tmp/kelp_fs_breadth_test/top.txt", String.from_str("top"))
+    result.expect(fs.mkdir_all("/tmp/kelp_fs_breadth_test/a/b/c"), "fs.mkdir_all: the call failed")
+    result.expect(fs.write_text("/tmp/kelp_fs_breadth_test/a/b/c/note.txt", String.from_str("line one\nline two\n")), "fs.write_text: the call failed")
+    result.expect(fs.write_text("/tmp/kelp_fs_breadth_test/top.txt", String.from_str("top")), "fs.write_text: the call failed")
 
     val lines = fs.read_lines("/tmp/kelp_fs_breadth_test/a/b/c/note.txt")
     print(lines.len())
@@ -29,7 +30,7 @@ fun main() {
 
     fs.copy("/tmp/kelp_fs_breadth_test/top.txt", "/tmp/kelp_fs_breadth_test/copy.txt")
     {
-        val f = fs.open("/tmp/kelp_fs_breadth_test/copy.txt", "r")
+        val f = result.expect(fs.open("/tmp/kelp_fs_breadth_test/copy.txt", "r"), "fs.open: the call failed")
         val data = f.read_all()
         print!(data.as_str())
         print("")
@@ -47,6 +48,6 @@ fun main() {
     print(str.starts_with(tmp, "/tmp/kelp_fs_breadth_test/tmp-"))
     print(fs.is_file(tmp))
 
-    fs.remove_all(root)
+    result.expect(fs.remove_all(root), "fs.remove_all: the call failed")
     print(fs.exists(root))
 }

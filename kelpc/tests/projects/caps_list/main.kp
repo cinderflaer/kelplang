@@ -4,6 +4,7 @@
 // contents, so the run is repeatable and depends on nothing already on disk.
 impl "std/str"
 impl "std/fs" caps(fs = ["__KELP_SCRATCH__/kelp_caps_list_test/**"])
+impl "std/result"
 
 fun path_of(dir: &str, name: &str) => String {
     var parts: List<String> = List.empty()
@@ -15,18 +16,18 @@ fun path_of(dir: &str, name: &str) => String {
 
 fun clear(dir: &str) {
     if fs.exists(dir) {
-        val entries = fs.list(dir)
+        val entries = result.expect(fs.list(dir), "fs.list: the call failed")
         var i: int = 0
         while i < entries.len() {
             val p = path_of(dir, entries.get(i).as_str())
             if fs.is_dir(p) {
                 clear(p)
             } else {
-                fs.remove(p)
+                result.expect(fs.remove(p), "fs.remove: the call failed")
             }
             i = i + 1
         }
-        fs.remove(dir)
+        result.expect(fs.remove(dir), "fs.remove: the call failed")
     }
 }
 
@@ -34,11 +35,11 @@ fun main() {
     val dir = "__KELP_SCRATCH__/kelp_caps_list_test"
     clear(dir)
     fs.mkdir(dir)
-    fs.write_text("__KELP_SCRATCH__/kelp_caps_list_test/b.txt", String.from_str("b"))
-    fs.write_text("__KELP_SCRATCH__/kelp_caps_list_test/a.txt", String.from_str("a"))
+    result.expect(fs.write_text("__KELP_SCRATCH__/kelp_caps_list_test/b.txt", String.from_str("b")), "fs.write_text: the call failed")
+    result.expect(fs.write_text("__KELP_SCRATCH__/kelp_caps_list_test/a.txt", String.from_str("a")), "fs.write_text: the call failed")
     fs.mkdir("__KELP_SCRATCH__/kelp_caps_list_test/sub")
 
-    val entries = fs.list(dir)
+    val entries = result.expect(fs.list(dir), "fs.list: the call failed")
     print(entries.len())
     print(str.join(entries, sep = ","))
     var i: int = 0

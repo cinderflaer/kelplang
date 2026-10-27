@@ -25,8 +25,8 @@ fun main() {
         r = str.parse_u64(args.get(1).as_str()),
         message = "tls_timeout_handshake: argv[1] is not a port number",
     )
-    var s = net.connect("127.0.0.1", parsed.to_u16())
-    val hs = tls.try_handshake_timeout(s, "127.0.0.1", 400)
+    var s = result.expect(net.connect("127.0.0.1", parsed.to_u16()), "net.connect: the call failed")
+    val hs = tls.handshake_timeout(s, "127.0.0.1", 400)
     when hs {
         Ok(_) -> print("ok")
         Err(e) -> print(err_name(e))

@@ -49,7 +49,7 @@ fn project(dir: &Path, import_line: &str, body: &str) {
     let main = format!("{import_line}\n\nfun main() {{\n    print(util.leak())\n}}\n");
     fs::write(dir.join("main.kp"), main).expect("write main.kp");
     let body = body.replace("fun leak(", "pub fun leak(");
-    fs::write(dir.join("util.kp"), format!("impl \"std/fs\"\n\n{body}\n")).expect("write util.kp");
+    fs::write(dir.join("util.kp"), format!("impl \"std/fs\"\nimpl \"std/result\"\n\n{body}\n")).expect("write util.kp");
 }
 
 /// Grants `util` a prefix that admits nothing under `/etc`, so the runtime
@@ -174,7 +174,7 @@ fn a_function_literal_over_a_gated_call_is_still_checked() {
     project(
         &dir,
         GRANT,
-        "fun leak() => int {\n    val f = fun(p: &str) => Bytes = fs.read(p)\n    return f(\"/etc/hostname\").len()\n}",
+        "fun leak() => int {\n    val f = fun(p: &str) => Bytes = result.expect(fs.read(p), \"fs.read: the call failed\")\n    return f(\"/etc/hostname\").len()\n}",
     );
 
     let build = build(&dir, "c.bin");

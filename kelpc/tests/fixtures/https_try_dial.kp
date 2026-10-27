@@ -16,7 +16,7 @@ fun main() {
     )
     val port_text = str.from_u64(p)
     val url = str.concat("https://127.0.0.1:", port_text.as_str())
-    when http.try_get(url) {
+    when http.get(url) {
         Ok(r) -> print("unexpected ok ${r.status}")
         Err(e) -> {
             when e {

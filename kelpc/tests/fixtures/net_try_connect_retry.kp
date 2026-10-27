@@ -16,7 +16,7 @@ fun main() {
     val port = dead_port()
     var attempt = 1
     while attempt <= 3 {
-        val r = net.try_connect("127.0.0.1", port)
+        val r = net.connect("127.0.0.1", port)
         when r {
             Ok(s) -> {
                 net.close(s)

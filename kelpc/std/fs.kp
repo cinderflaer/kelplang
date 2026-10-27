@@ -48,6 +48,10 @@ extern fun set_mode_raw(path: &str, mode: u32)
 // `datac`-returning body would have to name the generated C struct.
 extern fun metadata_raw(path: &str, size: mut u64, mtime: mut i64, mode: mut u32, is_dir: mut bool, is_file: mut bool)
 
+// The panicking raw read: the primitive the capability tests name directly. The
+// fallible `read` is the one callers use.
+extern fun read_raw(path: &str) => Bytes
+
 // The fallible twins of `read_raw`/`open_raw`. Neither panics: the failure is
 // written through `err` (0 on success) and the return value is whatever shape
 // "no value" takes (`try_read_raw` returns an empty `Bytes`, `try_open_raw` a
@@ -55,7 +59,7 @@ extern fun metadata_raw(path: &str, size: mut u64, mtime: mut i64, mode: mut u32
 extern fun try_read_raw(path: &str, err: mut i32) => Bytes
 extern fun try_open_raw(path: &str, mode: &str, err: mut i32) => i32
 
-// The fallible twins of the mutators. Each writes the `errno` through `err` (0
+// The fallible forms of the mutators. Each writes the `errno` through `err` (0
 // on success) instead of panicking.
 extern fun try_write_raw(path: &str, data: Bytes, err: mut i32)
 extern fun try_write_text_raw(path: &str, text: String, err: mut i32)
@@ -86,16 +90,11 @@ datac Metadata(
     val is_file: bool
 )
 
-/// The whole file, as owned bytes.
-/// Panics: if the file cannot be read.
-extern fun read(path: &str) => Bytes = "read_raw"
-
-/// The whole file, as owned bytes, or the reason it cannot be read: the
-/// fallible twin of `read` for a path the caller did not author, a scanner, an
-/// indexer or a backup tool that skips what it may not read instead of ending
-/// the run on the first such file. The error carries the POSIX `errno` and its
-/// text (`io.IoErr`).
-fun try_read(path: &str) => result.Result<Bytes, io.IoErr> {
+/// The whole file, as owned bytes, or the reason it cannot be read. A scanner,
+/// an indexer or a backup tool that skips what it may not read matches the
+/// `Err`; a caller who wants a panic writes `result.expect(fs.read(path), "...")`. The
+/// error carries the POSIX `errno` and its text (`io.IoErr`).
+fun read(path: &str) => result.Result<Bytes, io.IoErr> {
     var err: i32 = 0
     val data = try_read_raw(path, &mut err)
     if err == 0 {
@@ -104,59 +103,65 @@ fun try_read(path: &str) => result.Result<Bytes, io.IoErr> {
     return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
-/// The whole file, as owned text.
-/// Panics: if the file cannot be read, or is not valid utf-8.
-fun read_text(path: &str) => String = String.from_bytes(read_raw(path))
+/// Retired (issue #264): the plain `read` returns this result. Kept for one cycle.
+fun try_read(path: &str) => result.Result<Bytes, io.IoErr> = read(path)
 
 /// The whole file as text, or the reason it cannot be read. A file that is not
 /// valid UTF-8 is a failure too: its `errno` is 0, because no syscall failed,
 /// and `message` says so.
-fun try_read_text(path: &str) => result.Result<String, io.IoErr> {
+fun read_text(path: &str) => result.Result<String, io.IoErr> {
     var err: i32 = 0
     val data = try_read_raw(path, &mut err)
     if err != 0 {
         return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
     }
     if !utf8_valid_raw(data) {
-        return result.Result.Err(error = io.IoErr(errno = 0, message = "fs.try_read_text: input is not valid utf-8"))
+        return result.Result.Err(error = io.IoErr(errno = 0, message = "fs.read_text: input is not valid utf-8"))
     }
     return result.Result.Ok(value = String.from_bytes(data))
 }
 
-/// Writing takes the bytes or the text by value: the data is handed over, not
-/// borrowed, since the call consumes nothing else of it.
-/// Panics: if the file cannot be written.
-fun write(path: &str, data: Bytes) {
-    write_raw(path, data)
-}
+/// Retired (issue #264): the plain `read_text` returns this result. Kept for one cycle.
+fun try_read_text(path: &str) => result.Result<String, io.IoErr> = read_text(path)
 
-/// The fallible twin of `write`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
-/// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_write(path: &str, data: Bytes) => option.Option<io.IoErr> {
+/// Writing takes the bytes or the text by value: the data is handed over, not
+/// borrowed, since the call consumes nothing else of it. It returns
+/// `Result<unit, io.IoErr>`: `Ok(())` on success, and the POSIX `errno` and its
+/// text on failure. `result.expect(fs.write(path, data), "...")` panics instead.
+must_use fun write(path: &str, data: Bytes) => result.Result<unit, io.IoErr> {
     var err: i32 = 0
     try_write_raw(path, data, &mut err)
     if err == 0 {
-        return option.Option.None
+        return result.Result.Ok(value = ())
     }
-    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
-/// Panics: if the file cannot be written.
-fun write_text(path: &str, text: String) {
-    write_text_raw(path, text)
+/// Retired (issue #264): the plain `write` returns this result. Kept for one cycle,
+/// with the old `Option` shape: `None` on success, or the error.
+must_use fun try_write(path: &str, data: Bytes) => option.Option<io.IoErr> {
+    return when write(path, data) {
+        Ok(_) -> option.Option.None
+        Err(e) -> option.Option.Some(value = e)
+    }
 }
 
-/// The fallible twin of `write_text`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
-/// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_write_text(path: &str, text: String) => option.Option<io.IoErr> {
+/// As `write`, for text. Returns `Result<unit, io.IoErr>`.
+must_use fun write_text(path: &str, text: String) => result.Result<unit, io.IoErr> {
     var err: i32 = 0
     try_write_text_raw(path, text, &mut err)
     if err == 0 {
-        return option.Option.None
+        return result.Result.Ok(value = ())
     }
-    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+}
+
+/// Retired (issue #264): the plain `write_text` returns this result. Kept for one cycle.
+must_use fun try_write_text(path: &str, text: String) => option.Option<io.IoErr> {
+    return when write_text(path, text) {
+        Ok(_) -> option.Option.None
+        Err(e) -> option.Option.Some(value = e)
+    }
 }
 
 /// The process's current working directory, absolute and free of `.`/`..`.
@@ -191,41 +196,44 @@ extern fun read_link(path: &str) => String = "read_link_raw"
 /// Panics: if the file does not exist.
 extern fun size(path: &str) => u64 = "size_raw"
 
-/// Panics: if the file cannot be removed.
-fun remove(path: &str) {
-    remove_raw(path)
-}
-
-/// The fallible twin of `remove`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
-/// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_remove(path: &str) => option.Option<io.IoErr> {
+/// Removes the file or the empty directory at `path`. Returns
+/// `Result<unit, io.IoErr>`; `result.expect(fs.remove(path), "...")` panics instead.
+must_use fun remove(path: &str) => result.Result<unit, io.IoErr> {
     var err: i32 = 0
     try_remove_raw(path, &mut err)
     if err == 0 {
-        return option.Option.None
+        return result.Result.Ok(value = ())
     }
-    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+}
+
+/// Retired (issue #264): the plain `remove` returns this result. Kept for one cycle.
+must_use fun try_remove(path: &str) => option.Option<io.IoErr> {
+    return when remove(path) {
+        Ok(_) -> option.Option.None
+        Err(e) -> option.Option.Some(value = e)
+    }
 }
 
 /// Both paths are checked against the grant: `rename` is the one call with
-/// two resource arguments.
-/// Panics: if either path is outside the granted capability, or the rename
-/// fails.
-fun rename(from: &str, to: &str) {
-    rename_raw(from, to)
-}
-
-/// The fallible twin of `rename`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
-/// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_rename(from: &str, to: &str) => option.Option<io.IoErr> {
+/// two resource arguments. Returns `Result<unit, io.IoErr>`.
+/// Panics: if either path is outside the granted capability (a check that is
+/// compiled in, not a value).
+must_use fun rename(from: &str, to: &str) => result.Result<unit, io.IoErr> {
     var err: i32 = 0
     try_rename_raw(from, to, &mut err)
     if err == 0 {
-        return option.Option.None
+        return result.Result.Ok(value = ())
     }
-    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+}
+
+/// Retired (issue #264): the plain `rename` returns this result. Kept for one cycle.
+must_use fun try_rename(from: &str, to: &str) => option.Option<io.IoErr> {
+    return when rename(from, to) {
+        Ok(_) -> option.Option.None
+        Err(e) -> option.Option.Some(value = e)
+    }
 }
 
 /// One directory. `fs.mkdir_all` needs to walk prefixes of its path and is
@@ -239,21 +247,22 @@ fun mkdir(path: &str) {
 /// streaming primitive: it needs no growable buffer, only a buffer's worth of
 /// data at a time, which is why it lands before the collections milestone that
 /// `fs.append` was pencilled in with.
-/// Panics: if the file cannot be opened or written.
-fun append(path: &str, data: Bytes) {
-    append_raw(path, data)
-}
-
-/// The fallible twin of `append`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
-/// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_append(path: &str, data: Bytes) => option.Option<io.IoErr> {
+/// Returns `Result<unit, io.IoErr>`: the file cannot be opened or written.
+must_use fun append(path: &str, data: Bytes) => result.Result<unit, io.IoErr> {
     var err: i32 = 0
     try_append_raw(path, data, &mut err)
     if err == 0 {
-        return option.Option.None
+        return result.Result.Ok(value = ())
     }
-    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+}
+
+/// Retired (issue #264): the plain `append` returns this result. Kept for one cycle.
+must_use fun try_append(path: &str, data: Bytes) => option.Option<io.IoErr> {
+    return when append(path, data) {
+        Ok(_) -> option.Option.None
+        Err(e) -> option.Option.Some(value = e)
+    }
 }
 
 /// Forces everything written to the file so far out to storage. Without this a
@@ -271,19 +280,9 @@ fun sync(path: &str) {
 /// arrived with the collections milestone rather than M7, the raw walk hands
 /// back one newline-separated buffer (`str.split` then turns it into a
 /// `List<String>`).
-/// Panics: if the directory cannot be read.
-fun list(path: &str) => List<String> {
-    val raw = list_raw(path)
-    if str.len(raw) == 0 {
-        var empty: List<String> = List.empty()
-        return empty
-    }
-    return str.split(raw, "\n")
-}
-
-/// The fallible twin of `list`: the entry names, or the reason the directory
-/// cannot be read (`errno` and its text, as `try_read` reports it).
-fun try_list(path: &str) => result.Result<List<String>, io.IoErr> {
+/// The entry names, or the reason the directory cannot be read (`errno` and its
+/// text). A caller who wants a panic writes `result.expect(fs.list(path), "...")`.
+fun list(path: &str) => result.Result<List<String>, io.IoErr> {
     var err: i32 = 0
     val raw = try_list_raw(path, &mut err)
     if err != 0 {
@@ -295,6 +294,9 @@ fun try_list(path: &str) => result.Result<List<String>, io.IoErr> {
     }
     return result.Result.Ok(value = str.split(raw, "\n"))
 }
+
+/// Retired (issue #264): the plain `list` returns this result. Kept for one cycle.
+fun try_list(path: &str) => result.Result<List<String>, io.IoErr> = list(path)
 
 // --- MK5-S5: breadth --------------------------------------------------------
 //
@@ -311,21 +313,23 @@ fun try_list(path: &str) => result.Result<List<String>, io.IoErr> {
 /// each prefix, including the ones *above* the granted root (which is exactly
 /// what a grant on `/var/lib/app/**` does not admit).
 ///
-/// Panics: if any directory along the way cannot be created.
-fun mkdir_all(path: &str) {
-    mkdir_all_raw(path)
-}
-
-/// The fallible twin of `mkdir_all`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
-/// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_mkdir_all(path: &str) => option.Option<io.IoErr> {
+/// Returns `Result<unit, io.IoErr>`: the first directory along the way that
+/// cannot be created is the error.
+must_use fun mkdir_all(path: &str) => result.Result<unit, io.IoErr> {
     var err: i32 = 0
     try_mkdir_all_raw(path, &mut err)
     if err == 0 {
-        return option.Option.None
+        return result.Result.Ok(value = ())
     }
-    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+}
+
+/// Retired (issue #264): the plain `mkdir_all` returns this result. Kept for one cycle.
+must_use fun try_mkdir_all(path: &str) => option.Option<io.IoErr> {
+    return when mkdir_all(path) {
+        Ok(_) -> option.Option.None
+        Err(e) -> option.Option.Some(value = e)
+    }
 }
 
 /// Removes `path`, recursively when it is a directory. A symlink is removed and
@@ -336,55 +340,44 @@ must_use fun try_mkdir_all(path: &str) => option.Option<io.IoErr> {
 /// `fs.symlink` cannot create such a link, since it checks both of its paths, but
 /// one made by another tool can still be sitting in the tree.
 ///
-/// Panics: if anything cannot be removed, including a link out of the grant
-/// that the walk reaches.
+/// Returns `Result<unit, io.IoErr>`: `Ok` when everything under `target` is
+/// gone, or the first failure (`errno` and its text) with the rest left in
+/// place. A link out of the grant that the walk reaches is still a capability
+/// panic, not a value (open item 73).
 ///
 /// The parameter is `target` rather than `path` because the module namespace
 /// `path` is what the join below goes through, and a local binding shadows a
 /// module name.
-fun remove_all(target: &str) {
+must_use fun remove_all(target: &str) => result.Result<unit, io.IoErr> {
     if is_symlink(target) {
-        remove_raw(target)
-        return
+        return remove(target)
     }
     if is_dir(target) {
-        val entries = list(target)
-        var i: int = 0
-        while i < entries.len() {
-            val child = path.join(target, entries.get(i).as_str())
-            remove_all(child)
-            i = i + 1
-        }
-    }
-    remove_raw(target)
-}
-
-/// The fallible twin of `remove_all`: `None` when everything under `target` is
-/// gone, or the first failure (`errno` and its text) with the rest left in
-/// place. A link out of the grant that the walk reaches is still a capability
-/// panic, not a value (open item 73).
-must_use fun try_remove_all(target: &str) => option.Option<io.IoErr> {
-    if is_symlink(target) {
-        return try_remove(target)
-    }
-    if is_dir(target) {
-        val listed = try_list(target)
+        val listed = list(target)
         if let Err(e) = listed {
-            return option.Option.Some(value = e)
+            return result.Result.Err(error = e)
         }
         if let Ok(entries) = listed {
             var i: int = 0
             while i < entries.len() {
                 val child = path.join(target, entries.get(i).as_str())
-                val failed = try_remove_all(child)
-                if let Some(e) = failed {
-                    return option.Option.Some(value = e)
+                val failed = remove_all(child)
+                if let Err(e) = failed {
+                    return result.Result.Err(error = e)
                 }
                 i = i + 1
             }
         }
     }
-    return try_remove(target)
+    return remove(target)
+}
+
+/// Retired (issue #264): the plain `remove_all` returns this result. Kept for one cycle.
+must_use fun try_remove_all(target: &str) => option.Option<io.IoErr> {
+    return when remove_all(target) {
+        Ok(_) -> option.Option.None
+        Err(e) -> option.Option.Some(value = e)
+    }
 }
 
 /// Every name under `dir`, recursively, each joined to its parent. A
@@ -402,7 +395,7 @@ fun walk(dir: &str) => List<String> {
     pending.push(String.from_str(dir))
     while pending.len() > 0 {
         val current = pending.pop()
-        val entries = list(current)
+        val entries = result.expect(list(current), "fs.walk: a directory cannot be read")
         var i: int = 0
         while i < entries.len() {
             // Three joins, deliberately: a borrow of a local lasts to the end
@@ -441,22 +434,24 @@ fun copy(from: &str, to: &str) {
 /// path here must be; it does not have to exist yet, since a dangling link is a
 /// legitimate thing to create.
 ///
-/// Panics: if either path is outside the grant, `target` is not absolute, or
-/// the link cannot be created.
-fun symlink(target: &str, link: &str) {
-    symlink_raw(target, link)
-}
-
-/// The fallible twin of `symlink`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
-/// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_symlink(target: &str, link: &str) => option.Option<io.IoErr> {
+/// Returns `Result<unit, io.IoErr>` when the link cannot be created. Panics:
+/// if either path is outside the grant or `target` is not absolute (checks
+/// that are compiled in, not values).
+must_use fun symlink(target: &str, link: &str) => result.Result<unit, io.IoErr> {
     var err: i32 = 0
     try_symlink_raw(target, link, &mut err)
     if err == 0 {
-        return option.Option.None
+        return result.Result.Ok(value = ())
     }
-    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+}
+
+/// Retired (issue #264): the plain `symlink` returns this result. Kept for one cycle.
+must_use fun try_symlink(target: &str, link: &str) => option.Option<io.IoErr> {
+    return when symlink(target, link) {
+        Ok(_) -> option.Option.None
+        Err(e) -> option.Option.Some(value = e)
+    }
 }
 
 /// Creates `path` when it is missing and sets its modification time to now
@@ -480,15 +475,11 @@ fun set_mode(path: &str, mode: u32) {
 /// path to the descriptor API. `"w"` and `"a"` create, `"rw"` creates and
 /// does not truncate.
 ///
-/// Panics: if the mode is unknown or the file cannot be opened.
-fun open(path: &str, mode: &str) => io.File {
-    return io.File(fd = open_raw(path, mode))
-}
-
-/// A `File` over `path`, or the reason it cannot be opened: the fallible twin of
-/// `open`, with the same modes and the same error type as `try_read`. An unknown
-/// mode is a failure with `errno` `EINVAL` (22) rather than a panic.
-fun try_open(path: &str, mode: &str) => result.Result<io.File, io.IoErr> {
+/// A `File` over `path`, or the reason it cannot be opened, with the same
+/// error type as `read`. An unknown mode is a failure with `errno` `EINVAL`
+/// (22), not a panic. A caller who wants a panic writes
+/// `result.expect(fs.open(path, mode), "...")`.
+fun open(path: &str, mode: &str) => result.Result<io.File, io.IoErr> {
     var err: i32 = 0
     val fd = try_open_raw(path, mode, &mut err)
     if err == 0 {
@@ -497,13 +488,16 @@ fun try_open(path: &str, mode: &str) => result.Result<io.File, io.IoErr> {
     return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
+/// Retired (issue #264): the plain `open` returns this result. Kept for one cycle.
+fun try_open(path: &str, mode: &str) => result.Result<io.File, io.IoErr> = open(path, mode)
+
 /// Every line of a text file, without the line endings and without the empty
 /// string a trailing newline would otherwise leave at the end (the same shape
 /// `io.read_lines` produces).
 ///
 /// Panics: if the file cannot be read or is not valid utf-8.
 fun read_lines(path: &str) => List<String> {
-    val text = read_text(path)
+    val text = result.expect(read_text(path), "fs.read_lines: the file cannot be read or is not valid utf-8")
     val s = text.as_str()
     if str.len(s) == 0 {
         var empty: List<String> = List.empty()

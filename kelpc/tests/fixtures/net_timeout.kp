@@ -1,16 +1,25 @@
 impl "std/net"
+impl "std/result"
 
 // A peer that never writes. `set_timeout` turns the blocking `recv` into a
 // bounded wait, so this panics with "timed out" instead of hanging forever,
 // the difference between a broken peer and an unkillable program. Both ends
 // are in this process, so nothing external is involved.
+// The reason of a failed read is the panic text, as `net.recv` gave it.
+fun fail_bytes(text: &str) => Bytes {
+    panic(text)
+}
+
 fun main() {
     val l = net.listen(0)
     val port = l.port()
-    val c = net.connect("127.0.0.1", port)
-    var s = net.accept(l)
+    val c = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
+    var s = result.expect(net.accept(l), "net.accept: the call failed")
     s.set_timeout(100)
     print("waiting")
-    val got = net.recv(s, 8)
+    val got = when net.recv(s, 8) {
+        Ok(b) -> b
+        Err(e) -> fail_bytes(e.reason.as_str())
+    }
     print(got)
 }

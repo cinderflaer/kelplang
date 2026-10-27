@@ -305,7 +305,7 @@ pub(crate) fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_den
     // compiler was invoked with the file. (`pub` on the control's own line is
     // what moved the column from 27; A-13.)
     let expected = format!(
-        "{}:23:31: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+        "{}:24:45: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
          granted:\n    {}/kelp_caps_double_eval/**\n",
         caps_project("caps_double_eval").join("util.kp").display(),
         scratch_root().display()

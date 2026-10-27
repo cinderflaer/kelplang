@@ -44,9 +44,9 @@ fun req_for(path: &str) => http.Request {
 fun main() {
     var pool = http.pool("127.0.0.1", server_port())
     print(pool.size())
-    val r1 = pool.send(req_for("/a"))
+    val r1 = result.expect(pool.send(req_for("/a")), "pool.send: the call failed")
     print(r1.status)
-    val r2 = pool.send(req_for("/a"))
+    val r2 = result.expect(pool.send(req_for("/a")), "pool.send: the call failed")
     print(r2.status)
     print(pool.len())
 }

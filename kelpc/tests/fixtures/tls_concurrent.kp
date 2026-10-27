@@ -39,7 +39,7 @@ fun arg_port() => i32 {
 // listing. The listing call itself opens one directory descriptor and closes it
 // again before returning, so the two counts are taken the same way.
 fun fd_count() => int {
-    val listing = fs.list("/proc/self/fd")
+    val listing = result.expect(fs.list("/proc/self/fd"), "fs.list: the call failed")
     return listing.len()
 }
 
@@ -51,16 +51,16 @@ fun worker(j: move Job) => i32 {
     req.push_str(" HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Id: ")
     req.push_str(id_text)
     req.push_str("\r\n\r\n")
-    var s = net.connect("127.0.0.1", j.port.to_u16())
+    var s = result.expect(net.connect("127.0.0.1", j.port.to_u16()), "net.connect: the call failed")
     s.set_timeout(20000)
-    val hs = tls.try_handshake(s, "127.0.0.1")
+    val hs = tls.handshake(s, "127.0.0.1")
     // A failed handshake panics with its own text: the joiner turns that into a
     // mismatch, and the panic names which worker and why rather than a bare 0.
     val t = when hs {
         Ok(v) -> v
         Err(e) -> fail(e)
     }
-    val sent = tls.try_write_all(t, req.clone().into_bytes())
+    val sent = tls.write_all(t, req.clone().into_bytes())
     when sent {
         Ok(_) -> {}
         Err(e) -> fail_unit(e)
@@ -68,7 +68,7 @@ fun worker(j: move Job) => i32 {
     var got = Bytes.empty()
     var reading = true
     while reading {
-        val r = tls.try_read(t, 4096)
+        val r = tls.read(t, 4096)
         when r {
             Ok(b) -> {
                 if b.is_empty() {
@@ -81,7 +81,7 @@ fun worker(j: move Job) => i32 {
         }
     }
     val ok = str.eq(got.as_str(), req.as_str())
-    val sd = tls.try_shutdown(t)
+    val sd = tls.shutdown(t)
     net.close(s)
     if ok {
         return 1

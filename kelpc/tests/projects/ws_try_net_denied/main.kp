@@ -7,7 +7,7 @@
 impl "std/ws" caps(net = ["127.0.0.1:*"], rand = [])
 
 fun main() {
-    val r = ws.try_connect("example.com", 80, "/")
+    val r = ws.connect("example.com", 80, "/")
     if let Ok(c) = r {
         c.close(1000, "done")
     }

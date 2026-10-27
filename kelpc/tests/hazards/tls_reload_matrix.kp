@@ -154,23 +154,23 @@ fun serve_rounds(cfg: tls.ServerConfig, fd: i32, rounds: i32, dir: &str, opts: &
     var i: i32 = 0
     while i < rounds {
         i = i + 1
-        val acc = net.try_accept(l)
+        val acc = net.accept(l)
         when acc {
             Ok(sock) -> {
                 seen = seen + 1
                 val hs = tls.accept(cfg, sock)
                 when hs {
                     Ok(t) -> {
-                        val got = tls.try_read(t, 64)
+                        val got = tls.read(t, 64)
                         when got {
                             Ok(b) -> {
-                                val w = tls.try_write_all(t, b)
+                                val w = tls.write_all(t, b)
                                 done = done + 1
                             }
                             Err(_) -> {
                             }
                         }
-                        val sd = tls.try_shutdown(t)
+                        val sd = tls.shutdown(t)
                         net.close(sock)
                     }
                     Err(_) -> {
@@ -270,15 +270,15 @@ fun server_line(packed: u64) => String {
 
 fun client_round(label: &str, dir: &str, port: u16) => String {
     val opts = tls.client_options().with_ca_pem(ca_bytes(dir)).with_timeout_ms(10000)
-    val s = net.connect("127.0.0.1", port)
-    val hs = tls.try_handshake_opts(s, "localhost", &opts)
+    val s = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
+    val hs = tls.handshake_opts(s, "localhost", &opts)
     var line = String.with_capacity(64)
     line.push_str(label)
     line.push_str(" ")
     when hs {
         Ok(t) -> {
-            val w = tls.try_write_all(t, Bytes.from_str("hello"))
-            val r = tls.try_read(t, 64)
+            val w = tls.write_all(t, Bytes.from_str("hello"))
+            val r = tls.read(t, 64)
             when r {
                 Ok(b) -> {
                     line.push_str("echo=")
@@ -291,7 +291,7 @@ fun client_round(label: &str, dir: &str, port: u16) => String {
                     line.push_str(tmp_6857)
                 }
             }
-            val sd = tls.try_shutdown(t)
+            val sd = tls.shutdown(t)
         }
         Err(e) -> {
             val tmp_6857 = err_tag(&e)
@@ -339,8 +339,8 @@ fun reload(dir: &str) {
 fun listen_host() {
     val l = net.listen_on("127.0.0.1", 0)
     val port = l.port()
-    val c = net.connect("127.0.0.1", port)
-    val s = net.accept(l)
+    val c = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
+    val s = result.expect(net.accept(l), "net.accept: the call failed")
     say("listen_on loopback accepted")
     net.close(c)
     net.close(s)
