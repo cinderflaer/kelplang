@@ -83,10 +83,13 @@ impl Iterator for Range {
 /// 2, and an empty range yields nothing.
 pub fun range(a: i64, b: i64) => Range = Range(lo = a, hi = b, step = 1)
 
+/// Retired (#375): the camelCase `rangeStep` is the name. Kept for one cycle.
+pub fun range_step(a: i64, b: i64, step: i64) => Range = rangeStep(a, b, step)
+
 /// The integers from `a` to `b` with an explicit step. A negative step walks down from `a` to `b`.
 ///
 /// The same with an explicit step; a negative one walks down from `a` to `b`.
-pub fun range_step(a: i64, b: i64, step: i64) => Range = Range(lo = a, hi = b, step = step)
+pub fun rangeStep(a: i64, b: i64, step: i64) => Range = Range(lo = a, hi = b, step = step)
 
 /* How many items an iterator still holds, measured by draining it. */
 /// The number of items the iterator yields, counted by draining it.
@@ -106,11 +109,14 @@ pub fun count<I: Iterator>(it: move I) => int {
    accumulator. `I::Item` is any type; an instantiation whose item is not an
    `i64` is a type error at the addition, which is the honest edge of an
    associated type with no equality constraint. */
+/// Retired (#375): the camelCase `sumI64` is the name. Kept for one cycle.
+pub fun sum_i64<I: Iterator>(it: move I) => i64 = sumI64(it)
+
 /// The sum of an iterator's items.
 ///
 /// The items must be `i64`. An iterator whose item type is anything else is a type
 /// error at the addition.
-pub fun sum_i64<I: Iterator>(it: move I) => i64 {
+pub fun sumI64<I: Iterator>(it: move I) => i64 {
     var total: i64 = 0
     var cursor = it
     for x in cursor {
@@ -120,8 +126,11 @@ pub fun sum_i64<I: Iterator>(it: move I) => i64 {
 }
 
 /* Drain an iterator into a fresh list, in order. */
+/// Retired (#375): the camelCase `collectList` is the name. Kept for one cycle.
+pub fun collect_list<I: Iterator>(it: move I) => List<I::Item> = collectList(it)
+
 /// Drains an iterator into a fresh list, in order.
-pub fun collect_list<I: Iterator>(it: move I) => List<I::Item> {
+pub fun collectList<I: Iterator>(it: move I) => List<I::Item> {
     var out: List<I::Item> = List.empty()
     var cursor = it
     for x in cursor {
@@ -152,8 +161,11 @@ fun mut ListIter<T>.next() => option.Option<T> {
 }
 
 /* The list's elements in order, moving the list into the iterator. */
+/// Retired (#375): the camelCase `intoIter` is the name. Kept for one cycle.
+pub fun into_iter<T>(xs: move List<T>) => ListIter<T> = intoIter(xs)
+
 /// The elements of a list in order, moving the list into the iterator.
-pub fun into_iter<T>(xs: move List<T>) => ListIter<T> {
+pub fun intoIter<T>(xs: move List<T>) => ListIter<T> {
     var rest = xs
     rest.reverse()
     return ListIter(rest = rest)
@@ -165,13 +177,13 @@ pub fun into_iter<T>(xs: move List<T>) => ListIter<T> {
 ///
 /// An element that cannot be cloned walks with `into_iter`.
 pub fun cloned<T>(xs: &List<T>) => ListIter<T> {
-    return into_iter(xs.clone())
+    return intoIter(xs.clone())
 }
 
 // ---- adapters -------------------------------------------------------------------
 //
 // Each adapter takes its iterator by `move` and is itself an iterator, so they
-// chain: `iter.take(iter.filter(iter.into_iter(xs), pred), 3)`. The second type
+// chain: `iter.take(iter.filter(iter.intoIter(xs), pred), 3)`. The second type
 // parameter is the wrapped iterator's item, written out because a type's
 // declaration cannot spell `I::Item`; the constructor functions fill it in.
 

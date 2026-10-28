@@ -30,8 +30,8 @@ pub enum StdAdmission {
 /// literal in read-only data, so the compiler lowers these as byte loops inside
 /// the module (`codegen_llvm::emit_freestanding_str_bodies`), and
 /// `starts_with_at` is the one private body `eq`/`starts_with` reach.
-pub(crate) const STR_CALLABLE: &[&str] = &["len", "byte", "eq", "starts_with", "ptr"];
-pub(crate) const STR_HELPERS: &[&str] = &["starts_with_at"];
+pub(crate) const STR_CALLABLE: &[&str] = &["len", "byte", "eq", "starts_with", "startsWith", "ptr"];
+pub(crate) const STR_HELPERS: &[&str] = &["starts_with_at", "startsWithAt"];
 
 /// The `std/str` bodies that build an owned `String`, so they are callable only
 /// with the allocator: without one they would reference `kelp_String__*`
@@ -42,18 +42,23 @@ pub(crate) const STR_WITH_ALLOCATOR: &[&str] = &["concat", "from_u64", "from_i64
 /// and a `panic`, and their callback combinators, whose environments are heap
 /// boxes: the callback set is what a freestanding image leaves `free`
 /// undefined for without an allocator.
-pub(crate) const OPTION_CALLABLE: &[&str] = &["is_some", "is_none", "unwrap_or", "unwrap", "expect"];
-pub(crate) const OPTION_WITH_ALLOCATOR: &[&str] = &["map", "and_then", "or_else", "each"];
+pub(crate) const OPTION_CALLABLE: &[&str] = &["is_some", "isSome", "is_none", "isNone", "unwrap_or", "unwrapOr", "unwrap", "expect"];
+pub(crate) const OPTION_WITH_ALLOCATOR: &[&str] = &["map", "and_then", "andThen", "or_else", "orElse", "each"];
 pub(crate) const RESULT_CALLABLE: &[&str] = &[
     "is_ok",
+    "isOk",
     "is_err",
+    "isErr",
     "unwrap_or",
+    "unwrapOr",
     "unwrap",
     "unwrap_err",
+    "unwrapErr",
     "expect",
     "expect_err",
+    "expectErr",
 ];
-pub(crate) const RESULT_WITH_ALLOCATOR: &[&str] = &["map", "map_err", "and_then", "or_else", "each"];
+pub(crate) const RESULT_WITH_ALLOCATOR: &[&str] = &["map", "map_err", "mapErr", "and_then", "andThen", "or_else", "orElse", "each"];
 
 /// `std/math`'s integer functions: one-line Kelp comparisons, against the
 /// module's sixteen libm externs and its `f64` overloads, which are the rest of
@@ -91,8 +96,8 @@ pub fn std_admission(module: &str) -> StdAdmission {
             // A receiver method is named by its bare name: `prune` reads
             // `FunctionDecl::name`, and `item_is_callable` strips the `Type#`
             // from a call key, so both sides agree on `next`.
-            callable: &["next", "range", "range_step", "count", "sum_i64"],
-            with_allocator: &["collect_list"],
+            callable: &["next", "range", "range_step", "rangeStep", "count", "sum_i64", "sumI64"],
+            with_allocator: &["collect_list", "collectList"],
             helpers: &[],
         },
         STD_STR => StdAdmission::Subset {

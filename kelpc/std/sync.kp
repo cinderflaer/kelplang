@@ -76,7 +76,7 @@
        fun Sender<T>.clone() => Sender<T>
        fun Receiver<T>.recv() => result.Result<T, RecvErr>
        fun Receiver<T>.try_recv() => option.Option<T>
-       fun Receiver<T>.recv_timeout(millis: i64) => result.Result<T, RecvTimeout>
+       fun Receiver<T>.recvTimeout(millis: i64) => result.Result<T, RecvTimeout>
        fun sync.select2<T>(a: &Receiver<T>, b: &Receiver<T>) => Pick<T>
        fun sync.select3<T>(a: &Receiver<T>, b: &Receiver<T>, c: &Receiver<T>) => Pick<T>
        for v in rx { ... }
@@ -448,8 +448,11 @@ fun Receiver<T>.try_recv() => option.Option<T> {
     return r
 }
 
+/// Retired (#375): the camelCase `recvTimeout` is the name. Kept for one cycle.
+fun Receiver<T>.recv_timeout(millis: i64) => result.Result<T, RecvTimeout> = self.recvTimeout(millis)
+
 /// Like `recv`, but gives up after `millis` milliseconds with `Err(Timeout)`.
-fun Receiver<T>.recv_timeout(millis: i64) => result.Result<T, RecvTimeout> {
+fun Receiver<T>.recvTimeout(millis: i64) => result.Result<T, RecvTimeout> {
     self.end.meta.lock { s -> s.waiting += 1 }
     chan_wake_raw(self.end.id)
     val r = self.end.meta.wait_while_timeout(&self.end.ne, fun(s: &ChanMeta) => bool = s.count == 0 && s.senders > 0, millis) { s ->

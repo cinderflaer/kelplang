@@ -105,15 +105,21 @@ datac ThreadErr(
    `sleep_ms` is `std/time`'s `sleep_ms` under this module's name. Sleeping
    takes no capability there and it takes none here either the second
    `nanosleep` costs nothing that the first did not already cost, and a
-   worker pool wants to spell a backoff as `thread.sleep_ms(n)` without
+   worker pool wants to spell a backoff as `thread.sleepMs(n)` without
    importing a namespace named for the wall clock it never reads. */
 
 extern fun sleep_ms_raw(ms: u64)
 
+/// Retired (#375): the camelCase `sleepMs` is the name. Kept for one cycle.
+fun sleep_ms(ms: u64) { sleepMs(ms) }
+
 /// Blocks the calling thread for `ms` milliseconds. It takes no capability.
-fun sleep_ms(ms: u64) {
+fun sleepMs(ms: u64) {
     sleep_ms_raw(ms)
 }
+
+/// Retired (#375): the camelCase `currentId` is the name. Kept for one cycle.
+fun current_id() => u64 = currentId()
 
 /// A stable, cheap id for the calling thread: the main thread and every
 /// worker `thread.spawn` starts each get one, and a thread's id never changes
@@ -121,4 +127,4 @@ fun sleep_ms(ms: u64) {
 /// worker did I spawn" a detached, unjoined handle's worker still has an id,
 /// and nothing in v1 hands out sequential pool slots. Backed by `pthread_self`,
 /// which is one instruction and needs no syscall.
-extern fun current_id() => u64 = "current_id_raw"
+extern fun currentId() => u64 = "current_id_raw"

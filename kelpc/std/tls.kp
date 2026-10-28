@@ -171,7 +171,7 @@ pub enum TlsError {
 /// certificates *adds* them to the roots and cannot weaken verification. The
 /// runtime never opens a path for this: the PEM comes in as bytes, so a file
 /// is read by the caller through `std/tlsfile` and the `fs` grant
-/// (`tlsfile.read_pem`). A `timeout_ms` of 0 is "no timeout", which is
+/// (`tlsfile.readPem`). A `timeout_ms` of 0 is "no timeout", which is
 /// `SO_RCVTIMEO`'s own meaning.
 pub datac TlsOptions(
     /// PEM text of extra CA certificates to trust, or empty for the system store only.
@@ -216,6 +216,9 @@ fun error_from(code: i32, reason: move String) => TlsError {
     return TlsError.Io(reason = reason)
 }
 
+/// Retired (#375): the camelCase `errorText` is the name. Kept for one cycle.
+fun error_text(e: move TlsError) => String = errorText(e)
+
 /// The text a `TlsError` is reported with.
 ///
 /// The panicking forms panic with this text, and a `try_` caller that only wants to log an error gets the same words.
@@ -224,7 +227,7 @@ fun error_from(code: i32, reason: move String) => TlsError {
 /// this, and a `try_` caller that only wants to log one gets exactly what
 /// they would have printed. `HandshakeFailed` and `Io` return OpenSSL's or
 /// the socket's own words, so the detail is not thrown away.
-fun error_text(e: move TlsError) => String = when e {
+fun errorText(e: move TlsError) => String = when e {
     Untrusted -> "tls: the certificate is not trusted by the system store"
     Expired -> "tls: the certificate has expired or is not yet valid"
     HostMismatch -> "tls: the certificate does not match the host name"
@@ -234,6 +237,9 @@ fun error_text(e: move TlsError) => String = when e {
     Timeout -> "tls: the operation timed out"
     Io(reason) -> reason
 }
+
+/// Retired (#375): the camelCase `handshakeWith` is the name. Kept for one cycle.
+fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> = handshakeWith(s, host, opts)
 
 /// Performs the TLS client handshake over a connected socket, with the options given, or returns why it could not.
 ///
@@ -249,7 +255,7 @@ fun error_text(e: move TlsError) => String = when e {
 /// The socket is consumed by value (as `net.Socket` is always passed), and
 /// its descriptor lives on inside the returned `TlsStream`; there is no
 /// remaining `Socket` to close separately afterward, only the `TlsStream`.
-fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> {
+fun handshakeWith(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val handle = handshake_try_raw(
@@ -273,11 +279,14 @@ fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result
 ///
 /// The fallible form of `handshake` with the default options, for a caller
 /// that has somewhere to go when the peer's certificate is not trusted.
-fun handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsError> = handshake_with(
+fun handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsError> = handshakeWith(
     s,
     host,
     default_options(),
 )
+
+/// Retired (#375): the camelCase `handshakeTimeout` is the name. Kept for one cycle.
+fun handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = handshakeTimeout(s, host, ms)
 
 /// The fallible handshake with a deadline in milliseconds. A silent peer gives `Err(Timeout)` instead of a hang.
 ///
@@ -287,11 +296,14 @@ fun handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsError> =
 /// `SO_RCVTIMEO`/`SO_SNDTIMEO` before the handshake starts. A silent peer is
 /// then `Err(Timeout)` instead of a hang, and the settings stay on the socket
 /// for the reads and writes that follow.
-fun handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = handshake_with(
+fun handshakeTimeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = handshakeWith(
     s,
     host,
     TlsOptions(ca_pem = Bytes.empty(), timeout_ms = ms),
 )
+
+/// Retired (#375): the camelCase `setTimeout` is the name. Kept for one cycle.
+fun set_timeout(t: TlsStream, ms: u64) { setTimeout(t, ms) }
 
 /// Sets the receive and send timeouts on the stream's socket. `ms` of 0 means no timeout.
 ///
@@ -303,13 +315,13 @@ fun handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsSt
 /// the call for the reads and writes that follow.
 ///
 /// Panics: if the socket options cannot be set.
-fun set_timeout(t: TlsStream, ms: u64) {
+fun setTimeout(t: TlsStream, ms: u64) {
     set_timeout_raw(t.handle, ms)
 }
 
 /// Panics with the text of a failed TLS read or write that returns bytes.
 fun fail_bytes(e: move TlsError) => Bytes {
-    val text = error_text(e)
+    val text = errorText(e)
     panic(text)
 }
 
@@ -327,11 +339,14 @@ fun write(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
     return result.Result.Ok(value = n)
 }
 
+/// Retired (#375): the camelCase `writeAll` is the name. Kept for one cycle.
+fun write_all(t: TlsStream, data: Bytes) => result.Result<int, TlsError> = writeAll(t, data)
+
 /// Writes the whole buffer, looping over short writes, or returns why it stopped.
 ///
 /// The whole buffer, looping over short writes, or why it stopped: the TLS
-/// twin of `net.send_all`.
-fun write_all(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
+/// twin of `net.sendAll`.
+fun writeAll(t: TlsStream, data: Bytes) => result.Result<int, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = write_all_try_raw(t.handle, data, &mut code, &mut reason)
@@ -357,14 +372,17 @@ fun read(t: TlsStream, max: int) => result.Result<Bytes, TlsError> {
     return result.Result.Ok(value = data)
 }
 
+/// Retired (#375): the camelCase `readInto` is the name. Kept for one cycle.
+fun read_into(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, TlsError> = readInto(t, buf, at)
+
 /// Fills `buf` from byte `at` onward and returns how many bytes arrived, 0 on a clean close, or why the read failed.
 ///
-/// It is the TLS form of `net.recv_into`, for a message of known size.
+/// It is the TLS form of `net.recvInto`, for a message of known size.
 ///
 /// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
 /// a clean close), or why the read failed: the TLS form of
-/// `net.recv_into`, for a message of known size.
-fun read_into(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, TlsError> {
+/// `net.recvInto`, for a message of known size.
+fun readInto(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = read_into_try_raw(t.handle, buf, at, &mut code, &mut reason)
@@ -449,11 +467,14 @@ pub datac ServerConfig(
     val handshake_timeout_ms: u64,
 )
 
+/// Retired (#375): the camelCase `serverOptions` is the name. Kept for one cycle.
+fun server_options() => ServerOptions = serverOptions()
+
 /// The options `server_config_pem` uses: TLS 1.2 or newer, no ALPN, no client certificates and a 10 second handshake.
 ///
 /// The options of `server_config`: TLS 1.2 or newer, no ALPN, no client
 /// certificates, a 10 s handshake.
-fun server_options() => ServerOptions = ServerOptions(
+fun serverOptions() => ServerOptions = ServerOptions(
     floor = 12,
     alpn_list = Bytes.empty(),
     ca_pem = Bytes.empty(),
@@ -467,8 +488,11 @@ fun TlsVersion.floor_code() => i32 = when self {
     Tls13 -> 13
 }
 
+/// Retired (#375): the camelCase `minVersion` is the name. Kept for one cycle.
+fun ServerOptions.min_version(v: TlsVersion) => ServerOptions = self.minVersion(v)
+
 /// The options with the lowest accepted TLS version set to `v`.
-fun ServerOptions.min_version(v: TlsVersion) => ServerOptions = ServerOptions(
+fun ServerOptions.minVersion(v: TlsVersion) => ServerOptions = ServerOptions(
     floor = v.floor_code(),
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
@@ -492,6 +516,9 @@ fun ServerOptions.alpn(protocols: &List<String>) => ServerOptions = ServerOption
     key_pass = key_pass.clone(),
 )
 
+/// Retired (#375): the camelCase `requireClientCertPem` is the name. Kept for one cycle.
+fun ServerOptions.require_client_cert_pem(ca_pem: Bytes) => ServerOptions = self.requireClientCertPem(ca_pem)
+
 /// The options that verify client certificates against the CA certificates in this PEM text, and refuse a connection without one.
 ///
 /// Text with no certificate in it is rejected when the configuration is built.
@@ -499,7 +526,7 @@ fun ServerOptions.alpn(protocols: &List<String>) => ServerOptions = ServerOption
 /// Verify client certificates against the CA(s) in this PEM text, and refuse a
 /// connection that has none. Text with no certificate in it is rejected when
 /// the configuration is built. `tlsfile.require_client_cert` reads a file.
-fun ServerOptions.require_client_cert_pem(ca_pem: Bytes) => ServerOptions = ServerOptions(
+fun ServerOptions.requireClientCertPem(ca_pem: Bytes) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
@@ -507,16 +534,22 @@ fun ServerOptions.require_client_cert_pem(ca_pem: Bytes) => ServerOptions = Serv
     key_pass = key_pass.clone(),
 )
 
+/// Retired (#375): the camelCase `handshakeTimeoutMs` is the name. Kept for one cycle.
+fun ServerOptions.handshake_timeout_ms(ms: u64) => ServerOptions = self.handshakeTimeoutMs(ms)
+
 /// The options with the handshake deadline set to `ms` milliseconds. 0 waits forever.
 ///
 /// The handshake deadline `accept` applies; 0 waits forever.
-fun ServerOptions.handshake_timeout_ms(ms: u64) => ServerOptions = ServerOptions(
+fun ServerOptions.handshakeTimeoutMs(ms: u64) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
     timeout_ms = ms,
     key_pass = key_pass.clone(),
 )
+
+/// Retired (#375): the camelCase `keyPassword` is the name. Kept for one cycle.
+fun ServerOptions.key_password(phrase: &str) => ServerOptions = self.keyPassword(phrase)
 
 /// The options with the pass phrase of an encrypted private key set to `phrase`.
 ///
@@ -528,7 +561,7 @@ fun ServerOptions.handshake_timeout_ms(ms: u64) => ServerOptions = ServerOptions
 /// key is malformed or the phrase wrong. The phrase is never put in an error
 /// text, and it lives only in these options: drop them once the configuration
 /// is built.
-fun ServerOptions.key_password(phrase: &str) => ServerOptions = ServerOptions(
+fun ServerOptions.keyPassword(phrase: &str) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
@@ -561,6 +594,9 @@ fun alpn_wire(protocols: &List<String>) => Bytes {
     return out
 }
 
+/// Retired (#375): the camelCase `serverConfigPem` is the name. Kept for one cycle.
+fun server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes) => result.Result<ServerConfig, TlsError> = serverConfigPem(cert_chain_pem, key_pem)
+
 /// A server configuration from a certificate chain, leaf first, and its private key, both PEM text, with the default options.
 ///
 /// A malformed PEM, or a key that does not belong to the certificate, is `HandshakeFailed` with a fixed sentence. It never panics,
@@ -571,15 +607,18 @@ fun alpn_wire(protocols: &List<String>) => Bytes {
 /// does not belong to the certificate is `HandshakeFailed` with a fixed
 /// sentence. Never a panic, and never the key in the text. `tlsfile.server_config`
 /// is the same from two file paths.
-fun server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes) => result.Result<ServerConfig, TlsError> {
-    return server_config_pem_with(cert_chain_pem, key_pem, server_options())
+fun serverConfigPem(cert_chain_pem: Bytes, key_pem: Bytes) => result.Result<ServerConfig, TlsError> {
+    return serverConfigPemWith(cert_chain_pem, key_pem, serverOptions())
 }
+
+/// Retired (#375): the camelCase `serverConfigPemWith` is the name. Kept for one cycle.
+fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions) => result.Result<ServerConfig, TlsError> = serverConfigPemWith(cert, key, opts)
 
 /// A server configuration from a certificate chain and key, with the given options: a TLS floor, ALPN, required client certificates and the handshake deadline.
 ///
 /// `server_config_pem` with options: a TLS floor, ALPN, required client
 /// certificates, the handshake deadline.
-fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions) => result.Result<ServerConfig, TlsError> {
+fun serverConfigPemWith(cert: Bytes, key: Bytes, opts: &ServerOptions) => result.Result<ServerConfig, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val min13: i32 = if opts.floor == 13 { 1 } else { 0 }
@@ -599,6 +638,9 @@ fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions) => res
     return result.Result.Ok(value = ServerConfig(ctx = ctx, handshake_timeout_ms = opts.timeout_ms))
 }
 
+/// Retired (#375): the camelCase `reloadPem` is the name. Kept for one cycle.
+must_use fun ServerConfig.reload_pem(cert: Bytes, key: Bytes, opts: &ServerOptions) => option.Option<TlsError> = self.reloadPem(cert, key, opts)
+
 /// Replaces the certificate and key that new handshakes use, from PEM text, with the options given.
 ///
 /// A renewal is a reload on the live configuration: nothing is re-accepted and no thread has to stop. Connections already
@@ -612,9 +654,9 @@ fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions) => res
 /// no thread has to be stopped. Connections already established keep the
 /// certificate they started with. If the new material is malformed, does not
 /// match, or the phrase is wrong, the old certificate stays in force and the
-/// failure is the value (`None` is success). `ServerConfig.handshake_timeout_ms`
+/// failure is the value (`None` is success). `ServerConfig.handshakeTimeoutMs`
 /// is not changed by a reload.
-must_use fun ServerConfig.reload_pem(cert: Bytes, key: Bytes, opts: &ServerOptions) => option.Option<TlsError> {
+must_use fun ServerConfig.reloadPem(cert: Bytes, key: Bytes, opts: &ServerOptions) => option.Option<TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val min13: i32 = if opts.floor == 13 { 1 } else { 0 }
@@ -676,12 +718,15 @@ fun TlsStream.alpn() => option.Option<String> {
     return option.Option.None
 }
 
+/// Retired (#375): the camelCase `peerCertSubject` is the name. Kept for one cycle.
+fun TlsStream.peer_cert_subject() => option.Option<String> = self.peerCertSubject()
+
 /// The subject of the peer's certificate in RFC 2253 form, such as `CN=client`, or `None` when the peer presented none.
 ///
 /// The subject of the peer's certificate in RFC 2253 form (`CN=client`): the
 /// authenticated client on a server stream that required a client certificate.
 /// `None` when the peer presented none.
-fun TlsStream.peer_cert_subject() => option.Option<String> {
+fun TlsStream.peerCertSubject() => option.Option<String> {
     var out = String.empty()
     if peer_subject_raw(handle, &mut out) {
         return option.Option.Some(value = out)
@@ -717,8 +762,11 @@ pub datac TlsClientOptions(
     val key_pem: Bytes,
 )
 
+/// Retired (#375): the camelCase `clientOptions` is the name. Kept for one cycle.
+fun client_options() => TlsClientOptions = clientOptions()
+
 /// The client options with no extra CA, no timeout, no ALPN and no client certificate.
-fun client_options() => TlsClientOptions = TlsClientOptions(
+fun clientOptions() => TlsClientOptions = TlsClientOptions(
     ca_pem = Bytes.empty(),
     timeout_ms = 0,
     alpn_list = Bytes.empty(),
@@ -726,8 +774,11 @@ fun client_options() => TlsClientOptions = TlsClientOptions(
     key_pem = Bytes.empty(),
 )
 
+/// Retired (#375): the camelCase `toClient` is the name. Kept for one cycle.
+fun TlsOptions.to_client() => TlsClientOptions = self.toClient()
+
 /// The client options with the same CA and timeout as these options.
-fun TlsOptions.to_client() => TlsClientOptions = TlsClientOptions(
+fun TlsOptions.toClient() => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = Bytes.empty(),
@@ -740,18 +791,21 @@ fun TlsOptions.to_client() => TlsClientOptions = TlsClientOptions(
 /// The protocols to offer, in order of preference. The server picks; `alpn()`
 /// on the stream says which.
 fun TlsOptions.alpn(protocols: &List<String>) => TlsClientOptions {
-    val c = self.to_client()
+    val c = self.toClient()
     return c.alpn(protocols)
 }
+
+/// Retired (#375): the camelCase `clientCertPem` is the name. Kept for one cycle.
+fun TlsOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions = self.clientCertPem(cert_pem, key_pem)
 
 /// The client options with these options and a client certificate chain and key, both PEM text.
 ///
 /// Present this certificate chain and key (PEM text) when a server asks for a
 /// client certificate. A key that does not match is found when the handshake
 /// starts. `tlsfile.client_cert` reads the two files.
-fun TlsOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions {
-    val c = self.to_client()
-    return c.client_cert_pem(cert_pem, key_pem)
+fun TlsOptions.clientCertPem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions {
+    val c = self.toClient()
+    return c.clientCertPem(cert_pem, key_pem)
 }
 
 /// The client options with the protocols to offer, in order of preference.
@@ -763,10 +817,13 @@ fun TlsClientOptions.alpn(protocols: &List<String>) => TlsClientOptions = TlsCli
     key_pem = key_pem.clone(),
 )
 
+/// Retired (#375): the camelCase `clientCertPem` is the name. Kept for one cycle.
+fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions = self.clientCertPem(cert_pem, key_pem)
+
 /// The client options with a client certificate chain and key, both PEM text, to present when a server asks for one.
 ///
 /// A key that does not match is found when the handshake starts. Read the two files with `tlsfile.client_cert`.
-fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions = TlsClientOptions(
+fun TlsClientOptions.clientCertPem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = alpn_list.clone(),
@@ -774,13 +831,16 @@ fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClie
     key_pem = key_pem.clone(),
 )
 
+/// Retired (#375): the camelCase `withCaPem` is the name. Kept for one cycle.
+fun TlsClientOptions.with_ca_pem(pem: Bytes) => TlsClientOptions = self.withCaPem(pem)
+
 /// The client options with the CA certificates in this PEM text added to the roots.
 ///
-/// Read a file's bytes with `tlsfile.read_pem`, which is gated on `fs`.
+/// Read a file's bytes with `tlsfile.readPem`, which is gated on `fs`.
 ///
-/// Adds private CA certificates (PEM text) to the roots, as `TlsOptions.ca_pem`
-/// does. Read a file's bytes with `tlsfile.read_pem`, which is gated on `fs`.
-fun TlsClientOptions.with_ca_pem(pem: Bytes) => TlsClientOptions = TlsClientOptions(
+/// Adds private CA certificates (PEM text) to the roots, as `TlsOptions.caPem`
+/// does. Read a file's bytes with `tlsfile.readPem`, which is gated on `fs`.
+fun TlsClientOptions.withCaPem(pem: Bytes) => TlsClientOptions = TlsClientOptions(
     ca_pem = pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = alpn_list.clone(),
@@ -788,14 +848,20 @@ fun TlsClientOptions.with_ca_pem(pem: Bytes) => TlsClientOptions = TlsClientOpti
     key_pem = key_pem.clone(),
 )
 
+/// Retired (#375): the camelCase `withTimeoutMs` is the name. Kept for one cycle.
+fun TlsClientOptions.with_timeout_ms(ms: u64) => TlsClientOptions = self.withTimeoutMs(ms)
+
 /// The client options with the handshake and read deadline set to `ms` milliseconds.
-fun TlsClientOptions.with_timeout_ms(ms: u64) => TlsClientOptions = TlsClientOptions(
+fun TlsClientOptions.withTimeoutMs(ms: u64) => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = ms,
     alpn_list = alpn_list.clone(),
     cert_pem = cert_pem.clone(),
     key_pem = key_pem.clone(),
 )
+
+/// Retired (#375): the camelCase `handshakeOpts` is the name. Kept for one cycle.
+fun handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> = handshakeOpts(s, host, opts)
 
 /// The client handshake with every option.
 ///
@@ -804,7 +870,7 @@ fun TlsClientOptions.with_timeout_ms(ms: u64) => TlsClientOptions = TlsClientOpt
 /// The client handshake with every option, `handshake_with`'s superset:
 /// the same verification, hostname check and TLS 1.2 floor, plus ALPN and a
 /// client certificate when the options carry them.
-fun handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> {
+fun handshakeOpts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val handle = handshake_try_raw(
@@ -826,28 +892,28 @@ fun handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result
 
 /// Retired (issue #264): each `try_` name is the plain name above, with the same
 /// result. Kept for one cycle, see the register in `kelpc/src/deprecated.rs`.
-fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> = handshake_with(s, host, opts)
+fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> = handshakeWith(s, host, opts)
 
 /// Retired (issue #264): see `handshake_with`.
 fun try_handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsError> = handshake(s, host)
 
 /// Retired (issue #264): see `handshake_with`.
-fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = handshake_timeout(s, host, ms)
+fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = handshakeTimeout(s, host, ms)
 
 /// Retired (issue #264): see `handshake_with`.
 fun try_write(t: TlsStream, data: Bytes) => result.Result<int, TlsError> = write(t, data)
 
 /// Retired (issue #264): see `handshake_with`.
-fun try_write_all(t: TlsStream, data: Bytes) => result.Result<int, TlsError> = write_all(t, data)
+fun try_write_all(t: TlsStream, data: Bytes) => result.Result<int, TlsError> = writeAll(t, data)
 
 /// Retired (issue #264): see `handshake_with`.
 fun try_read(t: TlsStream, max: int) => result.Result<Bytes, TlsError> = read(t, max)
 
 /// Retired (issue #264): see `handshake_with`.
-fun try_read_into(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, TlsError> = read_into(t, buf, at)
+fun try_read_into(t: TlsStream, buf: mut Bytes, at: int) => result.Result<int, TlsError> = readInto(t, buf, at)
 
 /// Retired (issue #264): see `handshake_with`.
 fun try_shutdown(t: TlsStream) => result.Result<bool, TlsError> = shutdown(t)
 
 /// Retired (issue #264): see `handshake_with`.
-fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> = handshake_opts(s, host, opts)
+fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> = handshakeOpts(s, host, opts)

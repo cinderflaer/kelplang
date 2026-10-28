@@ -73,7 +73,7 @@ fun b64_value(c: u8) => option.Option<u8> {
     if c >= 97 && c <= 122 {
         return option.Option.Some(value = c - 97 + 26)
     }
-    if str.is_digit(c) {
+    if str.isDigit(c) {
         return option.Option.Some(value = c - 48 + 52)
     }
     if c == 43 {
@@ -85,8 +85,11 @@ fun b64_value(c: u8) => option.Option<u8> {
     return option.Option.None
 }
 
+/// Retired (#375): the camelCase `base64Encode` is the name. Kept for one cycle.
+fun base64_encode(data: &Bytes) => String = base64Encode(data)
+
 /// The base64 text for `data`, RFC 4648 standard alphabet, padded with `=`.
-fun base64_encode(data: &Bytes) => String {
+fun base64Encode(data: &Bytes) => String {
     val n = data.len()
     var out = String.with_capacity((n + 2) / 3 * 4)
     var i: int = 0
@@ -118,11 +121,14 @@ fun base64_encode(data: &Bytes) => String {
     return out
 }
 
+/// Retired (#375): the camelCase `base64Decode` is the name. Kept for one cycle.
+fun base64_decode(text: &str) => result.Result<Bytes, DecodeErr> = base64Decode(text)
+
 /// The bytes `text` decodes to. `Err(Invalid)` on a length that is not a
 /// multiple of 4, a character outside the alphabet, or `=` anywhere but the
 /// last one or two positions. Whitespace is not skipped: trim first if the
 /// source may contain line breaks.
-fun base64_decode(text: &str) => result.Result<Bytes, DecodeErr> {
+fun base64Decode(text: &str) => result.Result<Bytes, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     if n == 0 {
@@ -141,7 +147,7 @@ fun base64_decode(text: &str) => result.Result<Bytes, DecodeErr> {
 
         val v0o = b64_value(c0)
         val v1o = b64_value(c1)
-        if option.is_none(o = v0o) || option.is_none(o = v1o) {
+        if option.isNone(o = v0o) || option.isNone(o = v1o) {
             return result.Result.Err(error = DecodeErr.Invalid)
         }
         val v0 = option.unwrap(o = v0o)
@@ -155,7 +161,7 @@ fun base64_decode(text: &str) => result.Result<Bytes, DecodeErr> {
             }
         } else {
             val v2o = b64_value(c2)
-            if option.is_none(o = v2o) {
+            if option.isNone(o = v2o) {
                 return result.Result.Err(error = DecodeErr.Invalid)
             }
             val v2 = option.unwrap(o = v2o)
@@ -167,7 +173,7 @@ fun base64_decode(text: &str) => result.Result<Bytes, DecodeErr> {
                 }
             } else {
                 val v3o = b64_value(c3)
-                if option.is_none(o = v3o) {
+                if option.isNone(o = v3o) {
                     return result.Result.Err(error = DecodeErr.Invalid)
                 }
                 val v3 = option.unwrap(o = v3o)
@@ -206,9 +212,12 @@ fun b32_value(c: u8) => option.Option<u8> {
     return option.Option.None
 }
 
+/// Retired (#375): the camelCase `base32Encode` is the name. Kept for one cycle.
+fun base32_encode(data: &Bytes) => String = base32Encode(data)
+
 /// The base32 text for `data`, RFC 4648 §6 alphabet (`A`-`Z` then `2`-`7`),
 /// padded with `=` to a multiple of 8 characters.
-fun base32_encode(data: &Bytes) => String {
+fun base32Encode(data: &Bytes) => String {
     val n = data.len()
     if n == 0 {
         return String.empty()
@@ -238,12 +247,15 @@ fun base32_encode(data: &Bytes) => String {
     return out
 }
 
+/// Retired (#375): the camelCase `base32Decode` is the name. Kept for one cycle.
+fun base32_decode(text: &str) => result.Result<Bytes, DecodeErr> = base32Decode(text)
+
 /// `Err(Invalid)` on a length that is not a multiple of 8, a character outside
 /// the alphabet, `=` before the final group, or a final group whose length and
 /// leftover bits do not match one of the RFC 4648 cases (2, 4, 5 or 7
 /// characters of data). The leftover bits must be zero, as the reference
 /// decoder requires.
-fun base32_decode(text: &str) => result.Result<Bytes, DecodeErr> {
+fun base32Decode(text: &str) => result.Result<Bytes, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     if n == 0 {
@@ -268,7 +280,7 @@ fun base32_decode(text: &str) => result.Result<Bytes, DecodeErr> {
                 return result.Result.Err(error = DecodeErr.Invalid)
             }
             val v = b32_value(c)
-            if option.is_none(o = v) {
+            if option.isNone(o = v) {
                 return result.Result.Err(error = DecodeErr.Invalid)
             }
             buffer = ((buffer << 5) | option.unwrap(o = v).to_u32()) & 8191
@@ -321,11 +333,14 @@ fun b58_value(c: u8) => option.Option<u8> {
     return option.Option.None
 }
 
+/// Retired (#375): the camelCase `base58Encode` is the name. Kept for one cycle.
+fun base58_encode(data: &Bytes) => String = base58Encode(data)
+
 /// The base58 text for `data`, Bitcoin alphabet, no padding. Encoding is long
 /// division by 58 over the byte buffer rather than a bit split, because 58 is
 /// not a power of two. Leading zero bytes become leading `1`s, as the usual
 /// implementations do.
-fun base58_encode(data: &Bytes) => String {
+fun base58Encode(data: &Bytes) => String {
     val n = data.len()
     if n == 0 {
         return String.empty()
@@ -365,9 +380,12 @@ fun base58_encode(data: &Bytes) => String {
     return out
 }
 
+/// Retired (#375): the camelCase `base58Decode` is the name. Kept for one cycle.
+fun base58_decode(text: &str) => result.Result<Bytes, DecodeErr> = base58Decode(text)
+
 /// `Err(Invalid)` on a character outside the alphabet. An empty string decodes
 /// to empty `Bytes`; `"1"` decodes to one zero byte.
-fun base58_decode(text: &str) => result.Result<Bytes, DecodeErr> {
+fun base58Decode(text: &str) => result.Result<Bytes, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     if n == 0 {
@@ -381,7 +399,7 @@ fun base58_decode(text: &str) => result.Result<Bytes, DecodeErr> {
     var i = zeros
     while i < n {
         val v = b58_value(tv.get(i))
-        if option.is_none(o = v) {
+        if option.isNone(o = v) {
             return result.Result.Err(error = DecodeErr.Invalid)
         }
         var carry: u32 = option.unwrap(o = v).to_u32()
@@ -412,25 +430,34 @@ fun base58_decode(text: &str) => result.Result<Bytes, DecodeErr> {
     return result.Result.Ok(value = out)
 }
 
+/// Retired (#375): the camelCase `hexUpper` is the name. Kept for one cycle.
+fun hex_upper(nibble: u8) => u8 = hexUpper(nibble)
+
 /// The uppercase hex digit for a nibble (`0` to `15`), as an ASCII byte.
-fun hex_upper(nibble: u8) => u8 {
+fun hexUpper(nibble: u8) => u8 {
     if nibble < 10 {
         return nibble + 48
     }
     return nibble - 10 + 65
 }
 
+/// Retired (#375): the camelCase `hexLower` is the name. Kept for one cycle.
+fun hex_lower(nibble: u8) => u8 = hexLower(nibble)
+
 /// The lowercase hex digit for a nibble (`0` to `15`), as an ASCII byte.
-fun hex_lower(nibble: u8) => u8 {
+fun hexLower(nibble: u8) => u8 {
     if nibble < 10 {
         return nibble + 48
     }
     return nibble - 10 + 97
 }
 
+/// Retired (#375): the camelCase `hexValue` is the name. Kept for one cycle.
+fun hex_value(c: u8) => option.Option<u8> = hexValue(c)
+
 /// The value of a hex digit in either case, or `None` for any other byte.
-fun hex_value(c: u8) => option.Option<u8> {
-    if str.is_digit(c) {
+fun hexValue(c: u8) => option.Option<u8> {
+    if str.isDigit(c) {
         return option.Option.Some(value = c - 48)
     }
     if c >= 97 && c <= 102 {
@@ -442,24 +469,30 @@ fun hex_value(c: u8) => option.Option<u8> {
     return option.Option.None
 }
 
+/// Retired (#375): the camelCase `hexEncode` is the name. Kept for one cycle.
+fun hex_encode(data: &Bytes) => String = hexEncode(data)
+
 /// Lowercase, two characters per byte. `std/fmt.hex` prints one `u64` without
 /// leading zeros; this is the spelling for a buffer.
-fun hex_encode(data: &Bytes) => String {
+fun hexEncode(data: &Bytes) => String {
     val n = data.len()
     var out = String.with_capacity(n * 2)
     var i: int = 0
     while i < n {
         val b = data.get(i)
-        out.push(hex_lower(b >> 4))
-        out.push(hex_lower(b & 15))
+        out.push(hexLower(b >> 4))
+        out.push(hexLower(b & 15))
         i = i + 1
     }
     return out
 }
 
+/// Retired (#375): the camelCase `hexDecode` is the name. Kept for one cycle.
+fun hex_decode(text: &str) => result.Result<Bytes, DecodeErr> = hexDecode(text)
+
 /// Accepts either case. `Err(Invalid)` on an odd length or a non-hex character.
 /// No `0x` prefix and no separators are accepted.
-fun hex_decode(text: &str) => result.Result<Bytes, DecodeErr> {
+fun hexDecode(text: &str) => result.Result<Bytes, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     if n % 2 != 0 {
@@ -468,9 +501,9 @@ fun hex_decode(text: &str) => result.Result<Bytes, DecodeErr> {
     var out = Bytes.empty()
     var i: int = 0
     while i < n {
-        val hi = hex_value(tv.get(i))
-        val lo = hex_value(tv.get(i + 1))
-        if option.is_none(o = hi) || option.is_none(o = lo) {
+        val hi = hexValue(tv.get(i))
+        val lo = hexValue(tv.get(i + 1))
+        if option.isNone(o = hi) || option.isNone(o = lo) {
             return result.Result.Err(error = DecodeErr.Invalid)
         }
         out.push(((option.unwrap(o = hi) << 4) | option.unwrap(o = lo)).to_byte())
@@ -493,15 +526,15 @@ fun dump(data: &Bytes) => String {
             out.push('\n')
         }
         val raw_offset = fmt.hex(off.to_u64())
-        val offset = fmt.pad_left(raw_offset, 8, '0')
+        val offset = fmt.padLeft(raw_offset, 8, '0')
         out.push_str(offset)
         out.push_str("  ")
         var i: int = 0
         while i < 16 {
             if off + i < n {
                 val b = data.get(off + i)
-                out.push(hex_lower(b >> 4))
-                out.push(hex_lower(b & 15))
+                out.push(hexLower(b >> 4))
+                out.push(hexLower(b & 15))
                 out.push(' ')
             } else {
                 out.push_str("   ")
@@ -537,16 +570,19 @@ fun is_unreserved(c: u8) => bool {
     if c >= 97 && c <= 122 {
         return true
     }
-    if str.is_digit(c) {
+    if str.isDigit(c) {
         return true
     }
     return c == 45 || c == 46 || c == 95 || c == 126
 }
 
+/// Retired (#375): the camelCase `percentEncode` is the name. Kept for one cycle.
+fun percent_encode(text: &str) => String = percentEncode(text)
+
 /// `text` with every byte outside the unreserved set escaped as `%XX`,
 /// uppercase hex. Operates on bytes, so UTF-8 multi-byte characters come out as
 /// one `%XX` per byte, which is what a URL wants.
-fun percent_encode(text: &str) => String {
+fun percentEncode(text: &str) => String {
     val tv = text.view()
     val n = tv.len()
     var out = String.with_capacity(n)
@@ -557,19 +593,22 @@ fun percent_encode(text: &str) => String {
             out.push(c)
         } else {
             out.push('%')
-            out.push(hex_upper(c >> 4))
-            out.push(hex_upper(c & 15))
+            out.push(hexUpper(c >> 4))
+            out.push(hexUpper(c & 15))
         }
         i = i + 1
     }
     return out
 }
 
+/// Retired (#375): the camelCase `percentDecode` is the name. Kept for one cycle.
+fun percent_decode(text: &str) => result.Result<String, DecodeErr> = percentDecode(text)
+
 /// The reverse of `percent_encode`: `%XX` unescaped, `+` left alone (this is
 /// URL percent-decoding, not `application/x-www-form-urlencoded`, which is the
 /// one place the two schemes differ). `Err(Invalid)` on a trailing `%` or a `%`
 /// not followed by two hex digits.
-fun percent_decode(text: &str) => result.Result<String, DecodeErr> {
+fun percentDecode(text: &str) => result.Result<String, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     var out = String.with_capacity(n)
@@ -580,9 +619,9 @@ fun percent_decode(text: &str) => result.Result<String, DecodeErr> {
             if i + 2 >= n {
                 return result.Result.Err(error = DecodeErr.Invalid)
             }
-            val hi = hex_value(tv.get(i + 1))
-            val lo = hex_value(tv.get(i + 2))
-            if option.is_none(o = hi) || option.is_none(o = lo) {
+            val hi = hexValue(tv.get(i + 1))
+            val lo = hexValue(tv.get(i + 2))
+            if option.isNone(o = hi) || option.isNone(o = lo) {
                 return result.Result.Err(error = DecodeErr.Invalid)
             }
             val byte = (option.unwrap(o = hi) << 4) | option.unwrap(o = lo)
@@ -609,7 +648,7 @@ fun rotl32(x: u32, n: u32) => u32 {
 }
 
 /// The 20-byte digest, big-endian, in the order `h0` to `h4` are finalized.
-/// `encoding.hex_encode(sha1(data))` is the hex spelling.
+/// `encoding.hexEncode(sha1(data))` is the hex spelling.
 ///
 /// RFC 3174 with no streaming state: the whole message is padded into one
 /// buffer, because a WebSocket handshake key is 24 bytes of text and the
@@ -717,10 +756,13 @@ fun push_u32_be(out: mut Bytes, v: u32) {
     out.push((v & 255).to_byte())
 }
 
+/// Retired (#375): the camelCase `formEncode` is the name. Kept for one cycle.
+fun form_encode(text: &str) => String = formEncode(text)
+
 /// The `application/x-www-form-urlencoded` encoder: same unreserved set as
 /// `percent_encode`, and a space becomes `+` rather than `%20`. Everything else
 /// is `%XX` in uppercase hex.
-fun form_encode(text: &str) => String {
+fun formEncode(text: &str) => String {
     val tv = text.view()
     val n = tv.len()
     var out = String.with_capacity(n)
@@ -733,18 +775,21 @@ fun form_encode(text: &str) => String {
             out.push(c)
         } else {
             out.push('%')
-            out.push(hex_upper(c >> 4))
-            out.push(hex_upper(c & 15))
+            out.push(hexUpper(c >> 4))
+            out.push(hexUpper(c & 15))
         }
         i = i + 1
     }
     return out
 }
 
+/// Retired (#375): the camelCase `formDecode` is the name. Kept for one cycle.
+fun form_decode(text: &str) => result.Result<String, DecodeErr> = formDecode(text)
+
 /// The reverse of `form_encode`: `+` is a space, then `%XX` is unescaped. Use
 /// `percent_decode` instead when `+` is data (a base64 body, a `+1` phone
 /// number) rather than a space.
-fun form_decode(text: &str) => result.Result<String, DecodeErr> {
+fun formDecode(text: &str) => result.Result<String, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     var out = String.with_capacity(n)
@@ -758,9 +803,9 @@ fun form_decode(text: &str) => result.Result<String, DecodeErr> {
             if i + 2 >= n {
                 return result.Result.Err(error = DecodeErr.Invalid)
             }
-            val hi = hex_value(tv.get(i + 1))
-            val lo = hex_value(tv.get(i + 2))
-            if option.is_none(o = hi) || option.is_none(o = lo) {
+            val hi = hexValue(tv.get(i + 1))
+            val lo = hexValue(tv.get(i + 2))
+            if option.isNone(o = hi) || option.isNone(o = lo) {
                 return result.Result.Err(error = DecodeErr.Invalid)
             }
             out.push((option.unwrap(o = hi) << 4) | option.unwrap(o = lo))

@@ -653,8 +653,8 @@ pub fn gated_item_domain(module: &str, item: &str) -> Option<&'static str> {
     Some(match item {
         "os" | "arch" | "pid" | "parent_pid" | "exe_path" | "current_dir" | "set_current_dir" | "exit"
         | "cpu_count" | "total_memory" | "path" => return None,
-        "hostname" | "user_name" | "home_dir_raw" | "home_dir" | "temp_dir" | "uid" | "gid" => "machine",
-        "make_temp_dir" | "make_temp_file" | "mkdtemp_raw" | "mkstemp_raw" | "remove_tree_raw" | "drop" => "fs",
+        "hostname" | "user_name" | "userName" | "home_dir_raw" | "home_dir" | "homeDir" | "temp_dir" | "tempDir" | "uid" | "gid" => "machine",
+        "make_temp_dir" | "makeTempDir" | "make_temp_file" | "makeTempFile" | "mkdtemp_raw" | "mkstemp_raw" | "remove_tree_raw" | "drop" => "fs",
         _ => "env",
     })
 }
@@ -804,7 +804,7 @@ fn first_str_arg(arg_is_str: &[bool]) -> Option<usize> {
 /// the program itself unchecked.
 fn process_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
     let program_at = match callee {
-        "spawn_in" | "run_in" | "try_run_in" | "spawn_raw" | "spawn_inherit_raw" | "run_inherit_in" => 1,
+        "spawn_in" | "spawnIn" | "run_in" | "runIn" | "try_run_in" | "spawn_raw" | "spawn_inherit_raw" | "run_inherit_in" | "runInheritIn" => 1,
         _ => 0,
     };
     match arg_is_str.get(program_at) {
@@ -862,7 +862,7 @@ fn net_checked_args(callee: &str, _arg_is_str: &[bool]) -> Vec<CapCheck> {
             vec![CapCheck::HostPort(0, 1)]
         }
         "listen" | "listen_raw" => vec![CapCheck::Port(0)],
-        "listen_on" | "listen_on_raw" => vec![CapCheck::HostPort(0, 1)],
+        "listen_on" | "listenOn" | "listen_on_raw" => vec![CapCheck::HostPort(0, 1)],
         "resolve" | "resolve_raw" => vec![CapCheck::Host(0)],
         _ => Vec::new(),
     }
@@ -893,10 +893,10 @@ mod tests {
         }
         assert_eq!(gated_item_domain("std/os", "env_var"), Some("env"));
         assert_eq!(gated_item_domain("std/os", "set_env_var"), Some("env"));
-        for item in ["hostname", "user_name", "home_dir", "temp_dir", "uid", "gid"] {
+        for item in ["hostname", "user_name", "userName", "home_dir", "homeDir", "temp_dir", "tempDir", "uid", "gid"] {
             assert_eq!(gated_item_domain("std/os", item), Some("machine"), "{item}");
         }
-        for item in ["make_temp_dir", "make_temp_file", "drop", "mkdtemp_raw"] {
+        for item in ["make_temp_dir", "makeTempDir", "make_temp_file", "makeTempFile", "drop", "mkdtemp_raw"] {
             assert_eq!(gated_item_domain("std/os", item), Some("fs"), "{item}");
         }
         assert_eq!(gated_item_domain("std/sys", "os"), None);

@@ -13,7 +13,7 @@
 
        fun new(base: Ptr<u8>, cap: usize) => Arena
        fun mut Arena.alloc(size: usize, align: usize) => Ptr<u8>
-       fun mut Arena.alloc_zeroed(size: usize, align: usize) => Ptr<u8>
+       fun mut Arena.allocZeroed(size: usize, align: usize) => Ptr<u8>
        fun mut Arena.reset()
        fun Arena.used() => usize
        fun Arena.remaining() => usize
@@ -97,10 +97,13 @@ fun mut Arena.alloc(size: usize, align: usize) => Ptr<u8> {
     return base.byte_offset(start.to_isize())
 }
 
+/// Retired (#375): the camelCase `allocZeroed` is the name. Kept for one cycle.
+fun mut Arena.alloc_zeroed(size: usize, align: usize) => Ptr<u8> = self.allocZeroed(size, align)
+
 /// `alloc` for a caller that wants a clean block: the same bump, then the
 /// returned bytes written to zero. The write is the module's one `unsafe`
 /// operation, and the reason `std/arena` is on the compiler's `[unsafe]` list.
-fun mut Arena.alloc_zeroed(size: usize, align: usize) => Ptr<u8> {
+fun mut Arena.allocZeroed(size: usize, align: usize) => Ptr<u8> {
     val p: Ptr<u8> = self.alloc(size = size, align = align)
     if p.is_null() {
         return p

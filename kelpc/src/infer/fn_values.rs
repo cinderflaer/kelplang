@@ -373,12 +373,12 @@ pub(crate) const PRINTABLE_BUILTINS: &[&str] = &["print", "print!"];
 /// they gained an `f32` overload: `abs`, `min`, `max` and `clamp` were never one.
 pub(crate) const FLOAT_MATH_VALUES: &[&str] = &[
     "sqrt", "pow", "floor", "ceil", "round", "trunc", "exp", "ln", "log2", "log10", "sin", "cos", "tan", "atan2",
-    "is_nan", "is_finite", "sign",
+    "is_nan", "isNan", "is_finite", "isFinite", "sign",
 ];
 
 pub(crate) const OVERLOADABLE: &[&str] = &[
     "abs", "min", "max", "clamp", "sqrt", "pow", "floor", "ceil", "round", "trunc", "exp", "ln", "log2", "log10", "sin",
-    "cos", "tan", "atan2", "is_nan", "is_finite", "sign",
+    "cos", "tan", "atan2", "is_nan", "isNan", "is_finite", "isFinite", "sign",
 ];
 
 /// Whether a module id is one the compiler ships (M6.3, stdlib decision 4).

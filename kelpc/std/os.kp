@@ -88,28 +88,37 @@ extern fun get_raw(name: &str) => String
 extern fun set_raw(name: &str, value: &str)
 extern fun unset_raw(name: &str)
 
+/// Retired (#375): the camelCase `envVar` is the name. Kept for one cycle.
+fun env_var(name: &str) => option.Option<String> = envVar(name)
+
 /// The value of the variable, or `None` when it is not set. Unlike
 /// `std/env.get`, an unset variable and one set to "" are different here.
 ///
 /// Panics: if `name` is outside the `env` grant.
-fun env_var(name: &str) => option.Option<String> {
+fun envVar(name: &str) => option.Option<String> {
     if has_raw(name) {
         return option.Option.Some(value = get_raw(name))
     }
     return option.Option.None
 }
 
+/// Retired (#375): the camelCase `setEnvVar` is the name. Kept for one cycle.
+fun set_env_var(name: &str, value: &str) { setEnvVar(name, value) }
+
 /// Sets the variable for this process and any child it starts.
 ///
 /// Panics: if `name` is outside the `env` grant, or the variable cannot be set.
-fun set_env_var(name: &str, value: &str) {
+fun setEnvVar(name: &str, value: &str) {
     set_raw(name, value)
 }
+
+/// Retired (#375): the camelCase `unsetEnvVar` is the name. Kept for one cycle.
+fun unset_env_var(name: &str) { unsetEnvVar(name) }
 
 /// Removes the variable from this process's environment.
 ///
 /// Panics: if `name` is outside the `env` grant, or it cannot be removed.
-fun unset_env_var(name: &str) {
+fun unsetEnvVar(name: &str) {
     unset_raw(name)
 }
 
@@ -120,11 +129,17 @@ fun unset_env_var(name: &str) {
 /// The host name of the machine, or the empty string when it is not known.
 extern fun hostname() => String
 
+/// Camel-case form (issue #375): the extern keeps its symbol under the old name.
+fun userName() => String = user_name()
+
 /// The name of the user this process runs as, or the empty string when the user
 /// database has no entry for it.
 extern fun user_name() => String
 
 extern fun home_dir_raw() => String
+
+/// Camel-case form (issue #375): the extern keeps its symbol under the old name.
+fun tempDir() => String = temp_dir()
 
 /// The directory temporary files go in: `TMPDIR`, or `/tmp` when that is unset
 /// or empty.
@@ -136,9 +151,12 @@ extern fun uid() => u32
 /// The numeric group id of this process.
 extern fun gid() => u32
 
+/// Retired (#375): the camelCase `homeDir` is the name. Kept for one cycle.
+fun home_dir() => option.Option<String> = homeDir()
+
 /// The home directory: `HOME`, or the home directory of the user database when
 /// `HOME` is unset. `None` when neither is known.
-fun home_dir() => option.Option<String> {
+fun homeDir() => option.Option<String> {
     val home = home_dir_raw()
     if str.is_empty(home) {
         return option.Option.None
@@ -179,17 +197,20 @@ extern fun mkdtemp_raw(template: &str) => String
 extern fun mkstemp_raw(template: &str) => String
 extern fun remove_tree_raw(path: &str)
 
+/// Retired (#375): the camelCase `makeTempDir` is the name. Kept for one cycle.
+fun make_temp_dir(template: &str) => result.Result<TempDir, OsError> = makeTempDir(template)
+
 /// A fresh directory whose name is `template` with its six trailing `X`s
 /// replaced by a random string, for example
-/// `str.concat(os.temp_dir(), "/build-XXXXXX")`.
+/// `str.concat(os.tempDir(), "/build-XXXXXX")`.
 ///
 /// The grant is checked against the template, at the call, like `fs.mkdir`:
 /// the caller must hold an `fs` grant that covers the place the directory is
 /// made. `std/os`'s own grant is checked too, when it has one.
 ///
 /// Panics: if `template` is outside the caller's `fs` grant.
-fun make_temp_dir(template: &str) => result.Result<TempDir, OsError> {
-    if !str.ends_with(template, "XXXXXX") {
+fun makeTempDir(template: &str) => result.Result<TempDir, OsError> {
+    if !str.endsWith(template, "XXXXXX") {
         return result.Result.Err(error = OsError.BadTemplate)
     }
     val path = mkdtemp_raw(template)
@@ -199,12 +220,15 @@ fun make_temp_dir(template: &str) => result.Result<TempDir, OsError> {
     return result.Result.Ok(value = TempDir(dir = path))
 }
 
+/// Retired (#375): the camelCase `makeTempFile` is the name. Kept for one cycle.
+fun make_temp_file(template: &str) => result.Result<TempFile, OsError> = makeTempFile(template)
+
 /// A fresh empty file whose name is `template` with its six trailing `X`s
 /// replaced, checked against the grant as `make_temp_dir` is.
 ///
 /// Panics: if `template` is outside the caller's `fs` grant.
-fun make_temp_file(template: &str) => result.Result<TempFile, OsError> {
-    if !str.ends_with(template, "XXXXXX") {
+fun makeTempFile(template: &str) => result.Result<TempFile, OsError> {
+    if !str.endsWith(template, "XXXXXX") {
         return result.Result.Err(error = OsError.BadTemplate)
     }
     val path = mkstemp_raw(template)

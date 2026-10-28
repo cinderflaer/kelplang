@@ -45,10 +45,16 @@ extern fun cos(x: f64) => f64 = "cos_raw"
 extern fun tan(x: f64) => f64 = "tan_raw"
 /// The angle in radians of the point (`x`, `y`).
 extern fun atan2(y: f64, x: f64) => f64 = "atan2_raw"
+/// Retired (#375): the camelCase `isNan` is the name. Kept for one cycle.
+fun is_nan(x: f64) => bool = isNan(x)
+
 /// Whether `x` is not a number.
-extern fun is_nan(x: f64) => bool = "is_nan_raw"
+extern fun isNan(x: f64) => bool = "is_nan_raw"
+/// Retired (#375): the camelCase `isFinite` is the name. Kept for one cycle.
+fun is_finite(x: f64) => bool = isFinite(x)
+
 /// Whether `x` is neither infinite nor not a number.
-extern fun is_finite(x: f64) => bool = "is_finite_raw"
+extern fun isFinite(x: f64) => bool = "is_finite_raw"
 
 /// `sign` is f64-only: an integer `sign` would return an integer, which is a
 /// different function, and nothing needs it yet.
@@ -128,10 +134,16 @@ fun tan(x: f32) => f32 = tan_raw(x.to_f64()).to_f32()
 fun pow(base: f32, exp: f32) => f32 = pow_raw(base.to_f64(), exp.to_f64()).to_f32()
 /// The angle of `(x, y)`, for `f32`.
 fun atan2(y: f32, x: f32) => f32 = atan2_raw(y.to_f64(), x.to_f64()).to_f32()
+/// Retired (#375): the camelCase `isNan` is the name. Kept for one cycle.
+fun is_nan(x: f32) => bool = isNan(x)
+
 /// Whether an `f32` is not a number.
-fun is_nan(x: f32) => bool = is_nan_raw(x.to_f64())
+fun isNan(x: f32) => bool = is_nan_raw(x.to_f64())
+/// Retired (#375): the camelCase `isFinite` is the name. Kept for one cycle.
+fun is_finite(x: f32) => bool = isFinite(x)
+
 /// Whether an `f32` is neither infinite nor not a number.
-fun is_finite(x: f32) => bool = is_finite_raw(x.to_f64())
+fun isFinite(x: f32) => bool = is_finite_raw(x.to_f64())
 /// The sign of an `f32`: -1.0, 0.0 or 1.0.
 fun sign(x: f32) => f32 = if x < 0.0 { -1.0 } else { if x > 0.0 { 1.0 } else { 0.0 } }
 /// The absolute value of `x`.

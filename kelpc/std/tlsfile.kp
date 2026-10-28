@@ -23,10 +23,13 @@ impl "std/str"
    permissions; `read_key` (below) refuses one that group or others can read or
    write, so a key left at `0644` is a typed error rather than a silent leak. */
 
+/// Retired (#375): the camelCase `readPem` is the name. Kept for one cycle.
+fun read_pem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> = readPem(path, what)
+
 /// Reads the PEM bytes in `path` through the `fs` gate. A file that cannot be
 /// read is `TlsError.Io` with the path and the system's reason. `what` names the
 /// file's role for the sentence ("private key").
-fun read_pem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> {
+fun readPem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> {
     return when fs.read(path) {
         Ok(b) -> result.Result.Ok(value = b)
         Err(e) -> {
@@ -43,27 +46,30 @@ fun read_pem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> {
 }
 
 // The three reads a TLS setup needs, named for their role in the error text.
-// The bytes go to `tls.server_config_pem`, `ServerOptions.require_client_cert_pem`
-// and `TlsClientOptions.client_cert_pem`:
+// The bytes go to `tls.serverConfigPem`, `ServerOptions.requireClientCertPem`
+// and `TlsClientOptions.clientCertPem`:
 //
-//     val cert = tlsfile.read_pem(cert_path, "certificate chain")?
-//     val key = tlsfile.read_pem(key_path, "private key")?
-//     val cfg = tls.server_config_pem(cert, key)?
+//     val cert = tlsfile.readPem(cert_path, "certificate chain")?
+//     val key = tlsfile.readPem(key_path, "private key")?
+//     val cfg = tls.serverConfigPem(cert, key)?
 //
 // (This module only reads; it cannot call into `std/tls`, whose functions are
 // `net`-gated and would need that grant here too.)
 
+/// Retired (#375): the camelCase `caPem` is the name. Kept for one cycle.
+fun ca_pem(path: &str) => result.Result<Bytes, tls.TlsError> = caPem(path)
+
 /// The private CA certificates in `path`, read through the `fs` gate: the
 /// module's grant decides which paths are readable, exactly as for `fs.read`,
 /// and a path outside it is a typed `TlsError.Io` (the file is never opened).
-/// Hand the bytes to `TlsClientOptions.with_ca_pem`:
+/// Hand the bytes to `TlsClientOptions.withCaPem`:
 ///
-///     val ca = tlsfile.ca_pem(ca_path)?
-///     val opts = tls.client_options().with_ca_pem(ca)
+///     val ca = tlsfile.caPem(ca_path)?
+///     val opts = tls.clientOptions().withCaPem(ca)
 ///
 /// A program with no `fs` grant cannot import this module, so it cannot make
 /// the TLS runtime read a path at all.
-fun ca_pem(path: &str) => result.Result<Bytes, tls.TlsError> = read_pem(path, "CA certificate")
+fun caPem(path: &str) => result.Result<Bytes, tls.TlsError> = readPem(path, "CA certificate")
 
 /// The error for a CA directory that cannot be listed, or that holds no CA certificate.
 fun ca_dir_error(dir: &str, reason: &str) => tls.TlsError {
@@ -86,10 +92,10 @@ fun ca_dir_names(dir: &str) => result.Result<List<String>, tls.TlsError> {
 }
 
 /// The private CA certificates in every `.pem` and `.crt` file directly inside
-/// `dir`, joined into one PEM text, for `TlsClientOptions.with_ca_pem`:
+/// `dir`, joined into one PEM text, for `TlsClientOptions.withCaPem`:
 ///
 ///     val ca = tlsfile.ca_dir_pem("/etc/myapp/ca.d")?
-///     val opts = tls.client_options().with_ca_pem(ca)
+///     val opts = tls.clientOptions().withCaPem(ca)
 ///
 /// Every file is read through the `fs` gate, one path at a time, so the grant
 /// decides which of them may be read, exactly as for `ca_pem`. Other files in the
@@ -102,10 +108,10 @@ fun ca_dir_pem(dir: &str) => result.Result<Bytes, tls.TlsError> {
     var out = Bytes.empty()
     var found = false
     for name in names {
-        if str.ends_with(name.as_str(), ".pem") || str.ends_with(name.as_str(), ".crt") {
+        if str.endsWith(name.as_str(), ".pem") || str.endsWith(name.as_str(), ".crt") {
             val slash = str.concat(dir, "/")
             val path = str.concat(slash.as_str(), name.as_str())
-            val pem = read_pem(path.as_str(), "CA certificate")?
+            val pem = readPem(path.as_str(), "CA certificate")?
             out.append(pem)
             found = true
         }
@@ -116,8 +122,11 @@ fun ca_dir_pem(dir: &str) => result.Result<Bytes, tls.TlsError> {
     return result.Result.Ok(value = out)
 }
 
+/// Retired (#375): the camelCase `modeText` is the name. Kept for one cycle.
+fun mode_text(mode: u32) => String = modeText(mode)
+
 /// The octal digits of the low nine permission bits, as `0644` prints them.
-fun mode_text(mode: u32) => String {
+fun modeText(mode: u32) => String {
     val bits = mode & 511
     var out = String.with_capacity(4)
     out.push_str("0")
@@ -130,14 +139,17 @@ fun mode_text(mode: u32) => String {
     return out
 }
 
+/// Retired (#375): the camelCase `readKey` is the name. Kept for one cycle.
+fun read_key(path: &str) => result.Result<Bytes, tls.TlsError> = readKey(path)
+
 /// A private key file, read through the `fs` gate after its permissions are
 /// checked: any group or other bit (`mode & 0077`) is `TlsError.Io` naming the
 /// file and its mode, and the file is not read. Fix it with `chmod 600`. A
 /// file that is missing or unreadable is the same `Io` as `read_pem`'s. Hand the
-/// bytes to `tls.server_config_pem`:
+/// bytes to `tls.serverConfigPem`:
 ///
-///     val key = tlsfile.read_key(key_path)?
-fun read_key(path: &str) => result.Result<Bytes, tls.TlsError> {
+///     val key = tlsfile.readKey(key_path)?
+fun readKey(path: &str) => result.Result<Bytes, tls.TlsError> {
     if fs.exists(path) {
         val m = fs.metadata(path)
         if (m.mode & 63) != 0 {
@@ -145,11 +157,11 @@ fun read_key(path: &str) => result.Result<Bytes, tls.TlsError> {
             text.push_str("tls: the private key file ")
             text.push_str(path)
             text.push_str(" has mode ")
-            val shown = mode_text(m.mode)
+            val shown = modeText(m.mode)
             text.push_str(shown)
             text.push_str(": group and others must have no access (chmod 600)")
             return result.Result.Err(error = tls.TlsError.Io(reason = text))
         }
     }
-    return read_pem(path, "private key")
+    return readPem(path, "private key")
 }

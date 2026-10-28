@@ -1287,25 +1287,37 @@ fun mut Regex.run(text: View, start: int, nsl: int, early: bool) => bool {
 /// work the linearity tests assert on.
 fun Regex.steps() => i64 = nsteps
 
+/// Retired (#375): the camelCase `resetSteps` is the name. Kept for one cycle.
+fun mut Regex.reset_steps() { self.resetSteps() }
+
 /// Sets the VM step count back to zero.
-fun mut Regex.reset_steps() {
+fun mut Regex.resetSteps() {
     nsteps = 0
 }
 
+/// Retired (#375): the camelCase `groupCount` is the name. Kept for one cycle.
+fun Regex.group_count() => int = self.groupCount()
+
 /// The number of capture groups, not counting group 0.
 /// The number of capture groups, not counting group 0 (the whole match).
-fun Regex.group_count() => int = ngroups - 1
+fun Regex.groupCount() => int = ngroups - 1
+
+/// Retired (#375): the camelCase `isMatch` is the name. Kept for one cycle.
+fun mut Regex.is_match(text: &str) => bool = self.isMatch(text)
 
 /// Whether the pattern matches anywhere in `text`.
 /// Whether the pattern matches anywhere in `text`.
-fun mut Regex.is_match(text: &str) => bool {
+fun mut Regex.isMatch(text: &str) => bool {
     return self.run(text.view(), 0, 2, true)
 }
+
+/// Retired (#375): the camelCase `findAt` is the name. Kept for one cycle.
+fun mut Regex.find_at(text: &str, start: int) => option.Option<Match> = self.findAt(text, start)
 
 /// The leftmost match at or after byte `start`, if any.
 /// The leftmost match at or after byte `start`, if any. `^` and `\b` still look
 /// at the whole text, so a search that resumes mid-text sees its true context.
-fun mut Regex.find_at(text: &str, start: int) => option.Option<Match> {
+fun mut Regex.findAt(text: &str, start: int) => option.Option<Match> {
     val tv = text.view()
     if start > tv.len() {
         return option.Option.None
@@ -1320,7 +1332,7 @@ fun mut Regex.find_at(text: &str, start: int) => option.Option<Match> {
 
 /// The leftmost match in `text`, if any.
 fun mut Regex.find(text: &str) => option.Option<Match> {
-    return self.find_at(text, 0)
+    return self.findAt(text, 0)
 }
 
 /// The leftmost match in `text`, with the span of every group.
@@ -1340,10 +1352,13 @@ fun mut Regex.captures(text: &str) => option.Option<Captures> {
     return option.Option.Some(value = Captures(text = tv.to_string(), slots = slots))
 }
 
+/// Retired (#375): the camelCase `findAll` is the name. Kept for one cycle.
+fun mut Regex.find_all(text: &str) => List<Match> = self.findAll(text)
+
 /// Every non-overlapping match in `text`, from left to right.
 /// Every non-overlapping match, left to right. After an empty match the search
 /// resumes one byte further on, so the result is finite.
-fun mut Regex.find_all(text: &str) => List<Match> {
+fun mut Regex.findAll(text: &str) => List<Match> {
     val tv = text.view()
     val n = tv.len()
     var out: List<Match> = List.empty()
@@ -1458,8 +1473,11 @@ fun mut Regex.replace(text: &str, replacement: &str) => String {
     return self.replace_impl(text, replacement, false)
 }
 
+/// Retired (#375): the camelCase `replaceAll` is the name. Kept for one cycle.
+fun mut Regex.replace_all(text: &str, replacement: &str) => String = self.replaceAll(text, replacement)
+
 /// Replaces every match in `text`.
-fun mut Regex.replace_all(text: &str, replacement: &str) => String {
+fun mut Regex.replaceAll(text: &str, replacement: &str) => String {
     return self.replace_impl(text, replacement, true)
 }
 
@@ -1526,14 +1544,17 @@ fun Captures.span(i: int) => option.Option<Match> {
     return option.Option.Some(value = Match(start = su, end = eu, text = text.view().slice(su, eu).to_string()))
 }
 
+/// Retired (#375): the camelCase `isMatch` is the name. Kept for one cycle.
+fun is_match(pattern: &str, text: &str) => bool = isMatch(pattern, text)
+
 /// Compiles `pattern` and reports whether it matches anywhere in `text`.
 /// Whether `pattern` matches anywhere in `text`. Panics when the pattern does not
 /// compile: a literal pattern in the source is a bug, not an input.
-fun is_match(pattern: &str, text: &str) => bool {
+fun isMatch(pattern: &str, text: &str) => bool {
     val r = compile(pattern)
     if let Ok(re0) = r {
         var re = re0
-        return re.is_match(text)
+        return re.isMatch(text)
     }
     if let Err(e) = r {
         panic(str.concat("regex.is_match: ", e.message.as_str()))

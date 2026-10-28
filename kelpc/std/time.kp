@@ -9,13 +9,22 @@
 
 extern fun sleep_ms_raw(ms: u64)
 
+/// Retired (#375): the camelCase `nowUnix` is the name. Kept for one cycle.
+fun now_unix() => i64 = nowUnix()
+
 /// Seconds since the Unix epoch.
-extern fun now_unix() => i64 = "now_unix_raw"
+extern fun nowUnix() => i64 = "now_unix_raw"
+
+/// Retired (#375): the camelCase `nowMonoNs` is the name. Kept for one cycle.
+fun now_mono_ns() => i64 = nowMonoNs()
 
 /// Nanoseconds on the monotonic clock: the one to measure elapsed time with.
-extern fun now_mono_ns() => i64 = "now_mono_ns_raw"
+extern fun nowMonoNs() => i64 = "now_mono_ns_raw"
+
+/// Retired (#375): the camelCase `sleepMs` is the name. Kept for one cycle.
+fun sleep_ms(ms: u64) { sleepMs(ms) }
 
 /// Blocks the calling thread for `ms` milliseconds.
-fun sleep_ms(ms: u64) {
+fun sleepMs(ms: u64) {
     sleep_ms_raw(ms)
 }

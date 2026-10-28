@@ -43,17 +43,26 @@ enum Result<T, E> {
 // which imports this one.
 extern fun exit_with_message_raw(message: &str, code: i32)
 
-/// Whether the result is a success: `result.is_ok(r)` is `r.is_ok()`.
-fun is_ok<T, E>(r: &Result<T, E>) => bool = r.is_ok()
+/// Retired (#375): the camelCase `isOk` is the name. Kept for one cycle.
+fun is_ok<T, E>(r: &Result<T, E>) => bool = isOk(r)
 
-/// Whether the result is a failure: `result.is_err(r)` is `r.is_err()`.
-fun is_err<T, E>(r: &Result<T, E>) => bool = r.is_err()
+/// Whether the result is a success: `result.isOk(r)` is `r.isOk()`.
+fun isOk<T, E>(r: &Result<T, E>) => bool = r.isOk()
+
+/// Retired (#375): the camelCase `isErr` is the name. Kept for one cycle.
+fun is_err<T, E>(r: &Result<T, E>) => bool = isErr(r)
+
+/// Whether the result is a failure: `result.isErr(r)` is `r.isErr()`.
+fun isErr<T, E>(r: &Result<T, E>) => bool = r.isErr()
+
+/// Retired (#375): the camelCase `unwrapOr` is the name. Kept for one cycle.
+fun unwrap_or<T, E>(r: &Result<T, E>, fallback: T) => T = unwrapOr(r, fallback)
 
 /// The success payload, or `fallback`. `T` must be `Copy`: the receiver is a
 /// borrow, so an owned payload cannot be handed out of it; read one with a
 /// `when` over an owned result, or hand it on inside a result with `map`.
-/// `result.unwrap_or(r = r, fallback = 0)` is `r.unwrap_or(0)`.
-fun unwrap_or<T, E>(r: &Result<T, E>, fallback: T) => T = r.unwrap_or(fallback)
+/// `result.unwrapOr(r = r, fallback = 0)` is `r.unwrapOr(0)`.
+fun unwrapOr<T, E>(r: &Result<T, E>, fallback: T) => T = r.unwrapOr(fallback)
 
 /// The success payload, or a panic naming the call. `T` must be `Copy`.
 fun unwrap<T, E>(r: &Result<T, E>) => T {
@@ -63,8 +72,11 @@ fun unwrap<T, E>(r: &Result<T, E>) => T {
     panic("Result.unwrap: value is Err")
 }
 
+/// Retired (#375): the camelCase `unwrapErr` is the name. Kept for one cycle.
+fun unwrap_err<T, E>(r: &Result<T, E>) => E = unwrapErr(r)
+
 /// The failure payload, or a panic naming the call. `E` must be `Copy`.
-fun unwrap_err<T, E>(r: &Result<T, E>) => E {
+fun unwrapErr<T, E>(r: &Result<T, E>) => E {
     if let Err(e) = r {
         return e
     }
@@ -84,8 +96,11 @@ fun expect<T, E>(r: move Result<T, E>, message: &str) => T {
     panic(message)
 }
 
+/// Retired (#375): the camelCase `expectErr` is the name. Kept for one cycle.
+fun expect_err<T, E>(r: &Result<T, E>, message: &str) => E = expectErr(r, message)
+
 /// The failure payload, or a panic carrying `message`. `E` must be `Copy`.
-fun expect_err<T, E>(r: &Result<T, E>, message: &str) => E {
+fun expectErr<T, E>(r: &Result<T, E>, message: &str) => E {
     if let Err(e) = r {
         return e
     }
@@ -100,17 +115,20 @@ fun map<T, U, E>(r: move Result<T, E>, f: closure fun(&T) => U) => Result<U, E> 
     Err(e) -> Result.Err(error = e)
 }
 
+/// Retired (#375): the camelCase `mapErr` is the name. Kept for one cycle.
+fun map_err<T, E, F>(r: move Result<T, E>, f: closure fun(&E) => F) => Result<T, F> = mapErr(r, f)
+
 /// Transform the failure payload through `f`. The result is taken with `move`,
 /// for the mirror-image reason: the success arm hands back the `T` it was given.
-fun map_err<T, E, F>(r: move Result<T, E>, f: closure fun(&E) => F) => Result<T, F> = when r {
+fun mapErr<T, E, F>(r: move Result<T, E>, f: closure fun(&E) => F) => Result<T, F> = when r {
     Ok(v) -> Result.Ok(value = v)
     Err(e) -> Result.Err(error = f(e))
 }
 
 // ---- methods ----
 //
-// The borrowing helpers, also callable on a value: `r.is_ok()`, `r.and_then(f)`,
-// `r.unwrap_or(0)`. The ones that take the result with `move` (`map`, `map_err`)
+// The borrowing helpers, also callable on a value: `r.isOk()`, `r.andThen(f)`,
+// `r.unwrapOr(0)`. The ones that take the result with `move` (`map`, `map_err`)
 // stay free functions: a method always borrows its receiver. The free `is_ok`,
 // `is_err` and `unwrap_or` stay as the module's public spelling; each one calls
 // its method.
@@ -125,21 +143,30 @@ fun map_err<T, E, F>(r: move Result<T, E>, f: closure fun(&E) => F) => Result<T,
 // setting, a parse with a plain default. Where the error matters, use `when`,
 // `?` or `map_err`.
 
+/// Retired (#375): the camelCase `isOk` is the name. Kept for one cycle.
+fun Result<T, E>.is_ok() => bool = self.isOk()
+
 /// Whether the result is a success.
-fun Result<T, E>.is_ok() => bool = when self {
+fun Result<T, E>.isOk() => bool = when self {
     Ok(_) -> true
     Err(_) -> false
 }
 
+/// Retired (#375): the camelCase `isErr` is the name. Kept for one cycle.
+fun Result<T, E>.is_err() => bool = self.isErr()
+
 /// Whether the result is a failure.
-fun Result<T, E>.is_err() => bool = when self {
+fun Result<T, E>.isErr() => bool = when self {
     Ok(_) -> false
     Err(_) -> true
 }
 
+/// Retired (#375): the camelCase `unwrapOr` is the name. Kept for one cycle.
+fun Result<T, E>.unwrap_or(fallback: T) => T = self.unwrapOr(fallback)
+
 /// The success payload, or `fallback`, for a `Copy` success payload. The `Err`
 /// payload is dropped: see the rule above the methods.
-fun Result<T, E>.unwrap_or(fallback: T) => T = when self {
+fun Result<T, E>.unwrapOr(fallback: T) => T = when self {
     Ok(v) -> v
     Err(_) -> fallback
 }
@@ -149,7 +176,7 @@ fun Result<T, E>.unwrap_or(fallback: T) => T = when self {
 /// unwinding and no destructors, as `process.exit` does. The `Err` payload is
 /// not read, so `E` needs no `Copy`. Use it for a usage error (a bad argument,
 /// a setting that does not parse); a failure the caller can handle belongs in a
-/// `when`, `?` or `map_err`. `str.parse_u64(args.get(2)).orExit("bad port")`.
+/// `when`, `?` or `map_err`. `str.parseU64(args.get(2)).orExit("bad port")`.
 fun Result<T, E>.orExit(message: &str) => T {
     if let Ok(v) = self {
         return v
@@ -158,17 +185,23 @@ fun Result<T, E>.orExit(message: &str) => T {
     panic(message)
 }
 
+/// Retired (#375): the camelCase `andThen` is the name. Kept for one cycle.
+fun Result<T, E>.and_then<U>(f: closure fun(&T) => Result<U, E>) => Result<U, E> = self.andThen(f)
+
 /// Chain a second fallible step: `f` returns a `Result` itself, which is what
 /// makes a sequence of fallible steps readable without nesting `if let`.
 /// `E` must be `Copy`, since the failure arm rebuilds `Err`.
-fun Result<T, E>.and_then<U>(f: closure fun(&T) => Result<U, E>) => Result<U, E> = when self {
+fun Result<T, E>.andThen<U>(f: closure fun(&T) => Result<U, E>) => Result<U, E> = when self {
     Ok(v) -> f(v)
     Err(e) -> Result.Err(error = e)
 }
 
+/// Retired (#375): the camelCase `orElse` is the name. Kept for one cycle.
+fun Result<T, E>.or_else<F>(f: closure fun(&E) => Result<T, F>) => Result<T, F> = self.orElse(f)
+
 /// The result, or `f(e)` when it failed. `T` must be `Copy`, since the success
 /// arm rebuilds `Ok`.
-fun Result<T, E>.or_else<F>(f: closure fun(&E) => Result<T, F>) => Result<T, F> = when self {
+fun Result<T, E>.orElse<F>(f: closure fun(&E) => Result<T, F>) => Result<T, F> = when self {
     Ok(v) -> Result.Ok(value = v)
     Err(e) -> f(e)
 }

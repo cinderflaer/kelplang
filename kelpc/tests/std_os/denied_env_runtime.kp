@@ -3,6 +3,6 @@ impl "std/os" caps(env = ["OS_TEST_OK"])
 // The grant names one variable, so a read of HOME is refused at run time,
 // before the lookup.
 fun main() {
-    val home = os.env_var("HOME")
-    print(home.is_some())
+    val home = os.envVar("HOME")
+    print(home.isSome())
 }

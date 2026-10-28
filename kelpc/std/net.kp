@@ -108,10 +108,13 @@ datac NetErr(
     val reason: String
 )
 
+/// Retired (#375): the camelCase `sendAll` is the name. Kept for one cycle.
+fun send_all(s: Socket, data: Bytes) => result.Result<int, NetErr> = sendAll(s, data)
+
 /// `send_all`, with a failed send (a reset, a closed peer) as an `Err` instead
 /// of a panic. The `int` is the count written, always the whole buffer on
 /// success.
-fun send_all(s: Socket, data: Bytes) => result.Result<int, NetErr> {
+fun sendAll(s: Socket, data: Bytes) => result.Result<int, NetErr> {
     var reason = String.empty()
     val rc = send_all_try_raw(s.fd, data, &mut reason)
     if rc < 0 {
@@ -131,8 +134,11 @@ fun recv(s: Socket, max: int) => result.Result<Bytes, NetErr> {
     return result.Result.Ok(value = b)
 }
 
+/// Retired (#375): the camelCase `recvInto` is the name. Kept for one cycle.
+fun recv_into(s: Socket, buf: mut Bytes, at: int) => result.Result<int, NetErr> = recvInto(s, buf, at)
+
 /// `recv_into`, with a failed read as an `Err`. `Ok(0)` is end of stream.
-fun recv_into(s: Socket, buf: mut Bytes, at: int) => result.Result<int, NetErr> {
+fun recvInto(s: Socket, buf: mut Bytes, at: int) => result.Result<int, NetErr> {
     var reason = String.empty()
     val n = recv_into_try_raw(s.fd, buf, at, &mut reason)
     if !reason.is_empty() {
@@ -156,6 +162,9 @@ fun recv_into(s: Socket, buf: mut Bytes, at: int) => result.Result<int, NetErr> 
 /// (including "address already in use").
 fun listen(port: u16) => Listener = Listener(fd = listen_raw(port))
 
+/// Retired (#375): the camelCase `listenOn` is the name. Kept for one cycle.
+fun listen_on(host: &str, port: u16) => Listener = listenOn(host, port)
+
 /// As `listen`, bound to one host: `"127.0.0.1"` for loopback only, `"0.0.0.0"`
 /// (or `"*"`) for every interface, or a name that resolves to an IPv4 address.
 /// The check is on `host:port` like `connect`'s, so a grant of
@@ -164,10 +173,10 @@ fun listen(port: u16) => Listener = Listener(fd = listen_raw(port))
 ///
 /// Panics: if `host:port` is outside the granted capability, the host does not
 /// resolve, or the bind fails (including "address already in use").
-fun listen_on(host: &str, port: u16) => Listener = Listener(fd = listen_on_raw(host, port))
+fun listenOn(host: &str, port: u16) => Listener = Listener(fd = listen_on_raw(host, port))
 
 /// `accept`, with a failed accept as an `Err` instead of a panic. After
-/// `Listener.set_timeout(ms)` a call that sees no peer for that long is the
+/// `Listener.setTimeout(ms)` a call that sees no peer for that long is the
 /// `Err` whose reason is `net.accept: timed out`, which is how a server loop
 /// stops waiting without a second thread. Several threads may call this on one
 /// listener: the kernel hands each connection to exactly one of them.
@@ -180,13 +189,16 @@ fun accept(l: Listener) => result.Result<Socket, NetErr> {
     return result.Result.Ok(value = Socket(fd = fd))
 }
 
+/// Retired (#375): the camelCase `monoMs` is the name. Kept for one cycle.
+fun mono_ms() => i64 = monoMs()
+
 /// Milliseconds on the monotonic clock, from an arbitrary start: only the
 /// difference of two readings means anything. It exists for connection
 /// deadlines (a server cutting off a client that trickles its request), and it
 /// sits in `net` rather than `time` so that a module holding `net` can keep a
 /// deadline without also being handed the `time` capability; it reads nothing
 /// but elapsed time.
-extern fun mono_ms() => i64 = "mono_ms_raw"
+extern fun monoMs() => i64 = "mono_ms_raw"
 
 /// Panics: if the descriptor cannot be closed.
 fun close(s: Socket) {
@@ -217,13 +229,19 @@ fun try_shutdown_write(s: Socket) => bool = shutdown_write_try_raw(s.fd)
 /// Panics: if the send fails or the peer has closed.
 fun send(s: Socket, data: Bytes) => int = send_raw(s.fd, data)
 
+/// Retired (#375): the camelCase `sendText` is the name. Kept for one cycle.
+fun send_text(s: Socket, text: &str) { sendText(s, text) }
+
 /// The `&str` form, for a literal or a view. Allocates one `Bytes` copy of the
 /// text, because `send` takes bytes and v1 has no byte view (open item 44).
 ///
 /// Panics: as `send`.
-fun send_text(s: Socket, text: &str) {
-    val _sent = result.expect(send_all(s, Bytes.from_str(text)), "net.send_text: the send failed")
+fun sendText(s: Socket, text: &str) {
+    val _sent = result.expect(sendAll(s, Bytes.from_str(text)), "net.send_text: the send failed")
 }
+
+/// Retired (#375): the camelCase `waitReadable` is the name. Kept for one cycle.
+fun Socket.wait_readable(timeout_ms: u64) => bool = self.waitReadable(timeout_ms)
 
 /// Waits up to `timeout_ms` for the socket to become readable, then returns
 /// whether it did. This is `poll(2)`, the same primitive `io.File` exposes, and
@@ -231,33 +249,42 @@ fun send_text(s: Socket, text: &str) {
 /// `INT_MAX` milliseconds means "forever".
 ///
 /// Panics: if `poll` fails.
-fun Socket.wait_readable(timeout_ms: u64) => bool {
+fun Socket.waitReadable(timeout_ms: u64) => bool {
     val f = io.File(fd = fd)
-    return f.wait_readable(timeout_ms)
+    return f.waitReadable(timeout_ms)
 }
+
+/// Retired (#375): the camelCase `waitWritable` is the name. Kept for one cycle.
+fun Socket.wait_writable(timeout_ms: u64) => bool = self.waitWritable(timeout_ms)
 
 /// As `wait_readable`, for writability.
 ///
 /// Panics: if `poll` fails.
-fun Socket.wait_writable(timeout_ms: u64) => bool {
+fun Socket.waitWritable(timeout_ms: u64) => bool {
     val f = io.File(fd = fd)
-    return f.wait_writable(timeout_ms)
+    return f.waitWritable(timeout_ms)
 }
+
+/// Retired (#375): the camelCase `setTimeout` is the name. Kept for one cycle.
+fun mut Socket.set_timeout(ms: u64) { self.setTimeout(ms) }
 
 /// Sets the receive and send timeouts, so a blocking `recv` on a silent peer
 /// gives up instead of hanging forever.
 ///
 /// Panics: if the socket options cannot be set.
-fun mut Socket.set_timeout(ms: u64) {
+fun mut Socket.setTimeout(ms: u64) {
     set_timeout_raw(fd, ms)
 }
+
+/// Retired (#375): the camelCase `setTimeout` is the name. Kept for one cycle.
+fun mut Listener.set_timeout(ms: u64) { self.setTimeout(ms) }
 
 /// Sets the receive timeout on a listening socket, which `accept` honours: a
 /// `accept` that waits this long with no peer returns a timeout `Err`. `0`
 /// is "wait forever", as on a connected socket.
 ///
 /// Panics: if the socket option cannot be set.
-fun mut Listener.set_timeout(ms: u64) {
+fun mut Listener.setTimeout(ms: u64) {
     set_timeout_raw(fd, ms)
 }
 
@@ -267,10 +294,13 @@ fun mut Listener.set_timeout(ms: u64) {
 /// Panics: if the socket has no local address.
 fun Listener.port() => u16 = local_port_raw(fd)
 
+/// Retired (#375): the camelCase `peerAddr` is the name. Kept for one cycle.
+fun Socket.peer_addr() => String = self.peerAddr()
+
 /// The peer's address as `ip:port`, from `getpeername`.
 ///
 /// Panics: if the socket has no peer.
-fun Socket.peer_addr() => String = peer_addr_raw(fd)
+fun Socket.peerAddr() => String = peer_addr_raw(fd)
 
 /// The addresses `host` resolves to, as strings (`getaddrinfo`, formatted with
 /// `inet_ntop`), not a `getaddrinfo` blob, and deduplicated. An address
@@ -288,22 +318,25 @@ fun resolve(host: &str) => List<String> {
 fun try_connect(host: &str, port: u16) => result.Result<Socket, ConnectErr> = connect(host, port)
 
 /// Retired (issue #264): see `connect`.
-fun try_send_all(s: Socket, data: Bytes) => result.Result<int, NetErr> = send_all(s, data)
+fun try_send_all(s: Socket, data: Bytes) => result.Result<int, NetErr> = sendAll(s, data)
 
 /// Retired (issue #264): see `connect`.
 fun try_recv(s: Socket, max: int) => result.Result<Bytes, NetErr> = recv(s, max)
 
 /// Retired (issue #264): see `connect`.
-fun try_recv_into(s: Socket, buf: mut Bytes, at: int) => result.Result<int, NetErr> = recv_into(s, buf, at)
+fun try_recv_into(s: Socket, buf: mut Bytes, at: int) => result.Result<int, NetErr> = recvInto(s, buf, at)
 
 /// Retired (issue #264): see `connect`.
 fun try_accept(l: Listener) => result.Result<Socket, NetErr> = accept(l)
+
+/// Retired (#375): the camelCase `shutdownWrite` is the name. Kept for one cycle.
+fun shutdown_write(s: Socket) => result.Result<unit, NetErr> = shutdownWrite(s)
 
 /// Shuts down the write side of the socket, so the peer reads end of stream. A
 /// socket that is no longer connected is the `Err`, with the reason, rather
 /// than a panic; a caller that does not know the state of the connection matches
 /// on it.
-fun shutdown_write(s: Socket) => result.Result<unit, NetErr> {
+fun shutdownWrite(s: Socket) => result.Result<unit, NetErr> {
     if shutdown_write_try_raw(s.fd) {
         return result.Result.Ok(value = ())
     }

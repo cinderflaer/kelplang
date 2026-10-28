@@ -49,9 +49,12 @@ fun is_empty(s: &str) => bool = len(s) == 0
 /// Panics: if `from` is past the end.
 extern fun substring(s: &str, from: int) => &str = "slice_from_raw"
 
+/// Retired (#375): the camelCase `charCount` is the name. Kept for one cycle.
+fun char_count(s: &str) => int = charCount(s)
+
 /// How many characters a `&str` has: bytes that do not continue a UTF-8
 /// sequence.
-fun char_count(s: &str) => int {
+fun charCount(s: &str) => int {
     val sv = s.view()
     val n = sv.len()
     var count: int = 0
@@ -97,17 +100,20 @@ fun mut ByteIter<S>.next() => option.Option<u8> {
 /// The bytes of `s`, in order, for `for b in str.bytes(s) { ... }`.
 ///
 /// Each item is one `u8`, so a multi-byte character yields its UTF-8 bytes
-/// one at a time and the count is `len(s)`, not `char_count(s)`. The empty
+/// one at a time and the count is `len(s)`, not `charCount(s)`. The empty
 /// string yields nothing. The walk copies `s` once, when it starts.
 pub fun bytes(s: &str) => ByteIter<String> {
     return ByteIter(text = String.from_str(s), at = 0)
 }
 
+/// Retired (#375): the camelCase `indexOf` is the name. Kept for one cycle.
+fun index_of(s: &str, needle: &str) => option.Option<int> = indexOf(s, needle)
+
 /// The index of `needle` in `s`, or `None`. The old `Match(ok, at)` datac is
 /// gone: a failure that carries no reason is an `Option`, which is what makes
 /// `if let Some(at) = ...` and `?` usable at the call site instead of an `ok`
 /// flag (MK5-S6-M1).
-fun index_of(s: &str, needle: &str) => option.Option<int> {
+fun indexOf(s: &str, needle: &str) => option.Option<int> {
     // Both views are taken once, here. `starts_with_at` takes a `str` and so
     // re-measures the whole haystack (a `strlen`) at every position, which made
     // a search O(n) per byte.
@@ -131,9 +137,12 @@ fun index_of(s: &str, needle: &str) => option.Option<int> {
     return option.Option.None
 }
 
+/// Retired (#375): the camelCase `startsWithAt` is the name. Kept for one cycle.
+fun starts_with_at(s: &str, needle: &str, at: int) => bool = startsWithAt(s, needle, at)
+
 /// Whether `needle` occurs in `s` starting exactly at byte `at`. Private to
 /// the module in practice (nothing outside needs the offset form).
-fun starts_with_at(s: &str, needle: &str, at: int) => bool {
+fun startsWithAt(s: &str, needle: &str, at: int) => bool {
     val sv = s.view()
     val nv = needle.view()
     val ln = nv.len()
@@ -147,27 +156,33 @@ fun starts_with_at(s: &str, needle: &str, at: int) => bool {
     return true
 }
 
+/// Retired (#375): the camelCase `startsWith` is the name. Kept for one cycle.
+fun starts_with(s: &str, prefix: &str) => bool = startsWith(s, prefix)
+
 /// Whether `s` begins with `prefix`.
-fun starts_with(s: &str, prefix: &str) => bool {
+fun startsWith(s: &str, prefix: &str) => bool {
     if len(prefix) > len(s) {
         return false
     }
-    return starts_with_at(s, prefix, 0)
+    return startsWithAt(s, prefix, 0)
 }
 
+/// Retired (#375): the camelCase `endsWith` is the name. Kept for one cycle.
+fun ends_with(s: &str, suffix: &str) => bool = endsWith(s, suffix)
+
 /// Whether `s` ends with `suffix`.
-fun ends_with(s: &str, suffix: &str) => bool {
+fun endsWith(s: &str, suffix: &str) => bool {
     val ls = len(s)
     val lf = len(suffix)
     if lf > ls {
         return false
     }
-    return starts_with_at(s, suffix, ls - lf)
+    return startsWithAt(s, suffix, ls - lf)
 }
 
 /// Whether `needle` occurs in `s`.
 fun contains(s: &str, needle: &str) => bool {
-    return option.is_some(o = index_of(s, needle))
+    return option.isSome(o = indexOf(s, needle))
 }
 
 /// Text equality, which `==` deliberately does not provide for `str` (it
@@ -205,8 +220,14 @@ fun less(a: &str, b: &str) => bool {
     return na < nb
 }
 
+/// Retired (#375): the camelCase `isSpace` is the name. Kept for one cycle.
+fun is_space(c: u8) => bool = isSpace(c)
+
 /// Whether the byte `c` is a space, tab, newline or carriage return.
-fun is_space(c: u8) => bool = c == 32 || c == 9 || c == 10 || c == 13
+fun isSpace(c: u8) => bool = c == 32 || c == 9 || c == 10 || c == 13
+
+/// Retired (#375): the camelCase `isDigit` is the name. Kept for one cycle.
+fun is_digit(c: u8) => bool = isDigit(c)
 
 /// The decimal-digit predicate that pairs with `is_space`.
 ///
@@ -218,30 +239,36 @@ fun is_space(c: u8) => bool = c == 32 || c == 9 || c == 10 || c == 13
 /// test). One implementation is one place to be right about the endpoints, and
 /// `c >= '0' && c <= '9'` is the spelling that can be read. ASCII only, like
 /// `to_upper` and `is_space`.
-fun is_digit(c: u8) => bool = c >= '0' && c <= '9'
+fun isDigit(c: u8) => bool = c >= '0' && c <= '9'
+
+/// Retired (#375): the camelCase `trimStart` is the name. Kept for one cycle.
+fun trim_start(s: &str) => &str = trimStart(s)
 
 /// Leading whitespace is skipped by advancing the pointer, so this is a view
 /// of `s` rather than a copy.
-fun trim_start(s: &str) => &str {
+fun trimStart(s: &str) => &str {
     val sv = s.view()
     val n = sv.len()
     var i: int = 0
-    while i < n && is_space(sv.get(i)) {
+    while i < n && isSpace(sv.get(i)) {
         i = i + 1
     }
     return slice_from_raw(s, i)
 }
+
+/// Retired (#375): the camelCase `trimEnd` is the name. Kept for one cycle.
+fun trim_end(s: &str) => String = trimEnd(s)
 
 /// Trailing whitespace is *truncation*, which a `&str` (a NUL-terminated C
 /// string) cannot represent, there is nowhere to put the terminator. So the
 /// end-trimming functions return an owned `String` and allocate, while the
 /// start-trimming ones stay views. This is the one place M6.3 diverges from
 /// the plan's `str` sketch.
-fun trim_end(s: &str) => String {
+fun trimEnd(s: &str) => String {
     val sv = s.view()
     val n = sv.len()
     var end: int = n
-    while end > 0 && is_space(sv.get(end - 1)) {
+    while end > 0 && isSpace(sv.get(end - 1)) {
         end = end - 1
     }
     return prefix(s, end)
@@ -263,7 +290,7 @@ fun prefix(s: &str, n: int) => String {
 }
 
 /// `s` without leading and trailing whitespace.
-fun trim(s: &str) => String = trim_end(trim_start(s))
+fun trim(s: &str) => String = trimEnd(trimStart(s))
 
 /// The byte width of the well-formed UTF-8 sequence that starts at byte `i` of
 /// `sv`, from 1 to 4. Zero when the bytes there are not one: a stray
@@ -415,16 +442,22 @@ fun map_case(s: &str, upper: bool) => String {
     return String.from_bytes(out)
 }
 
+/// Retired (#375): the camelCase `toUpper` is the name. Kept for one cycle.
+fun to_upper(s: &str) => String = toUpper(s)
+
 /// `s` with every letter that has a simple uppercase mapping in Unicode
 /// uppercased: Latin, Greek, Cyrillic and the rest of the table in
 /// `kelpc/std/str.kp`'s generated block. Only simple mappings are applied, so
 /// U+00DF (sharp s) stays as it is, since its full uppercase is two letters.
-fun to_upper(s: &str) => String = map_case(s, true)
+fun toUpper(s: &str) => String = map_case(s, true)
+
+/// Retired (#375): the camelCase `toLower` is the name. Kept for one cycle.
+fun to_lower(s: &str) => String = toLower(s)
 
 /// `s` with every letter that has a simple lowercase mapping in Unicode
 /// lowercased, by the same table as `to_upper`. U+0130 (dotted capital I)
 /// lowercases to U+0069 under the simple mapping, not to two codepoints.
-fun to_lower(s: &str) => String = map_case(s, false)
+fun toLower(s: &str) => String = map_case(s, false)
 
 /// Whether byte `at` of `sv` can begin a codepoint: true at the end of the
 /// string, and wherever the byte is not a UTF-8 continuation byte (128 to 191).
@@ -459,7 +492,7 @@ fun slice(s: &str, from: int, to: int) => String {
         val msg = bad_boundary_message(to)
         panic(msg)
     }
-    return copy_range(s, from, to)
+    return copyRange(s, from, to)
 }
 
 /// The panic text for a byte offset inside a codepoint.
@@ -523,11 +556,14 @@ fun repeat(s: &str, n: int) => String {
     return String.from_bytes(out)
 }
 
+/// Retired (#375): the camelCase `copyRange` is the name. Kept for one cycle.
+fun copy_range(s: &str, from: int, to: int) => String = copyRange(s, from, to)
+
 /// Copies bytes [from, to) of `s` into a fresh owned `String`. A range that
 /// is neither a prefix nor a suffix cannot be a view (a `&str` is a
 /// NUL-terminated C string), so it is copied, the same reason `prefix`
 /// allocates.
-fun copy_range(s: &str, from: int, to: int) => String {
+fun copyRange(s: &str, from: int, to: int) => String {
     val sv = s.view()
     var out = mem.alloc(to - from)
     var i: int = 0
@@ -586,10 +622,13 @@ fun view_starts_with_at(sv: View, nv: View, at: int) => bool {
     return true
 }
 
+/// Retired (#375): the camelCase `copyInto` is the name. Kept for one cycle.
+fun copy_into(dst: mut Bytes, at: int, src: &str) => int = copyInto(dst, at, src)
+
 /// Copies `src` into `dst` at byte offset `at` and returns the offset just
 /// past the end. The pieces of `join` cannot be written with one `String`
 /// operation, so this is the byte-level form it is built from.
-fun copy_into(dst: mut Bytes, at: int, src: &str) => int {
+fun copyInto(dst: mut Bytes, at: int, src: &str) => int {
     val sv = src.view()
     val n = sv.len()
     var i: int = 0
@@ -724,40 +763,52 @@ extern fun parse_i64_raw(s: &str, out: mut i64) => bool
 extern fun parse_u64_raw(s: &str, out: mut u64) => bool
 extern fun parse_f64_raw(s: &str, out: mut f64) => bool
 
+/// Retired (#375): the camelCase `parseI64` is the name. Kept for one cycle.
+fun parse_i64(s: &str) => result.Result<i64, ParseErr> = parseI64(s)
+
 /// Parses `s` as a signed 64-bit integer.
-fun parse_i64(s: &str) => result.Result<i64, ParseErr> {
+fun parseI64(s: &str) => result.Result<i64, ParseErr> {
     var v: i64 = 0
     val ok = parse_i64_raw(s, out = v)
     if !ok {
-        return result.Result.Err(error = parse_err(s))
+        return result.Result.Err(error = parseErr(s))
     }
     return result.Result.Ok(value = v)
 }
 
+/// Retired (#375): the camelCase `parseU64` is the name. Kept for one cycle.
+fun parse_u64(s: &str) => result.Result<u64, ParseErr> = parseU64(s)
+
 /// Parses `s` as an unsigned 64-bit integer.
-fun parse_u64(s: &str) => result.Result<u64, ParseErr> {
+fun parseU64(s: &str) => result.Result<u64, ParseErr> {
     var v: u64 = 0
     val ok = parse_u64_raw(s, out = v)
     if !ok {
-        return result.Result.Err(error = parse_err(s))
+        return result.Result.Err(error = parseErr(s))
     }
     return result.Result.Ok(value = v)
 }
+
+/// Retired (#375): the camelCase `parseF64` is the name. Kept for one cycle.
+fun parse_f64(s: &str) => result.Result<f64, ParseErr> = parseF64(s)
 
 /// Accepts what `strtod` accepts, minus leading whitespace: decimal and
 /// exponent forms, and `inf`/`nan`.
-fun parse_f64(s: &str) => result.Result<f64, ParseErr> {
+fun parseF64(s: &str) => result.Result<f64, ParseErr> {
     var v: f64 = 0.0
     val ok = parse_f64_raw(s, out = v)
     if !ok {
-        return result.Result.Err(error = parse_err(s))
+        return result.Result.Err(error = parseErr(s))
     }
     return result.Result.Ok(value = v)
 }
 
+/// Retired (#375): the camelCase `parseErr` is the name. Kept for one cycle.
+fun parse_err(s: &str) => ParseErr = parseErr(s)
+
 /// The one distinction the primitives leave visible: an empty string is not a
 /// malformed one.
-fun parse_err(s: &str) => ParseErr {
+fun parseErr(s: &str) => ParseErr {
     if len(s) == 0 {
         return ParseErr.Empty
     }
@@ -789,10 +840,13 @@ fun replace(s: &str, from: &str, to: &str) => String {
     return out
 }
 
+/// Retired (#375): the camelCase `byteIndex` is the name. Kept for one cycle.
+fun byte_index(s: &str, i: int) => int = byteIndex(s, i)
+
 /// The byte offset of character `i`, or `len(s)` when there is no such
 /// character. A byte that does not continue a UTF-8 sequence starts a
 /// character (the same rule `char_count` uses).
-fun byte_index(s: &str, i: int) => int {
+fun byteIndex(s: &str, i: int) => int {
     val sv = s.view()
     val n = sv.len()
     var chars: int = 0
@@ -810,10 +864,13 @@ fun byte_index(s: &str, i: int) => int {
     return n
 }
 
+/// Retired (#375): the camelCase `decodeAt` is the name. Kept for one cycle.
+fun decode_at(s: &str, at: int) => u32 = decodeAt(s, at)
+
 /// The codepoint starting at byte `at`, decoded with arithmetic only, v1 has
 /// no bitwise operators, so the UTF-8 lead-byte masks are subtractions.
 /// A truncated sequence returns 0, the same value past-the-end returns.
-fun decode_at(s: &str, at: int) => u32 {
+fun decodeAt(s: &str, at: int) => u32 {
     val sv = s.view()
     val n = sv.len()
     val b0 = sv.get(at).to_u32()
@@ -843,11 +900,14 @@ fun decode_at(s: &str, at: int) => u32 {
     return cp
 }
 
+/// Retired (#375): the camelCase `charAt` is the name. Kept for one cycle.
+fun char_at(s: &str, i: int) => u32 = charAt(s, i)
+
 /// The codepoint at character index `i`, or 0 when `i` is past the end.
-fun char_at(s: &str, i: int) => u32 {
-    val at = byte_index(s, i)
+fun charAt(s: &str, i: int) => u32 {
+    val at = byteIndex(s, i)
     if at >= len(s) {
         return 0
     }
-    return decode_at(s, at)
+    return decodeAt(s, at)
 }

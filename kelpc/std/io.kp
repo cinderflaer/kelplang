@@ -52,10 +52,13 @@ datac IoErr(
     val message: String
 )
 
-/// The text of a POSIX `errno`: `errno_text(13)` is `"Permission denied"`. Any
+/// Retired (#375): the camelCase `errnoText` is the name. Kept for one cycle.
+fun errno_text(errno: i32) => String = errnoText(errno)
+
+/// The text of a POSIX `errno`: `errnoText(13)` is `"Permission denied"`. Any
 /// number is accepted; an unknown one gives the libc fallback text, never a
 /// panic.
-extern fun errno_text(errno: i32) => String = "errno_text_raw"
+extern fun errnoText(errno: i32) => String = "errno_text_raw"
 
 /// A descriptor. Not `Copy` (no `datac` is), so handing one to a function is a
 /// borrow and there is never a silent second close.
@@ -74,17 +77,23 @@ datac File(
     val fd: i32
 )
 
+/// Retired (#375): the camelCase `isOpen` is the name. Kept for one cycle.
+fun File.is_open() => bool = self.isOpen()
+
 /// Asks the kernel whether the descriptor is still open, `fcntl(F_GETFD)`, so
 /// it is true for a `File` nobody has closed and false after `close`, without
 /// the type needing to carry a "closed" flag (`close` therefore takes only a
 /// shared borrow). The usual descriptor caveat applies: if the number has been
 /// reused by a later `open`, this cannot tell you that.
-fun File.is_open() => bool = is_open_raw(fd)
+fun File.isOpen() => bool = is_open_raw(fd)
 
 /// One `read(2)`: whatever is available, up to `max` bytes. An empty `Bytes`
 /// means end of file, there is no `Option` in v1 to say it another way.
 /// Panics: if the read fails.
 fun File.read(max: int) => Bytes = read_raw(fd, max)
+
+/// Retired (#375): the camelCase `readInto` is the name. Kept for one cycle.
+fun File.read_into(buf: mut Bytes, at: int) => int = self.readInto(buf, at)
 
 /// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 at
 /// end of file). The buffer is written in place and its length is not changed,
@@ -92,14 +101,17 @@ fun File.read(max: int) => Bytes = read_raw(fd, max)
 /// `Content-Length` case S4 needs. For an unknown length use `read_all`.
 ///
 /// Panics: if the read fails.
-fun File.read_into(buf: mut Bytes, at: int) => int = read_into_raw(fd, buf, at)
+fun File.readInto(buf: mut Bytes, at: int) => int = read_into_raw(fd, buf, at)
+
+/// Retired (#375): the camelCase `readAll` is the name. Kept for one cycle.
+fun File.read_all() => Bytes = self.readAll()
 
 /// Everything until end of file, growing a buffer as it goes. The unbuffered
 /// `read` loop is one syscall per chunk rather than one per byte, which is
 /// only possible because `Bytes` grows in place (S1).
 ///
 /// Panics: if the read fails.
-fun File.read_all() => Bytes {
+fun File.readAll() => Bytes {
     var out = Bytes.empty()
     var going = true
     while going {
@@ -120,14 +132,20 @@ fun File.read_all() => Bytes {
 /// Panics: if the write fails.
 fun File.write(data: Bytes) => int = write_bytes_raw(fd, data)
 
+/// Retired (#375): the camelCase `writeText` is the name. Kept for one cycle.
+fun File.write_text(text: String) => int = self.writeText(text)
+
 /// Panics: if the write fails.
-fun File.write_text(text: String) => int = write_text_raw(fd, text)
+fun File.writeText(text: String) => int = write_text_raw(fd, text)
+
+/// Retired (#375): the camelCase `writeStr` is the name. Kept for one cycle.
+fun File.write_str(text: &str) => int = self.writeStr(text)
 
 /// The `&str` form, for a borrowed view. A `str` is NUL-terminated, so this
 /// one stops at an embedded NUL; `write_text` on a `String` does not.
 ///
 /// Panics: if the write fails.
-fun File.write_str(text: &str) => int = write_str_raw(fd, text)
+fun File.writeStr(text: &str) => int = write_str_raw(fd, text)
 
 /// There is no userspace buffer behind a `File`, every write above is already
 /// a syscall, so this is a no-op that exists to keep the stream contract
@@ -141,13 +159,19 @@ fun File.close() {
     close_raw(fd)
 }
 
+/// Retired (#375): the camelCase `setNonblocking` is the name. Kept for one cycle.
+fun mut File.set_nonblocking(on: bool) { self.setNonblocking(on) }
+
 /// Whether reads block. `poll` readiness (`wait_readable`/`wait_writable`) is
 /// what an event loop answers with, and it works on a blocking descriptor too.
 ///
 /// Panics: if `fcntl` fails.
-fun mut File.set_nonblocking(on: bool) {
+fun mut File.setNonblocking(on: bool) {
     set_nonblocking_raw(fd, on)
 }
+
+/// Retired (#375): the camelCase `waitReadable` is the name. Kept for one cycle.
+fun File.wait_readable(timeout_ms: u64) => bool = self.waitReadable(timeout_ms)
 
 /// Waits up to `timeout_ms` for the descriptor to become readable. A timeout
 /// of `u64`'s maximum means "forever", anything above `INT_MAX` milliseconds
@@ -155,12 +179,15 @@ fun mut File.set_nonblocking(on: bool) {
 /// practical answer. False means the timeout expired.
 ///
 /// Panics: if `poll` fails.
-fun File.wait_readable(timeout_ms: u64) => bool = wait_readable_raw(fd, timeout_ms)
+fun File.waitReadable(timeout_ms: u64) => bool = wait_readable_raw(fd, timeout_ms)
+
+/// Retired (#375): the camelCase `waitWritable` is the name. Kept for one cycle.
+fun File.wait_writable(timeout_ms: u64) => bool = self.waitWritable(timeout_ms)
 
 /// As `wait_readable`, for writability.
 ///
 /// Panics: if `poll` fails.
-fun File.wait_writable(timeout_ms: u64) => bool = wait_writable_raw(fd, timeout_ms)
+fun File.waitWritable(timeout_ms: u64) => bool = wait_writable_raw(fd, timeout_ms)
 
 /// The three standard descriptors. They are ordinary `File`s, so everything
 /// above applies to them, and they are never closed by the runtime.
@@ -173,17 +200,17 @@ fun stderr() => File = File(fd = 2)
 // One owned line of text, or `None` at end of file. The `Line(ok, text)`
 // datac this module used to return is gone (MK5-S6-M1): end of file carries
 // no reason, so the line readers return an `Option` and the caller writes
-// `if let Some(line) = io.read_line()`. `BufReader.read_line_into` remains the
+// `if let Some(line) = io.readLine()`. `BufReader.readLineInto` remains the
 // form that reuses one buffer.
 
 /// An owned read buffer over one `File`: the "no generics" answer to buffered
 /// input (open item 49). Unbuffered `read_line` over a pipe is one syscall per
-/// byte, so every line reader holds one of these; `io.read_line` and
-/// `io.read_lines` are the conveniences that hide it.
+/// byte, so every line reader holds one of these; `io.readLine` and
+/// `io.readLines` are the conveniences that hide it.
 ///
 /// `buf` is the chunk and must not be empty: `read_into` reports 0 for a full
 /// buffer, which the reader reads as end of file. Construct it with
-/// `io.buf_reader` rather than by hand.
+/// `io.bufReader` rather than by hand.
 datac BufReader(
     /// The descriptor the buffer reads from.
     val file: File,
@@ -195,24 +222,30 @@ datac BufReader(
     var end: int
 )
 
+/// Retired (#375): the camelCase `bufReader` is the name. Kept for one cycle.
+fun buf_reader(f: File) => BufReader = bufReader(f)
+
 /// Wraps a `File`. The chunk is 8 KiB, one page pair, and large enough that
 /// a line reader is not syscall-bound. The `File` is rebuilt around the same
 /// descriptor because a `datac` is never `Copy` (v1 has no `Copy` user types),
 /// so a handle has to be re-made rather than copied; two `File`s over one
 /// descriptor are the same stream, and only one of them should be closed.
-fun buf_reader(f: File) => BufReader = BufReader(
+fun bufReader(f: File) => BufReader = BufReader(
     file = File(fd = f.fd),
     buf = mem.alloc(8192),
     start = 0,
     end = 0,
 )
 
+/// Retired (#375): the camelCase `readLineInto` is the name. Kept for one cycle.
+fun mut BufReader.read_line_into(out: mut String) => bool = self.readLineInto(out)
+
 /// Reads one line into `out`, replacing whatever it held, and returns false
 /// only at end of file. A final line with no trailing newline is still a line.
 /// The newline itself is consumed but not stored.
 ///
 /// Panics: if the read fails.
-fun mut BufReader.read_line_into(out: mut String) => bool {
+fun mut BufReader.readLineInto(out: mut String) => bool {
     out.clear()
     var got = false
     var going = true
@@ -240,26 +273,32 @@ fun mut BufReader.read_line_into(out: mut String) => bool {
     return got
 }
 
+/// Retired (#375): the camelCase `readLine` is the name. Kept for one cycle.
+fun mut BufReader.read_line() => option.Option<String> = self.readLine()
+
 /// As `read_line_into`, wrapped in an owned `String`, `None` at end of file,
 /// and no allocation in that case. This allocates one `String` per line,
 /// because `read_line_into` needs a buffer it can overwrite and the returned
 /// line has to own its text.
 ///
 /// Panics: if the read fails.
-fun mut BufReader.read_line() => option.Option<String> {
+fun mut BufReader.readLine() => option.Option<String> {
     var text = String.empty()
-    val got = self.read_line_into(text)
+    val got = self.readLineInto(text)
     if !got {
         return option.Option.None
     }
     return option.Option.Some(value = text)
 }
 
+/// Retired (#375): the camelCase `readAll` is the name. Kept for one cycle.
+fun mut BufReader.read_all() => Bytes = self.readAll()
+
 /// Everything until end of file: whatever the line buffer already holds,
 /// then the rest of the descriptor.
 ///
 /// Panics: if the read fails.
-fun mut BufReader.read_all() => Bytes {
+fun mut BufReader.readAll() => Bytes {
     var out = Bytes.empty()
     if start < end {
         var buffered = Bytes.empty()
@@ -282,20 +321,26 @@ fun mut BufReader.read_all() => Bytes {
     return out
 }
 
+/// Retired (#375): the camelCase `readLine` is the name. Kept for one cycle.
+fun read_line() => option.Option<String> = readLine()
+
 /// One line from stdin, `None` at end of file.
 ///
 /// Panics: if the read fails.
-fun read_line() => option.Option<String> = stdin_reader.read_line()
+fun readLine() => option.Option<String> = stdin_reader.readLine()
+
+/// Retired (#375): the camelCase `readLines` is the name. Kept for one cycle.
+fun read_lines() => List<String> = readLines()
 
 /// Every line from stdin, to end of file.
 ///
 /// Panics: if the read fails.
-fun read_lines() => List<String> {
+fun readLines() => List<String> {
     var out: List<String> = List.empty()
     var text = String.empty()
     var going = true
     while going {
-        if stdin_reader.read_line_into(text) {
+        if stdin_reader.readLineInto(text) {
             out.push(text.clone())
         } else {
             going = false
@@ -304,11 +349,14 @@ fun read_lines() => List<String> {
     return out
 }
 
+/// Retired (#375): the camelCase `readAll` is the name. Kept for one cycle.
+fun read_all() => Bytes = readAll()
+
 /// Everything on stdin, to end of file. This reads the descriptor directly, so
 /// it does not share `stdin_reader`'s buffer, do not mix it with `read_line`.
 ///
 /// Panics: if the read fails.
-fun read_all() => Bytes = File(fd = 0).read_all()
+fun readAll() => Bytes = File(fd = 0).readAll()
 
 // ----- output -----
 //
@@ -322,20 +370,26 @@ fun print(s: &str) {
     print(s)
 }
 
+/// Retired (#375): the camelCase `printBare` is the name. Kept for one cycle.
+fun print_bare(s: &str) { printBare(s) }
+
 /// Writes `s` to standard output with no newline.
-fun print_bare(s: &str) {
+fun printBare(s: &str) {
     print!(s)
 }
 
 /// Writes `s` and a newline to standard error.
 fun eprint(s: &str) {
     val f = File(fd = 2)
-    f.write_str(s)
-    f.write_str("\n")
+    f.writeStr(s)
+    f.writeStr("\n")
 }
 
+/// Retired (#375): the camelCase `eprintBare` is the name. Kept for one cycle.
+fun eprint_bare(s: &str) { eprintBare(s) }
+
 /// Writes `s` to standard error with no newline.
-fun eprint_bare(s: &str) {
+fun eprintBare(s: &str) {
     val f = File(fd = 2)
-    f.write_str(s)
+    f.writeStr(s)
 }

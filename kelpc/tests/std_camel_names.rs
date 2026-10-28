@@ -52,12 +52,12 @@ fn stderr(out: &Output) -> String {
 
 const CAMEL: &str = "impl \"std/str\"\n\nfun main() {\n    \
      print(str.charCount(\"h\u{e9}llo\"))\n    \
-     print(str.isEmpty(\"\"))\n    \
+     print(str.startsWith(\"abc\", \"a\"))\n    \
      print(str.indexOf(\"abc\", \"b\").isSome())\n}\n";
 
 const SNAKE: &str = "impl \"std/str\"\n\nfun main() {\n    \
      print(str.char_count(\"h\u{e9}llo\"))\n    \
-     print(str.is_empty(\"\"))\n    \
+     print(str.starts_with(\"abc\", \"a\"))\n    \
      print(str.index_of(\"abc\", \"b\").is_some())\n}\n";
 
 #[test]
@@ -83,7 +83,7 @@ fn the_snake_names_build_for_one_cycle_and_each_prints_a_finding() {
     assert!(result.status.success(), "{}", stderr(&result));
     let text = stderr(&result);
     assert_eq!(text.matches("outdated: ").count(), 4, "{text}");
-    for name in ["`.char_count(`", "`.is_empty(`", "`.index_of(`", "`.is_some(`"] {
+    for name in ["`.char_count(`", "`.starts_with(`", "`.index_of(`", "`.is_some(`"] {
         assert!(text.contains(name), "no finding for {name}:\n{text}");
     }
     for line in text.lines().filter(|l| l.starts_with("outdated: ")) {

@@ -98,8 +98,8 @@ fun main() {
         }
         print(i)
     }
-    print(result.is_ok(r = high()))
+    print(result.isOk(r = high()))
     var r2 = iter.range(5, 8)
     val got = first(r2)
-    print(option.is_some(o = got))
+    print(option.isSome(o = got))
 }

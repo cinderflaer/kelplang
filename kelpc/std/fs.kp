@@ -100,20 +100,23 @@ fun read(path: &str) => result.Result<Bytes, io.IoErr> {
     if err == 0 {
         return result.Result.Ok(value = data)
     }
-    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
 }
 
 /// Retired (issue #264): the plain `read` returns this result. Kept for one cycle.
 fun try_read(path: &str) => result.Result<Bytes, io.IoErr> = read(path)
 
+/// Retired (#375): the camelCase `readText` is the name. Kept for one cycle.
+fun read_text(path: &str) => result.Result<String, io.IoErr> = readText(path)
+
 /// The whole file as text, or the reason it cannot be read. A file that is not
 /// valid UTF-8 is a failure too: its `errno` is 0, because no syscall failed,
 /// and `message` says so.
-fun read_text(path: &str) => result.Result<String, io.IoErr> {
+fun readText(path: &str) => result.Result<String, io.IoErr> {
     var err: i32 = 0
     val data = try_read_raw(path, &mut err)
     if err != 0 {
-        return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+        return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
     }
     if !utf8_valid_raw(data) {
         return result.Result.Err(error = io.IoErr(errno = 0, message = "fs.read_text: input is not valid utf-8"))
@@ -122,7 +125,7 @@ fun read_text(path: &str) => result.Result<String, io.IoErr> {
 }
 
 /// Retired (issue #264): the plain `read_text` returns this result. Kept for one cycle.
-fun try_read_text(path: &str) => result.Result<String, io.IoErr> = read_text(path)
+fun try_read_text(path: &str) => result.Result<String, io.IoErr> = readText(path)
 
 /// Writing takes the bytes or the text by value: the data is handed over, not
 /// borrowed, since the call consumes nothing else of it. It returns
@@ -134,7 +137,7 @@ must_use fun write(path: &str, data: Bytes) => result.Result<unit, io.IoErr> {
     if err == 0 {
         return result.Result.Ok(value = ())
     }
-    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
 }
 
 /// Retired (issue #264): the plain `write` returns this result. Kept for one cycle,
@@ -146,19 +149,22 @@ must_use fun try_write(path: &str, data: Bytes) => option.Option<io.IoErr> {
     }
 }
 
+/// Retired (#375): the camelCase `writeText` is the name. Kept for one cycle.
+must_use fun write_text(path: &str, text: String) => result.Result<unit, io.IoErr> = writeText(path, text)
+
 /// As `write`, for text. Returns `Result<unit, io.IoErr>`.
-must_use fun write_text(path: &str, text: String) => result.Result<unit, io.IoErr> {
+must_use fun writeText(path: &str, text: String) => result.Result<unit, io.IoErr> {
     var err: i32 = 0
     try_write_text_raw(path, text, &mut err)
     if err == 0 {
         return result.Result.Ok(value = ())
     }
-    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
 }
 
 /// Retired (issue #264): the plain `write_text` returns this result. Kept for one cycle.
 must_use fun try_write_text(path: &str, text: String) => option.Option<io.IoErr> {
-    return when write_text(path, text) {
+    return when writeText(path, text) {
         Ok(_) -> option.Option.None
         Err(e) -> option.Option.Some(value = e)
     }
@@ -175,23 +181,35 @@ extern fun cwd() => String = "cwd_raw"
 
 /// Whether `path` exists.
 extern fun exists(path: &str) => bool = "exists_raw"
+/// Retired (#375): the camelCase `isFile` is the name. Kept for one cycle.
+fun is_file(path: &str) => bool = isFile(path)
+
 /// Whether `path` is a regular file.
-extern fun is_file(path: &str) => bool = "is_file_raw"
+extern fun isFile(path: &str) => bool = "is_file_raw"
+/// Retired (#375): the camelCase `isDir` is the name. Kept for one cycle.
+fun is_dir(path: &str) => bool = isDir(path)
+
 /// Whether `path` is a directory.
-extern fun is_dir(path: &str) => bool = "is_dir_raw"
+extern fun isDir(path: &str) => bool = "is_dir_raw"
+
+/// Retired (#375): the camelCase `isSymlink` is the name. Kept for one cycle.
+fun is_symlink(path: &str) => bool = isSymlink(path)
 
 /// Whether `path` is itself a symlink. `is_file`/`is_dir` follow a link and
 /// answer for what it points at; this is `lstat`, so it answers for the link,
 /// and a broken link is `true` here and `false` for both of the others. The
 /// path is normalized and symlink-resolved for the capability check like every
 /// other `fs` path, so a link out of the grant is denied rather than reported.
-extern fun is_symlink(path: &str) => bool = "is_symlink_raw"
+extern fun isSymlink(path: &str) => bool = "is_symlink_raw"
+
+/// Retired (#375): the camelCase `readLink` is the name. Kept for one cycle.
+fun read_link(path: &str) => String = readLink(path)
 
 /// The text `path` points at, exactly as it was stored: a relative target stays
 /// relative (it is relative to the link's own directory), and a broken link
 /// still has one.
 /// Panics: if `path` is not a symlink, or cannot be read.
-extern fun read_link(path: &str) => String = "read_link_raw"
+extern fun readLink(path: &str) => String = "read_link_raw"
 
 /// Panics: if the file does not exist.
 extern fun size(path: &str) => u64 = "size_raw"
@@ -204,7 +222,7 @@ must_use fun remove(path: &str) => result.Result<unit, io.IoErr> {
     if err == 0 {
         return result.Result.Ok(value = ())
     }
-    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
 }
 
 /// Retired (issue #264): the plain `remove` returns this result. Kept for one cycle.
@@ -225,7 +243,7 @@ must_use fun rename(from: &str, to: &str) => result.Result<unit, io.IoErr> {
     if err == 0 {
         return result.Result.Ok(value = ())
     }
-    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
 }
 
 /// Retired (issue #264): the plain `rename` returns this result. Kept for one cycle.
@@ -236,7 +254,7 @@ must_use fun try_rename(from: &str, to: &str) => option.Option<io.IoErr> {
     }
 }
 
-/// One directory. `fs.mkdir_all` needs to walk prefixes of its path and is
+/// One directory. `fs.mkdirAll` needs to walk prefixes of its path and is
 /// deferred with the rest of the growable-path work.
 /// Panics: if the directory cannot be created.
 fun mkdir(path: &str) {
@@ -254,7 +272,7 @@ must_use fun append(path: &str, data: Bytes) => result.Result<unit, io.IoErr> {
     if err == 0 {
         return result.Result.Ok(value = ())
     }
-    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
 }
 
 /// Retired (issue #264): the plain `append` returns this result. Kept for one cycle.
@@ -286,7 +304,7 @@ fun list(path: &str) => result.Result<List<String>, io.IoErr> {
     var err: i32 = 0
     val raw = try_list_raw(path, &mut err)
     if err != 0 {
-        return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+        return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
     }
     if str.len(raw) == 0 {
         var empty: List<String> = List.empty()
@@ -306,6 +324,9 @@ fun try_list(path: &str) => result.Result<List<String>, io.IoErr> = list(path)
 // through the same call-site capability check as a caller-written one,
 // because the check sits on the public `fs` functions, not on the syscalls.
 
+/// Retired (#375): the camelCase `mkdirAll` is the name. Kept for one cycle.
+must_use fun mkdir_all(path: &str) => result.Result<unit, io.IoErr> = mkdirAll(path)
+
 /// Creates every missing component of `path`, in order, treating an existing
 /// component as success, so repeated setup is idempotent. The walk happens
 /// inside one `extern` rather than in Kelp: the whole path is checked against the
@@ -315,22 +336,25 @@ fun try_list(path: &str) => result.Result<List<String>, io.IoErr> = list(path)
 ///
 /// Returns `Result<unit, io.IoErr>`: the first directory along the way that
 /// cannot be created is the error.
-must_use fun mkdir_all(path: &str) => result.Result<unit, io.IoErr> {
+must_use fun mkdirAll(path: &str) => result.Result<unit, io.IoErr> {
     var err: i32 = 0
     try_mkdir_all_raw(path, &mut err)
     if err == 0 {
         return result.Result.Ok(value = ())
     }
-    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
 }
 
 /// Retired (issue #264): the plain `mkdir_all` returns this result. Kept for one cycle.
 must_use fun try_mkdir_all(path: &str) => option.Option<io.IoErr> {
-    return when mkdir_all(path) {
+    return when mkdirAll(path) {
         Ok(_) -> option.Option.None
         Err(e) -> option.Option.Some(value = e)
     }
 }
+
+/// Retired (#375): the camelCase `removeAll` is the name. Kept for one cycle.
+must_use fun remove_all(target: &str) => result.Result<unit, io.IoErr> = removeAll(target)
 
 /// Removes `path`, recursively when it is a directory. A symlink is removed and
 /// never descended into, `is_symlink` is checked before `is_dir`, so a link to a
@@ -348,11 +372,11 @@ must_use fun try_mkdir_all(path: &str) => option.Option<io.IoErr> {
 /// The parameter is `target` rather than `path` because the module namespace
 /// `path` is what the join below goes through, and a local binding shadows a
 /// module name.
-must_use fun remove_all(target: &str) => result.Result<unit, io.IoErr> {
-    if is_symlink(target) {
+must_use fun removeAll(target: &str) => result.Result<unit, io.IoErr> {
+    if isSymlink(target) {
         return remove(target)
     }
-    if is_dir(target) {
+    if isDir(target) {
         val listed = list(target)
         if let Err(e) = listed {
             return result.Result.Err(error = e)
@@ -361,7 +385,7 @@ must_use fun remove_all(target: &str) => result.Result<unit, io.IoErr> {
             var i: int = 0
             while i < entries.len() {
                 val child = path.join(target, entries.get(i).as_str())
-                val failed = remove_all(child)
+                val failed = removeAll(child)
                 if let Err(e) = failed {
                     return result.Result.Err(error = e)
                 }
@@ -374,7 +398,7 @@ must_use fun remove_all(target: &str) => result.Result<unit, io.IoErr> {
 
 /// Retired (issue #264): the plain `remove_all` returns this result. Kept for one cycle.
 must_use fun try_remove_all(target: &str) => option.Option<io.IoErr> {
-    return when remove_all(target) {
+    return when removeAll(target) {
         Ok(_) -> option.Option.None
         Err(e) -> option.Option.Some(value = e)
     }
@@ -406,7 +430,7 @@ fun walk(dir: &str) => List<String> {
             val name = path.join(current, entries.get(i).as_str())
             out.push(name)
             val probe = path.join(current, entries.get(i).as_str())
-            val is_directory = !is_symlink(probe) && is_dir(probe)
+            val is_directory = !isSymlink(probe) && isDir(probe)
             if is_directory {
                 pending.push(path.join(current, entries.get(i).as_str()))
             }
@@ -443,7 +467,7 @@ must_use fun symlink(target: &str, link: &str) => result.Result<unit, io.IoErr> 
     if err == 0 {
         return result.Result.Ok(value = ())
     }
-    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
 }
 
 /// Retired (issue #264): the plain `symlink` returns this result. Kept for one cycle.
@@ -461,12 +485,15 @@ fun touch(path: &str) {
     touch_raw(path)
 }
 
+/// Retired (#375): the camelCase `setMode` is the name. Kept for one cycle.
+fun set_mode(path: &str, mode: u32) { setMode(path, mode) }
+
 /// Sets the permission bits of `path` to the low 12 bits of `mode` (the same
-/// bits `Metadata.mode` reports), so `fs.set_mode(p, 493)` (octal 755) makes a downloaded
+/// bits `Metadata.mode` reports), so `fs.setMode(p, 493)` (octal 755) makes a downloaded
 /// file executable.
 ///
 /// Panics: if `path` is outside the grant or its mode cannot be changed.
-fun set_mode(path: &str, mode: u32) {
+fun setMode(path: &str, mode: u32) {
     set_mode_raw(path, mode)
 }
 
@@ -485,19 +512,22 @@ fun open(path: &str, mode: &str) => result.Result<io.File, io.IoErr> {
     if err == 0 {
         return result.Result.Ok(value = io.File(fd = fd))
     }
-    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errnoText(err)))
 }
 
 /// Retired (issue #264): the plain `open` returns this result. Kept for one cycle.
 fun try_open(path: &str, mode: &str) => result.Result<io.File, io.IoErr> = open(path, mode)
 
+/// Retired (#375): the camelCase `readLines` is the name. Kept for one cycle.
+fun read_lines(path: &str) => List<String> = readLines(path)
+
 /// Every line of a text file, without the line endings and without the empty
 /// string a trailing newline would otherwise leave at the end (the same shape
-/// `io.read_lines` produces).
+/// `io.readLines` produces).
 ///
 /// Panics: if the file cannot be read or is not valid utf-8.
-fun read_lines(path: &str) => List<String> {
-    val text = result.expect(read_text(path), "fs.read_lines: the file cannot be read or is not valid utf-8")
+fun readLines(path: &str) => List<String> {
+    val text = result.expect(readText(path), "fs.read_lines: the file cannot be read or is not valid utf-8")
     val s = text.as_str()
     if str.len(s) == 0 {
         var empty: List<String> = List.empty()
@@ -510,13 +540,16 @@ fun read_lines(path: &str) => List<String> {
     return parts
 }
 
+/// Retired (#375): the camelCase `tempPath` is the name. Kept for one cycle.
+fun temp_path(prefix: &str) => String = tempPath(prefix)
+
 /// A fresh, empty file whose name starts with `prefix` (the `XXXXXX` suffix
 /// is filled in by `mkstemp`). The prefix is what the grant is checked
 /// against, so the random suffix cannot escape it; the file is created, not
 /// just named.
 ///
 /// Panics: if the file cannot be created.
-extern fun temp_path(prefix: &str) => String = "temp_path_raw"
+extern fun tempPath(prefix: &str) => String = "temp_path_raw"
 
 /// The whole of `Metadata` from one `stat`, so a walk that measures every entry
 /// pays one syscall per entry rather than the five this used to charge.

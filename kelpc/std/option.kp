@@ -43,16 +43,25 @@ enum Option<T> {
     None
 }
 
-/// Whether the option holds a value: `option.is_some(o)` is `o.is_some()`.
-fun is_some<T>(o: &Option<T>) => bool = o.is_some()
+/// Retired (#375): the camelCase `isSome` is the name. Kept for one cycle.
+fun is_some<T>(o: &Option<T>) => bool = isSome(o)
+
+/// Whether the option holds a value: `option.isSome(o)` is `o.isSome()`.
+fun isSome<T>(o: &Option<T>) => bool = o.isSome()
+
+/// Retired (#375): the camelCase `isNone` is the name. Kept for one cycle.
+fun is_none<T>(o: &Option<T>) => bool = isNone(o)
 
 /// Whether the option is empty.
-fun is_none<T>(o: &Option<T>) => bool = o.is_none()
+fun isNone<T>(o: &Option<T>) => bool = o.isNone()
+
+/// Retired (#375): the camelCase `unwrapOr` is the name. Kept for one cycle.
+fun unwrap_or<T>(o: move Option<T>, fallback: move T) => T = unwrapOr(o, fallback)
 
 /// The payload, or `fallback`. The option is taken with `move`, because either
 /// answer is the caller's value: an owned payload is moved out and `fallback` is
 /// handed on as it was given.
-fun unwrap_or<T>(o: move Option<T>, fallback: move T) => T = when o {
+fun unwrapOr<T>(o: move Option<T>, fallback: move T) => T = when o {
     Some(v) -> v
     None -> fallback
 }
@@ -83,25 +92,34 @@ fun expect<T>(o: move Option<T>, message: &str) => T {
 // the owned form takes the option with `move` and stays a free function, since
 // a method always borrows its receiver. `unwrap` and `expect` stay free too.
 // The free `is_some` and `is_none` stay as the module's public spelling,
-// `option.is_none(o)`, and each one calls its method.
+// `option.isNone(o)`, and each one calls its method.
+
+/// Retired (#375): the camelCase `isSome` is the name. Kept for one cycle.
+fun Option<T>.is_some() => bool = self.isSome()
 
 /// Whether the option holds a value.
-fun Option<T>.is_some() => bool = when self {
+fun Option<T>.isSome() => bool = when self {
     Some(_) -> true
     None -> false
 }
 
+/// Retired (#375): the camelCase `isNone` is the name. Kept for one cycle.
+fun Option<T>.is_none() => bool = self.isNone()
+
 /// Whether the option is empty.
-fun Option<T>.is_none() => bool = when self {
+fun Option<T>.isNone() => bool = when self {
     Some(_) -> false
     None -> true
 }
 
+/// Retired (#375): the camelCase `unwrapOr` is the name. Kept for one cycle.
+fun Option<T>.unwrap_or(fallback: T) => T = self.unwrapOr(fallback)
+
 /// The payload, or `fallback`, for a `Copy` payload: the receiver is a borrow,
-/// so the payload is copied out of it. `o.unwrap_or(0)`. An owned payload
-/// (`Option<String>`) uses the free `option.unwrap_or(o = ..., fallback = ...)`,
+/// so the payload is copied out of it. `o.unwrapOr(0)`. An owned payload
+/// (`Option<String>`) uses the free `option.unwrapOr(o = ..., fallback = ...)`,
 /// which takes the option with `move`.
-fun Option<T>.unwrap_or(fallback: T) => T = when self {
+fun Option<T>.unwrapOr(fallback: T) => T = when self {
     Some(v) -> v
     None -> fallback
 }
@@ -113,19 +131,25 @@ fun Option<T>.map<U>(f: closure fun(&T) => U) => Option<U> = when self {
     None -> Option.None
 }
 
+/// Retired (#375): the camelCase `andThen` is the name. Kept for one cycle.
+fun Option<T>.and_then<U>(f: closure fun(&T) => Option<U>) => Option<U> = self.andThen(f)
+
 /// Chain a second fallible step: `f` returns an `Option` itself, which is what
 /// makes a sequence of fallible steps readable without nesting `if let`. Works
 /// for any `T`, for the same reason `map` does.
-fun Option<T>.and_then<U>(f: closure fun(&T) => Option<U>) => Option<U> = when self {
+fun Option<T>.andThen<U>(f: closure fun(&T) => Option<U>) => Option<U> = when self {
     Some(v) -> f(v)
     None -> Option.None
 }
+
+/// Retired (#375): the camelCase `orElse` is the name. Kept for one cycle.
+fun Option<T>.or_else(f: closure fun() => Option<T>) => Option<T> = self.orElse(f)
 
 /// The option, or `f()` when it is empty. `T` must be `Copy`: the receiver is a
 /// borrow and the `Some` arm rebuilds the payload out of it, which is a copy;
 /// an owned payload comes out with `unwrap_or`, which takes the option with
 /// `move`.
-fun Option<T>.or_else(f: closure fun() => Option<T>) => Option<T> = when self {
+fun Option<T>.orElse(f: closure fun() => Option<T>) => Option<T> = when self {
     Some(v) -> Option.Some(value = v)
     None -> f()
 }

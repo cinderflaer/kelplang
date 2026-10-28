@@ -428,10 +428,13 @@ fun no_tz() => TzString {
     )
 }
 
+/// Retired (#375): the camelCase `offsetAt` is the name. Kept for one cycle.
+fun TzString.offset_at(t: i64) => Offset = self.offsetAt(t)
+
 /// The offset that this TZ string gives at the instant `t`.
 /// The offset a TZ string names at `t`, which is the whole of what a zone does
 /// with an instant once its transition table is behind us.
-fun TzString.offset_at(t: i64) => Offset {
+fun TzString.offsetAt(t: i64) => Offset {
     if !have_dst {
         return Offset(seconds = std_off, abbrev = std_name.clone(), is_dst = false)
     }
@@ -1223,19 +1226,22 @@ fun Zone.offset_of(i: i32) => Offset {
     return Offset(seconds = offs.get(k), abbrev = names.get(k).clone(), is_dst = dsts.get(k))
 }
 
+/// Retired (#375): the camelCase `offsetAt` is the name. Kept for one cycle.
+fun Zone.offset_at(unix_seconds: i64) => Offset = self.offsetAt(unix_seconds)
+
 /// Returns the offset in force at `unix_seconds`.
 /// The offset in force at `unix_seconds`.
 ///
 /// Panics: when the instant is outside the years 1 to 9999 this module works
 /// in.
-fun Zone.offset_at(unix_seconds: i64) => Offset {
+fun Zone.offsetAt(unix_seconds: i64) => Offset {
     if unix_seconds < MIN_INSTANT || unix_seconds > MAX_INSTANT {
         panic("tz.offset_at: the instant is outside the years 1 to 9999 this module supports")
     }
     val n = times.len()
     if n == 0 {
         if tz.have {
-            return tz.offset_at(unix_seconds)
+            return tz.offsetAt(unix_seconds)
         }
         return self.offset_of(default_type)
     }
@@ -1243,7 +1249,7 @@ fun Zone.offset_at(unix_seconds: i64) => Offset {
         return self.offset_of(default_type)
     }
     if tz.have && unix_seconds >= times.get(n - 1) {
-        return tz.offset_at(unix_seconds)
+        return tz.offsetAt(unix_seconds)
     }
     // The last transition at or before the instant, by binary search: the
     // largest `i` with `times[i] <= unix_seconds`.
@@ -1260,13 +1266,16 @@ fun Zone.offset_at(unix_seconds: i64) => Offset {
     return self.offset_of(at_type.get(lo - 1).to_i32())
 }
 
+/// Retired (#375): the camelCase `localParts` is the name. Kept for one cycle.
+fun Zone.local_parts(unix_seconds: i64) => LocalTime = self.localParts(unix_seconds)
+
 /// Returns the wall clock reading at `unix_seconds`.
 /// The wall clock `unix_seconds` names in this zone.
 ///
 /// Panics: when the instant is outside the years 1 to 9999 this module works
 /// in.
-fun Zone.local_parts(unix_seconds: i64) => LocalTime {
-    val off = self.offset_at(unix_seconds)
+fun Zone.localParts(unix_seconds: i64) => LocalTime {
+    val off = self.offsetAt(unix_seconds)
     val wall = unix_seconds + off.seconds.to_i64()
     val days = floor_div(wall, SECS_DAY)
     val rem = wall - days * SECS_DAY
@@ -1284,6 +1293,9 @@ fun Zone.local_parts(unix_seconds: i64) => LocalTime {
     )
 }
 
+/// Retired (#375): the camelCase `toUnix` is the name. Kept for one cycle.
+fun Zone.to_unix(y: i32, m: i32, d: i32, h: i32, mi: i32, s: i32) => Resolved = self.toUnix(y, m, d, h, mi, s)
+
 /// Returns the instant or instants that the wall clock `y-m-d h:mi:s` names in
 /// this zone.
 /// The instant or instants the wall clock `y-m-d h:mi:s` names. Every distinct
@@ -1295,7 +1307,7 @@ fun Zone.local_parts(unix_seconds: i64) => LocalTime {
 /// Panics: when the date is not a real calendar date, when the time is not a
 /// real time of day, or when the instant is outside the years 1 to 9999 this
 /// module works in.
-fun Zone.to_unix(y: i32, m: i32, d: i32, h: i32, mi: i32, s: i32) => Resolved {
+fun Zone.toUnix(y: i32, m: i32, d: i32, h: i32, mi: i32, s: i32) => Resolved {
     if m < 1 || m > 12 {
         panic("tz.to_unix: the month is not in 1..12")
     }
@@ -1313,7 +1325,7 @@ fun Zone.to_unix(y: i32, m: i32, d: i32, h: i32, mi: i32, s: i32) => Resolved {
     while i < uniques.len() {
         val off = uniques.get(i)
         val cand = total - off.to_i64()
-        if self.offset_at(cand).seconds == off {
+        if self.offsetAt(cand).seconds == off {
             if hits == 0 {
                 first = cand
             }
@@ -1345,7 +1357,7 @@ fun Zone.to_unix(y: i32, m: i32, d: i32, h: i32, mi: i32, s: i32) => Resolved {
 /// Panics: when the instant is outside the years 1 to 9999 this module works
 /// in.
 fun Zone.format(unix_seconds: i64, fmt: &str) => String {
-    val lt = self.local_parts(unix_seconds)
+    val lt = self.localParts(unix_seconds)
     val fv = fmt.view()
     var out = String.with_capacity(fv.len() + 8)
     var i: int = 0

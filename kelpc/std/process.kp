@@ -123,8 +123,11 @@ fun args() => List<String> {
     return out
 }
 
+/// Retired (#375): the camelCase `argCount` is the name. Kept for one cycle.
+fun arg_count() => int = argCount()
+
 /// The number of entries in `args()`, `argv[0]` included.
-extern fun arg_count() => int = "arg_count_raw"
+extern fun argCount() => int = "arg_count_raw"
 
 /// Starts `program` with `args` (not including the program itself), with the
 /// child's working directory set to `dir`, and three fresh pipes. An empty
@@ -174,8 +177,11 @@ fun spawn(program: &str, args: List<String>, dir: &str = "") => Child {
     )
 }
 
+/// Retired (#375): the camelCase `spawnIn` is the name. Kept for one cycle.
+fun spawn_in(dir: &str, program: &str, args: List<String>) => Child = spawnIn(dir, program, args)
+
 /// As `spawn` with `dir` written first. Kept for one cycle (issue #296).
-fun spawn_in(dir: &str, program: &str, args: List<String>) => Child = spawn(program, args, dir)
+fun spawnIn(dir: &str, program: &str, args: List<String>) => Child = spawn(program, args, dir)
 
 /// Runs `program` to completion with its stdin closed and both output streams
 /// captured, from the working directory `dir` (empty means the parent's).
@@ -194,7 +200,7 @@ fun run(program: &str, args: List<String>, dir: &str = "") => result.Result<RunR
     }
     // A bare name is looked up on PATH by the child, as it always was, and a
     // missing one exits 127 rather than failing here. A path is checked first.
-    if str.index_of(program, "/").is_some() {
+    if str.indexOf(program, "/").isSome() {
         if !exists_raw(program) {
             return result.Result.Err(error = ProcErr.NotFound)
         }
@@ -220,7 +226,7 @@ fun run_captured(program: &str, args: List<String>, dir: &str) => RunResult {
     // a long-lived child is still waited for indefinitely.
     while out_open || err_open {
         if out_open {
-            if child.stdout.wait_readable(50) {
+            if child.stdout.waitReadable(50) {
                 val got = child.stdout.read(8192)
                 if got.is_empty() {
                     out_open = false
@@ -231,7 +237,7 @@ fun run_captured(program: &str, args: List<String>, dir: &str) => RunResult {
             }
         }
         if err_open {
-            if child.stderr.wait_readable(50) {
+            if child.stderr.waitReadable(50) {
                 val got = child.stderr.read(8192)
                 if got.is_empty() {
                     err_open = false
@@ -246,8 +252,14 @@ fun run_captured(program: &str, args: List<String>, dir: &str) => RunResult {
     return RunResult(code = code, signal = child.signal, out = out, err = err)
 }
 
+/// Retired (#375): the camelCase `runIn` is the name. Kept for one cycle.
+fun run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr> = runIn(dir, program, args)
+
 /// As `run` with `dir` written first (issue #296).
-fun run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr> = run(program, args, dir)
+fun runIn(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr> = run(program, args, dir)
+
+/// Retired (#375): the camelCase `runInherit` is the name. Kept for one cycle.
+fun run_inherit(program: &str, args: List<String>, dir: &str = "") => RunResult = runInherit(program, args, dir)
 
 /// As `run_in`, but the child inherits this process's stdin, stdout and stderr
 /// instead of getting pipes: its output appears as it is written, its two
@@ -257,7 +269,7 @@ fun run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunRes
 /// The parent's buffered output is flushed before the fork.
 ///
 /// Panics: as `run_in`.
-fun run_inherit(program: &str, args: List<String>, dir: &str = "") => RunResult {
+fun runInherit(program: &str, args: List<String>, dir: &str = "") => RunResult {
     var pid: i32 = 0
     spawn_inherit_raw(dir, program, args, pid = pid)
     var sig: i32 = 0
@@ -265,8 +277,11 @@ fun run_inherit(program: &str, args: List<String>, dir: &str = "") => RunResult 
     return RunResult(code = code, signal = sig, out = Bytes.empty(), err = Bytes.empty())
 }
 
+/// Retired (#375): the camelCase `runInheritIn` is the name. Kept for one cycle.
+fun run_inherit_in(dir: &str, program: &str, args: List<String>) => RunResult = runInheritIn(dir, program, args)
+
 /// As `run_inherit` with `dir` written first. Kept for one cycle (issue #296).
-fun run_inherit_in(dir: &str, program: &str, args: List<String>) => RunResult = run_inherit(program, args, dir)
+fun runInheritIn(dir: &str, program: &str, args: List<String>) => RunResult = runInherit(program, args, dir)
 
 /// Whether `program` is a regular file that could be executed: it exists, it is
 /// not a directory or a dangling link, and it carries an execute bit for this
@@ -281,7 +296,7 @@ extern fun executable(program: &str) => bool = "executable_raw"
 fun try_run(program: &str, args: List<String>, dir: &str = "") => result.Result<RunResult, ProcErr> = run(program, args, dir)
 
 /// Retired (issue #264): the plain `run_in` returns this result. Kept for one cycle (issue #296).
-fun try_run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr> = run_in(dir, program, args)
+fun try_run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr> = runIn(dir, program, args)
 
 /// Blocks until the child exits and returns its code: the exit status, or
 /// `128 + signal` when it was killed (`signal` then holds the signal number).
@@ -299,12 +314,15 @@ fun mut Child.wait() => i32 {
     return code
 }
 
+/// Retired (#375): the camelCase `isRunning` is the name. Kept for one cycle.
+fun mut Child.is_running() => bool = self.isRunning()
+
 /// Whether the child still runs. This is a non-blocking `waitpid`, so it also
 /// *observes* an exit: after it returns false, `wait` returns the recorded
 /// code without blocking.
 ///
 /// Panics: if `waitpid` fails.
-fun mut Child.is_running() => bool {
+fun mut Child.isRunning() => bool {
     if exited {
         return false
     }

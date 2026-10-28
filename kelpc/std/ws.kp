@@ -224,9 +224,9 @@ datac Conn(
 /// struct field.
 fun conn_send_all(fd: i32, tls_handle: option.Option<tls.TlsHandle>, data: Bytes) => int {
     if let Some(h) = tls_handle {
-        return result.expect(tls.write_all(tls.TlsStream(fd = fd, handle = h), data), "ws: the send failed")
+        return result.expect(tls.writeAll(tls.TlsStream(fd = fd, handle = h), data), "ws: the send failed")
     }
-    return result.expect(net.send_all(net.Socket(fd = fd), data), "ws: the send failed")
+    return result.expect(net.sendAll(net.Socket(fd = fd), data), "ws: the send failed")
 }
 
 /// Reads up to `max` bytes from the connection, over TLS when `tls_handle` is set.
@@ -240,9 +240,9 @@ fun conn_recv(fd: i32, tls_handle: option.Option<tls.TlsHandle>, max: int) => By
 /// Reads into `buf` from offset `at`, over TLS when `tls_handle` is set. Returns the number of bytes read.
 fun conn_recv_into(fd: i32, tls_handle: option.Option<tls.TlsHandle>, buf: mut Bytes, at: int) => int {
     if let Some(h) = tls_handle {
-        return result.expect(tls.read_into(tls.TlsStream(fd = fd, handle = h), buf, at), "ws: the receive failed")
+        return result.expect(tls.readInto(tls.TlsStream(fd = fd, handle = h), buf, at), "ws: the receive failed")
     }
-    return result.expect(net.recv_into(net.Socket(fd = fd), buf, at), "ws: the receive failed")
+    return result.expect(net.recvInto(net.Socket(fd = fd), buf, at), "ws: the receive failed")
 }
 
 /// Closes the connection. A TLS session is shut down first, then the socket is closed.
@@ -258,6 +258,9 @@ fun conn_close(fd: i32, tls_handle: option.Option<tls.TlsHandle>) {
 
 /* ----- URLs ----- */
 
+/// Retired (#375): the camelCase `parseUrl` is the name. Kept for one cycle.
+fun parse_url(s: &str) => Url = parseUrl(s)
+
 /// Parses an absolute `ws://` or `wss://` URL into its parts.
 ///
 /// Panics on a URL with no scheme or host, or with a scheme other than `ws` or `wss`.
@@ -268,9 +271,9 @@ fun conn_close(fd: i32, tls_handle: option.Option<tls.TlsHandle>) {
 /// The port is split at the first `:`, so an IPv6 literal is not expressible
 /// here either, the same rule `net`'s capability patterns follow: a host
 /// containing the port separator would be ambiguous.
-fun parse_url(s: &str) => Url {
+fun parseUrl(s: &str) => Url {
     val sep = option.expect(
-        o = str.index_of(s, "://"),
+        o = str.indexOf(s, "://"),
         message = "ws.parse_url: URL must start with 'ws://' or 'wss://' (no scheme found)",
     )
     val scheme = str.prefix(s, sep)
@@ -301,7 +304,7 @@ fun split_authority(rest: &str, scheme: &str) => Url {
     if str.is_empty(rest) {
         panic("ws.parse_url: URL has no host")
     }
-    val slash = str.index_of(rest, "/")
+    val slash = str.indexOf(rest, "/")
     if let Some(at) = slash {
         val authority = str.prefix(rest, at)
         val path = str.substring(rest, at)
@@ -316,7 +319,7 @@ fun make_url(authority: String, path: &str, scheme: &str) => Url {
     if str.is_empty(authority.as_str()) {
         panic("ws.parse_url: URL has no host")
     }
-    val colon = str.index_of(authority.as_str(), ":")
+    val colon = str.indexOf(authority.as_str(), ":")
     if let Some(at) = colon {
         // Bound to a place first: `str.substring` hands back a borrow of its
         // argument, and a borrow-returning call needs a variable or a field.
@@ -346,7 +349,7 @@ fun parse_port(text: &str) => u16 {
         panic("ws.parse_url: URL has an empty port")
     }
     val p = result.expect(
-        r = str.parse_u64(text),
+        r = str.parseU64(text),
         message = "ws.parse_url: URL port is not a number",
     )
     if p > 65535 {
@@ -365,7 +368,7 @@ fun parse_port(text: &str) => u16 {
 fun accept_for(key: &str) => String {
     val material = str.concat(key, WS_GUID)
     val digest = encoding.sha1(Bytes.from_str(material.as_str()))
-    return encoding.base64_encode(digest)
+    return encoding.base64Encode(digest)
 }
 
 /// Joins `prefix`, the decimal form of `n` and `suffix` into one message.
@@ -444,13 +447,13 @@ fun head_text(b: Bytes, end: int) => String {
 /// Whether two header names are equal, ignoring ASCII case.
 ///
 /// ASCII case-insensitive comparison, the rule header names follow. The values
-/// here are ASCII by construction and `str.to_lower` is ASCII-only.
+/// here are ASCII by construction and `str.toLower` is ASCII-only.
 fun name_eq(a: &str, b: &str) => bool {
     if str.len(a) != str.len(b) {
         return false
     }
-    val la = str.to_lower(a)
-    val lb = str.to_lower(b)
+    val la = str.toLower(a)
+    val lb = str.toLower(b)
     return str.eq(la, lb.as_str())
 }
 
@@ -467,7 +470,7 @@ fun split_head_headers(head: &str) => List<Header> {
     while i < lines.len() {
         val text = lines.get(i).as_str()
         if !str.is_empty(text) {
-            val colon = str.index_of(text, ":")
+            val colon = str.indexOf(text, ":")
             if let Some(at) = colon {
                 hs.push(Header(
                     name = str.prefix(text, at),
@@ -505,12 +508,12 @@ fun header_value(hs: List<Header>, name: &str) => String {
 ///
 /// Panics: if the head has no status line, or its code is not a number.
 fun parse_status(head: &str) => i32 {
-    val sp = str.index_of(head, " ")
+    val sp = str.indexOf(head, " ")
     if let Some(at) = sp {
         val line = str.prefix(head, at)
-        if str.starts_with(line, "HTTP/") {
+        if str.startsWith(line, "HTTP/") {
             val rest = str.substring(head, at + 1)
-            val sp2 = str.index_of(rest, " ")
+            val sp2 = str.indexOf(rest, " ")
             if let Some(at2) = sp2 {
                 val code_text = str.prefix(rest, at2)
                 return status_code(code_text)
@@ -526,7 +529,7 @@ fun parse_status(head: &str) => i32 {
 /// Panics when the text is not a number or is above 999.
 fun status_code(text: &str) => i32 {
     val p = result.expect(
-        r = str.parse_u64(text),
+        r = str.parseU64(text),
         message = "ws.connect: the status code is not a number",
     )
     if p > 999 {
@@ -586,7 +589,7 @@ fun mut Conn.read_head() => String {
 ///
 /// The distinction is what a reconnecting caller needs: a refused dial is worth
 /// another attempt, and a peer answering `403` is not. `Tls` is the `wss` half
-/// of the dot: the TLS handshake failed, and `reason` is `tls.error_text`'s
+/// of the dot: the TLS handshake failed, and `reason` is `tls.errorText`'s
 /// sentence for it (`std/tls`'s own `TlsError` is not this enum, so a caller
 /// that only needs "the secure half failed" can match one variant).
 enum WsErr {
@@ -595,7 +598,7 @@ enum WsErr {
     /// The peer answered, but not with a WebSocket handshake. `status` is the code it answered with, and `101` is
     /// included, because a `101` with a wrong accept value is still a failed handshake.
     Handshake(val status: i32, val reason: String)
-    /// The TLS handshake of a `wss` connection failed. `reason` is the text from `tls.error_text`.
+    /// The TLS handshake of a `wss` connection failed. `reason` is the text from `tls.errorText`.
     Tls(val reason: String)
 }
 
@@ -614,30 +617,36 @@ enum WsErr {
 /// HTTP response at all (`parse_status`), and on a peer that closes before the
 /// head arrives (`read_head`). Those last two carry no status to report, and a
 /// peer that answers neither is not something a reconnect loop can act on.
-fun connect(host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = connect_scheme(
+fun connect(host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = connectScheme(
     DEFAULT_SCHEME,
     host,
     port,
     path,
 )
 
+/// Retired (#375): the camelCase `connectUrl` is the name. Kept for one cycle.
+fun connect_url(u: Url) => result.Result<Conn, WsErr> = connectUrl(u)
+
 /// Opens a WebSocket to a parsed URL, over `ws` or `wss`, and returns the connection or the reason it was refused.
 ///
 /// The same dial for a parsed URL, which is the spelling that can reach
 /// `wss`: the scheme comes off `u` rather than being fixed to `ws`.
-fun connect_url(u: Url) => result.Result<Conn, WsErr> = connect_scheme(
+fun connectUrl(u: Url) => result.Result<Conn, WsErr> = connectScheme(
     u.scheme.as_str(),
     u.host.as_str(),
     u.port,
     u.path.as_str(),
 )
 
+/// Retired (#375): the camelCase `connectScheme` is the name. Kept for one cycle.
+fun connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = connectScheme(scheme, host, port, path)
+
 /// Opens a WebSocket over the given scheme, and returns the connection or the reason it was refused.
-fun connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> {
+fun connectScheme(scheme: &str, host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> {
     // A fresh 16-byte key per connection (RFC 6455 4.1): it must not be a
     // fixed value, or a peer can precompute what a client will send.
     val key = rand.bytes(16)
-    val key_text = encoding.base64_encode(key)
+    val key_text = encoding.base64Encode(key)
     val expected = accept_for(key_text)
 
     val dialed = net.connect(host, port)
@@ -676,7 +685,7 @@ fun connect_tls(scheme: &str, s: net.Socket, host: &str) => result.Result<option
     val hs = tls.handshake(s, host)
     return when hs {
         Ok(t) -> result.Result.Ok(value = option.Option.Some(value = t.handle))
-        Err(e) -> result.Result.Err(error = WsErr.Tls(reason = tls.error_text(e)))
+        Err(e) -> result.Result.Err(error = WsErr.Tls(reason = tls.errorText(e)))
     }
 }
 
@@ -790,17 +799,23 @@ fun Conn.send_frame(opcode: u8, data: &Bytes) {
     conn_send_all(fd, tls_handle, out)
 }
 
+/// Retired (#375): the camelCase `sendText` is the name. Kept for one cycle.
+fun Conn.send_text(text: &str) { self.sendText(text) }
+
 /// Sends one text message.
 ///
 /// One text message. The text is UTF-8 by construction (it is a `str`), which
 /// is what the frame's payload has to be.
-fun Conn.send_text(text: &str) {
+fun Conn.sendText(text: &str) {
     val data = Bytes.from_str(text)
     self.send_frame(OP_TEXT, data)
 }
 
+/// Retired (#375): the camelCase `sendBinary` is the name. Kept for one cycle.
+fun Conn.send_binary(data: &Bytes) { self.sendBinary(data) }
+
 /// Sends one binary message.
-fun Conn.send_binary(data: &Bytes) {
+fun Conn.sendBinary(data: &Bytes) {
     self.send_frame(OP_BINARY, data)
 }
 
@@ -926,6 +941,9 @@ fun mut Conn.read_exact(n: int) => Bytes {
     return out
 }
 
+/// Retired (#375): the camelCase `readFrame` is the name. Kept for one cycle.
+fun mut Conn.read_frame() => Frame = self.readFrame()
+
 /// Reads one frame from the peer and checks it against the protocol.
 ///
 /// Panics on a masked frame, a reserved opcode, a bad control frame, or a payload over `MAX_FRAME`.
@@ -935,7 +953,7 @@ fun mut Conn.read_exact(n: int) => Bytes {
 /// Panics: if the frame is masked (RFC 6455 5.1: a server must not mask), if
 /// the opcode is one of the reserved values, if a control frame is fragmented
 /// or carries more than 125 bytes, or if the payload is longer than `MAX_FRAME`.
-fun mut Conn.read_frame() => Frame {
+fun mut Conn.readFrame() => Frame {
     val head = self.read_exact(2)
     val fin = (head.get(0) & 128) != 0
     val opcode = head.get(0) & 15
@@ -1042,7 +1060,7 @@ fun close_msg(data: Bytes) => Msg {
 fun mut Conn.recv() => Msg {
     var going = true
     while going {
-        val f = self.read_frame()
+        val f = self.readFrame()
         if f.opcode == OP_CLOSE {
             return close_msg(f.data)
         }
@@ -1089,7 +1107,7 @@ fun mut Conn.recv() => Msg {
 fun try_connect(host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = connect(host, port, path)
 
 /// Retired (issue #264): see `connect`.
-fun try_connect_url(u: Url) => result.Result<Conn, WsErr> = connect_url(u)
+fun try_connect_url(u: Url) => result.Result<Conn, WsErr> = connectUrl(u)
 
 /// Retired (issue #264): see `connect`.
-fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = connect_scheme(scheme, host, port, path)
+fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = connectScheme(scheme, host, port, path)

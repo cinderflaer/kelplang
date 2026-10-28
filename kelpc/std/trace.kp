@@ -20,14 +20,14 @@ fun event(file: &str, line: int, name: &str) {
 
 /// Starts a duration span and emits its `begin` record.
 fun begin(file: &str, line: int, name: &str) => Span {
-    val start = time.now_mono_ns()
+    val start = time.nowMonoNs()
     emit(kind = "begin", file = file, line = line, name = name, elapsed_ns = -1)
     return Span(name = String.from_str(name), start_ns = start)
 }
 
 /// Ends `span` and emits its duration in nanoseconds at this call site.
 fun end(file: &str, line: int, span: Span) {
-    val elapsed = time.now_mono_ns() - span.start_ns
+    val elapsed = time.nowMonoNs() - span.start_ns
     emit(kind = "end", file = file, line = line, name = span.name.as_str(), elapsed_ns = elapsed)
 }
 
@@ -36,7 +36,7 @@ fun end(file: &str, line: int, span: Span) {
 /// leaves out the final duration field, which only `end` records carry.
 fun emit(kind: &str, file: &str, line: int, name: &str, elapsed_ns: i64) {
     val at = line.to_u64().toText()
-    val time_ns = time.now_mono_ns().toText()
+    val time_ns = time.nowMonoNs().toText()
     val safe_file = escape(file)
     val safe_name = escape(name)
     val out0 = str.concat("trace\t", kind)

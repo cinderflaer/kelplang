@@ -51,7 +51,7 @@ fun glob_match(pat: &str, path: &str) => bool {
     var si: int = 0
     while pi < plen {
         // A trailing `/**` also matches the directory itself: `**` is zero or
-        // more segments, and `fs.mkdir_all`/`fs.remove_all` walk up to (and back
+        // more segments, and `fs.mkdirAll`/`fs.removeAll` walk up to (and back
         // down to) the grant root, so a grant on a tree has to admit the tree's
         // own root.
         if pi + 3 == plen && si == slen && dir_wildcard_at(pv, pi) {

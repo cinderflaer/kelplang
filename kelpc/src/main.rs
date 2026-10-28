@@ -230,8 +230,12 @@ fn front_end(
         };
         findings.push((severity, d));
     }
-    if !findings.is_empty() {
-        return (findings, !deny_outdated);
+    // Under `--deny-outdated` the findings are errors and the front end stops
+    // here. Otherwise an outdated finding is a warning, and the type checker
+    // still runs: a real error in the same program is reported with it, not
+    // hidden behind it (issue #375, found by `from_no_impl`).
+    if deny_outdated && !findings.is_empty() {
+        return (findings, false);
     }
 
     let _ = infer::take_cap_uses();

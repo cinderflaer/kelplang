@@ -7,7 +7,7 @@
        fun Pool.spawn(job: move closure fun())
        fun Pool.join()
        fun Pool.panicked() => i32
-       fun join_or_report<t>(handle: move Thread<t>) => option.Option<t>
+       fun joinOrReport<t>(handle: move Thread<t>) => option.Option<t>
 
    `pool.new(n)` starts `n` worker threads that pull jobs from one FIFO queue.
    `spawn` queues a job (a closure that may capture values it owns: they move
@@ -194,10 +194,13 @@ fun mut Pool.drop() {
    serves are the ones that joined a `Thread<T>` and printed the `Err` message
    (examples/download_pool.kp). */
 
+/// Retired (#375): the camelCase `joinOrReport` is the name. Kept for one cycle.
+fun join_or_report<t>(handle: move Thread<t>) => option.Option<t> = joinOrReport(handle)
+
 /// Joins `handle` and returns its value as `Some`. A worker that panicked prints
 /// its panic text on stdout and returns `None`. The handle is consumed, so it
 /// joins once.
-fun join_or_report<t>(handle: move Thread<t>) => option.Option<t> {
+fun joinOrReport<t>(handle: move Thread<t>) => option.Option<t> {
     when thread.join(handle) {
         Ok(v) -> option.Option.Some(value = v)
         Err(e) -> {
