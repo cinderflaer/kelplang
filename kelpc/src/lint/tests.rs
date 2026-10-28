@@ -351,15 +351,50 @@ fn a_leading_underscore_is_not_part_of_either_case() {
 }
 
 #[test]
-fn snake_case_asks_for_the_mirror_image() {
-    let src = "fun readText() => i32 {\n    val lineCount = 1\n    return lineCount\n}\n";
+fn a_manual_block_name_in_snake_case_is_a_binding() {
+    // `block name: T { ... }` declares its name (`name.box()` reads it), so a
+    // snake_case block name is a binding the default case warns about.
+    let src = "fun f() => i32 {\n    val n = block request_node: Node {\n        return 1\n    }\n    return 0\n}\n";
+    assert_eq!(named(src, NamingCase::Camel), strings(&["request_node"]));
+}
+
+#[test]
+fn a_block_word_that_is_not_an_introducer_is_not_a_name() {
+    // `block` is a contextual word: an ordinary name called `block` is a
+    // binding, and it is in camelCase, so nothing is reported.
+    let src = "fun f() => i32 {\n    val block: i32 = 5\n    return block\n}\n";
+    assert!(case_findings(src, NamingCase::Camel).is_empty());
+}
+
+#[test]
+fn a_tuple_for_pattern_declares_every_name_it_binds() {
+    // `for (lo_index, hi_index) in pairs` takes a tuple apart, and each name
+    // in the pattern is a binding, like the names of `val (a, b) = ...`.
+    let src = "fun f(pairs: str) => i32 {\n    for (lo_index, hi_index) in pairs {\n        print(lo_index)\n    }\n    return 0\n}\n";
     assert_eq!(
-        named(src, NamingCase::Snake),
-        strings(&["readText", "lineCount"])
+        named(src, NamingCase::Camel),
+        strings(&["lo_index", "hi_index"])
     );
-    assert!(case_findings(src, NamingCase::Snake)[0]
-        .1
-        .contains("write 'read_text'"));
+}
+
+#[test]
+fn a_type_and_a_constant_are_never_reported_under_the_default() {
+    // A type is PascalCase whatever the option says, and a `const` is
+    // UPPER_SNAKE by convention, so a snake-looking type name is not this
+    // rule's business, and neither is a constant.
+    let src = "datac point_box(val x: i32)\n\nconst MAX_LIMIT: i32 = 10\n\nenum shape_kind { Circle(val r: f64) Empty }\n";
+    assert!(case_findings(src, NamingCase::Camel).is_empty());
+}
+
+#[test]
+fn snake_case_asks_for_nothing() {
+    // A project that asks for `snake_case` (`naming_case = 1`) is not warned
+    // about any name: the lint checks the default case only, and a camelCase
+    // name in a snake project is the project's own choice (#368 phase 3).
+    let src = "fun readText() => i32 {\n    val lineCount = 1\n    return lineCount\n}\n";
+    assert!(case_findings(src, NamingCase::Snake).is_empty());
+    let mixed = "fun Read_Text(Line_Count: i32) => i32 = Line_Count\n";
+    assert!(case_findings(mixed, NamingCase::Snake).is_empty());
 }
 
 #[test]
@@ -387,9 +422,6 @@ fn the_suggestions_are_the_case_rewrites() {
     assert_eq!(to_camel("read_text"), "readText");
     assert_eq!(to_camel("read__text"), "readText");
     assert_eq!(to_camel("_read_text"), "_readText");
-    assert_eq!(to_snake("readText"), "read_text");
-    assert_eq!(to_snake("read_Text"), "read_text");
-    assert_eq!(to_snake("readHTTPServer"), "read_http_server");
 }
 
 #[test]

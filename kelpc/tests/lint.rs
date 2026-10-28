@@ -263,7 +263,8 @@ fn elif_is_silent() {
 fn the_naming_case_comes_from_the_projects_manifest() {
     let dir = scratch("naming-manifest");
     // `name` is the one key a manifest must have; `naming_case = 1` is the
-    // setting this test is about.
+    // setting this test is about: a snake project is not warned about a
+    // camelCase name (#368 phase 3).
     write(&dir, "coral.toml", "name = \"demo\"\nnaming_case = 1\n");
     let src = dir.join("src");
     fs::create_dir_all(&src).expect("create src/");
@@ -274,15 +275,11 @@ fn the_naming_case_comes_from_the_projects_manifest() {
     );
 
     let out = lint(&file);
-    assert!(out.status.success(), "a warning exits zero");
+    assert!(out.status.success(), "a clean file exits zero");
     let text = stderr(&out);
     assert!(
-        text.contains("'readText' is camelCase") && text.contains("coral.toml 'naming_case = 1'"),
-        "the manifest's setting is not named:\n{text}"
-    );
-    assert!(
-        text.contains("write 'read_text'"),
-        "the suggestion is missing:\n{text}"
+        !text.contains("readText") && !text.contains("lineCount"),
+        "a snake project was warned about a camelCase name:\n{text}"
     );
     // The stdlib's locked `snake_case` is not the project's to fix, so a call
     // into it is never a finding.
@@ -290,6 +287,29 @@ fn the_naming_case_comes_from_the_projects_manifest() {
         !text.contains("is_empty"),
         "a stdlib call was reported as a name:\n{text}"
     );
+}
+
+#[test]
+fn a_camel_project_is_warned_about_a_snake_block_name_and_the_warning_does_not_stop_it() {
+    let dir = scratch("naming-block");
+    write(&dir, "coral.toml", "name = \"demo\"\nnaming_case = 0\n");
+    let src = dir.join("src");
+    fs::create_dir_all(&src).expect("create src/");
+    let file = write(
+        &src,
+        "main.kp",
+        "fun f() => i32 {\n    val n = block request_node: Node {\n        return 1\n    }\n    return 0\n}\n",
+    );
+    let before = fs::read_to_string(&file).expect("read the fixture");
+
+    let out = lint(&file);
+    assert!(out.status.success(), "a warning exits zero");
+    let text = stderr(&out);
+    assert!(
+        text.contains("'request_node' is snake_case") && text.contains("write 'requestNode'"),
+        "the block name is not named with its camelCase spelling:\n{text}"
+    );
+    assert_eq!(fs::read_to_string(&file).expect("read again"), before, "lint wrote the file");
 }
 
 #[test]

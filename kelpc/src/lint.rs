@@ -16,7 +16,7 @@
 //!   lines with no blank line between them.
 //! - the **naming case** (roadmap item 23, `syntax.md` 19): the project's case,
 //!   `camelCase` (the default) or `snake_case`, read from `coral.toml`'s
-//!   `naming_case`.
+//!   `naming_case`. Only `camelCase` is checked (#368 phase 3).
 //! - the **redundant borrow** on a parameter of an owned type or `str` (`&String`,
 //!   `&List<T>`, `&Point` for a `datac`, `&str`, ...): a warning. See
 //!   [`redundant_borrow_params_in`].
@@ -65,6 +65,11 @@
 //! declaration, so a project that sets `camelCase` is never warned about the
 //! stdlib's `snake_case` and a project that sets `snake_case` is never warned
 //! about its own call into `str.is_empty`.
+//!
+//! Only `camelCase` is checked. A project that sets `snake_case` gets no naming
+//! finding at all, because the lint warns about a snake_case name only where
+//! the project asks for camelCase; a camelCase name in a snake project is the
+//! project's own choice.
 //!
 //! The setting is a project-wide convention and so it lives in the project's
 //! manifest rather than in a per-invocation flag. A file with no manifest to
@@ -543,20 +548,15 @@ impl NamingCase {
             _ => None,
         }
     }
+}
 
-    /// Whether `name` is written in this case. A leading underscore is not
-    /// part of either case: `_unused` and `_unused_name` are as ordinary a
-    /// `camelCase` pair as `unused` and `unusedName`, because the underscore
-    /// in front marks a name the author deliberately does not read.
-    fn keeps(self, name: &str) -> bool {
-        let bare = name.trim_start_matches('_');
-        match self {
-            NamingCase::Camel => {
-                !bare.contains('_') && !bare.starts_with(char::is_uppercase)
-            }
-            NamingCase::Snake => !bare.chars().any(|c| c.is_uppercase()),
-        }
-    }
+/// Whether `name` is written in camelCase, the one case the rule checks. A
+/// leading underscore is not part of either case: `_unused` and `_unused_name`
+/// are as ordinary a `camelCase` pair as `unused` and `unusedName`, because the
+/// underscore in front marks a name the author deliberately does not read.
+fn is_camel_case(name: &str) -> bool {
+    let bare = name.trim_start_matches('_');
+    !bare.contains('_') && !bare.starts_with(char::is_uppercase)
 }
 
 /// The naming rule's setting for one file, and where it came from.
@@ -584,13 +584,18 @@ impl Naming {
 /// The naming rule over an already-lexed file.
 fn naming_findings_in(tokens: &[Token], naming: &Naming) -> Vec<Finding> {
     let mut out = Vec::new();
+    // Only the default case is checked (#368 phase 3): a snake_case project
+    // gets no naming finding, camelCase names included.
+    if naming.case != NamingCase::Camel {
+        return out;
+    }
     // One name can be recognized by two shapes at once (`datac P(val x: i32)`
     // is both a `val` binding and a field, and they are the same identifier),
     // so a name found twice is reported once.
     let mut seen: HashSet<usize> = HashSet::new();
     for decl in declared_names(tokens) {
         let name = decl.name.as_str();
-        if name == "_" || !seen.insert(decl.span.start) || naming.case.keeps(name) {
+        if name == "_" || !seen.insert(decl.span.start) || is_camel_case(name) {
             continue;
         }
         let kind = match decl.kind {
@@ -598,18 +603,16 @@ fn naming_findings_in(tokens: &[Token], naming: &Naming) -> Vec<Finding> {
             NameKind::Binding => "binding",
         };
         // What the name *is* written in, which is not always the case the
-        // option offers: `Read_Text` is neither, and the warning says so
-        // rather than calling it one of the two.
-        let found = if name.chars().any(|c| c.is_uppercase()) {
-            if name.contains('_') {
+        // option offers: `Read_Text` is neither, and a name that starts with
+        // a capital (`Foo`) is PascalCase, and the warning says so.
+        let found = if name.contains('_') {
+            if name.chars().any(|c| c.is_uppercase()) {
                 "neither camelCase nor snake_case"
             } else {
-                "camelCase"
+                "snake_case"
             }
-        } else if name.contains('_') {
-            "snake_case"
         } else {
-            "camelCase"
+            "PascalCase"
         };
         let asks = if naming.from_manifest {
             format!(
@@ -624,10 +627,7 @@ fn naming_findings_in(tokens: &[Token], naming: &Naming) -> Vec<Finding> {
                 naming.case.option()
             )
         };
-        let rewrite = match naming.case {
-            NamingCase::Camel => to_camel(name),
-            NamingCase::Snake => to_snake(name),
-        };
+        let rewrite = to_camel(name);
         out.push(Finding {
             span: decl.span,
             message: format!("{kind} '{name}' is {found}, and {asks}; write '{rewrite}'"),
@@ -672,32 +672,6 @@ fn to_camel(name: &str) -> String {
             out.extend(first.to_uppercase());
             out.push_str(chars.as_str());
         }
-    }
-    out
-}
-
-/// `readText` -> `read_text`, for the warning's suggestion.
-///
-/// A capital starts a new word when the character before it is not a capital
-/// (`readText`) or when it is the last capital of a run (`readHTTPServer`),
-/// which is the usual rule and the one that keeps an acronym in one piece.
-fn to_snake(name: &str) -> String {
-    let chars: Vec<char> = name.chars().collect();
-    let mut out = String::new();
-    for (i, c) in chars.iter().enumerate() {
-        if !c.is_uppercase() {
-            out.push(*c);
-            continue;
-        }
-        let prev = i.checked_sub(1).map(|j| chars[j]);
-        let next = chars.get(i + 1).copied();
-        let starts_a_word = matches!(prev, Some(p) if p.is_lowercase() || p.is_ascii_digit())
-            || (matches!(prev, Some(p) if p.is_uppercase())
-                && matches!(next, Some(n) if n.is_lowercase()));
-        if starts_a_word && !out.ends_with('_') {
-            out.push('_');
-        }
-        out.extend(c.to_lowercase());
     }
     out
 }
@@ -780,6 +754,24 @@ fn declared_names(tokens: &[Token]) -> Vec<Declaration> {
                         });
                     }
                 }
+                // `for (lo, hi) in pairs { ... }` takes a tuple apart, and every
+                // name in the pattern is a binding, as in `val (lo, hi) = ...`.
+                let is_tuple_loop = matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::LParen))
+                    && matching_paren(tokens, i + 1).is_some_and(|close| {
+                        matches!(
+                            tokens.get(close + 1).map(|t| &t.kind),
+                            Some(TokenKind::Ident(word)) if word == "in"
+                        )
+                    });
+                if is_tuple_loop {
+                    for (name, span) in tuple_pattern_binds(tokens, i + 1) {
+                        out.push(Declaration {
+                            name,
+                            span,
+                            kind: NameKind::Binding,
+                        });
+                    }
+                }
             }
             TokenKind::Fun => {
                 if let Some((name, span)) = fun_name(tokens, i) {
@@ -791,6 +783,20 @@ fn declared_names(tokens: &[Token]) -> Vec<Declaration> {
                 }
             }
             TokenKind::Ident(name) => {
+                // `block name: T { ... }` (manual memory block) declares `name`:
+                // `name.box()` reads it. The contextual `block` is followed by
+                // an identifier and a `:` only in that form.
+                if name == "block" {
+                    if let Some((block_name, span)) = ident_at(tokens, i + 1) {
+                        if matches!(tokens.get(i + 2).map(|t| &t.kind), Some(TokenKind::Colon)) {
+                            out.push(Declaration {
+                                name: block_name,
+                                span,
+                                kind: NameKind::Binding,
+                            });
+                        }
+                    }
+                }
                 let introduced = i > 0
                     && matches!(tokens[i - 1].kind, TokenKind::LParen | TokenKind::Comma);
                 let typed = matches!(
