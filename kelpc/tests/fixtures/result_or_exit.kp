@@ -6,8 +6,8 @@ impl "std/result"
 impl "std/str"
 
 fun main() {
-    val port = str.parse_u64("8080").orExit("bad port")
+    val port = str.parseU64("8080").orExit("bad port")
     print(port.toText())
-    val bad = str.parse_u64("80x80").orExit("bad port")
+    val bad = str.parseU64("80x80").orExit("bad port")
     print(bad.toText())
 }

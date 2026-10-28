@@ -9,13 +9,13 @@ impl "std/mem"
 
 fun enc_show(s: &str) {
     val b = Bytes.from_str(s)
-    print(encoding.base32_encode(&b))
+    print(encoding.base32Encode(&b))
 }
 
 fun decode_show(text: &str) {
-    val r = encoding.base32_decode(text)
+    val r = encoding.base32Decode(text)
     when r {
-        Ok(b) -> print(encoding.hex_encode(&b))
+        Ok(b) -> print(encoding.hexEncode(&b))
         Err(_) -> print("invalid")
     }
 }
@@ -34,7 +34,7 @@ fun main() {
         all.set(i, i.to_u8())
         i = i + 1
     }
-    print(encoding.base32_encode(&all))
+    print(encoding.base32Encode(&all))
     decode_show("MZXW6YQ=")
     decode_show("MZXW6===")
     decode_show("MZXW6YTBOI======")

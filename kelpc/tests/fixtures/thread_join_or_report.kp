@@ -20,7 +20,7 @@ fun main() {
     }
     val bad: Thread<unit> = thread.spawn(gives_up, 1)
     val gone = pool.join_or_report<unit>(bad)
-    if option.is_none(o = gone) {
+    if option.isNone(o = gone) {
         print("no value")
     }
 }

@@ -20,7 +20,7 @@ fun hdrs() => List<http.Header> {
 fun server_port() => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "server_port: argv[1] is not a port number",
     )
     return p.to_u16()

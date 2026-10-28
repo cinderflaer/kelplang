@@ -12,7 +12,7 @@ impl "std/result"
 fun server_port() => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "server_port: argv[1] is not a port number",
     )
     return p.to_u16()
@@ -26,10 +26,10 @@ fun url_for(port: u16) => String {
 
 fun main() {
     val url = url_for(server_port())
-    val u = ws.parse_url(url)
+    val u = ws.parseUrl(url)
     print("url ${u.host} ${u.port} ${u.scheme}")
 
-    var c = result.expect(ws.connect_url(u), "ws.connect_url: the call failed")
+    var c = result.expect(ws.connectUrl(u), "ws.connect_url: the call failed")
     print("connected")
 
     val m1 = c.recv()

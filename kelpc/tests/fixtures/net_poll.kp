@@ -12,19 +12,19 @@ fun main() {
 
     // Nothing has been sent yet, so a short wait reports false. This is a
     // timeout rather than a hang, the whole point of `wait_readable`.
-    print(s.wait_readable(10))
+    print(s.waitReadable(10))
     // A freshly connected socket has room to write.
-    print(c.wait_writable(1000))
+    print(c.waitWritable(1000))
 
-    net.send_text(c, "now")
-    print(s.wait_readable(2000))
+    net.sendText(c, "now")
+    print(s.waitReadable(2000))
     val got = result.expect(net.recv(s, 8), "net.recv: the call failed")
     print(got)
 
     // After the peer closes its writing half the socket is readable again, and
     // the read reports end of file, a readiness a loop must not spin on.
-    result.expect(net.shutdown_write(c), "net.shutdown_write: the call failed")
-    print(s.wait_readable(2000))
+    result.expect(net.shutdownWrite(c), "net.shutdown_write: the call failed")
+    print(s.waitReadable(2000))
     val eof = result.expect(net.recv(s, 8), "net.recv: the call failed")
     print(eof.is_empty())
 

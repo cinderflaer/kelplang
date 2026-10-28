@@ -22,10 +22,10 @@ fun report(label: &str, r: result.Result<unit, io.IoErr>) {
 fun main() {
     val dir = "/tmp/kelp_fs_try_mut"
     if fs.exists(dir) {
-        result.expect(fs.remove_all(dir), "fs.remove_all: the call failed")
+        result.expect(fs.removeAll(dir), "fs.remove_all: the call failed")
     }
-    report("mkdir_all", fs.mkdir_all("/tmp/kelp_fs_try_mut/a/b"))
-    report("write_text", fs.write_text("/tmp/kelp_fs_try_mut/a/f.txt", "one"))
+    report("mkdir_all", fs.mkdirAll("/tmp/kelp_fs_try_mut/a/b"))
+    report("write_text", fs.writeText("/tmp/kelp_fs_try_mut/a/f.txt", "one"))
     report("append", fs.append("/tmp/kelp_fs_try_mut/a/f.txt", mem.alloc(0)))
     report("write", fs.write("/tmp/kelp_fs_try_mut/a/g.bin", mem.alloc(2)))
     report("rename", fs.rename("/tmp/kelp_fs_try_mut/a/g.bin", "/tmp/kelp_fs_try_mut/a/h.bin"))
@@ -33,13 +33,13 @@ fun main() {
     report("remove", fs.remove("/tmp/kelp_fs_try_mut/a/h.bin"))
 
     // Every one of these fails, and the run goes on.
-    report("write_text_missing_dir", fs.write_text("/tmp/kelp_fs_try_mut/nope/f.txt", "x"))
+    report("write_text_missing_dir", fs.writeText("/tmp/kelp_fs_try_mut/nope/f.txt", "x"))
     report("write_missing_dir", fs.write("/tmp/kelp_fs_try_mut/nope/f.bin", mem.alloc(1)))
     report("append_missing_dir", fs.append("/tmp/kelp_fs_try_mut/nope/f.bin", mem.alloc(1)))
     report("remove_missing", fs.remove("/tmp/kelp_fs_try_mut/a/h.bin"))
     report("rename_missing", fs.rename("/tmp/kelp_fs_try_mut/a/h.bin", "/tmp/kelp_fs_try_mut/a/i.bin"))
     report("symlink_exists", fs.symlink("/tmp/kelp_fs_try_mut/a/f.txt", "/tmp/kelp_fs_try_mut/a/l"))
-    report("mkdir_all_under_file", fs.mkdir_all("/tmp/kelp_fs_try_mut/a/f.txt/x"))
+    report("mkdir_all_under_file", fs.mkdirAll("/tmp/kelp_fs_try_mut/a/f.txt/x"))
     val listed = fs.list("/tmp/kelp_fs_try_mut/a")
     if let Ok(names) = listed {
         print(names.len())
@@ -48,8 +48,8 @@ fun main() {
     if let Err(e) = unlisted {
         print(e.errno.to_i64())
     }
-    report("remove_all", fs.remove_all(dir))
+    report("remove_all", fs.removeAll(dir))
     print(fs.exists(dir))
-    report("remove_all_missing", fs.remove_all(dir))
+    report("remove_all_missing", fs.removeAll(dir))
     print("done")
 }

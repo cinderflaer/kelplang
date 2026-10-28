@@ -38,5 +38,5 @@ impl iter.Iterator for Reader {
 
 fun main() {
     var r = Reader(n = 0)
-    print(option.is_some(o = &r.next()))
+    print(option.isSome(o = &r.next()))
 }

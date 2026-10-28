@@ -14,7 +14,7 @@ fun main() {
     val c = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
     val s = result.expect(net.accept(l), "net.accept: the call failed")
 
-    net.send_text(c, "hello")
+    net.sendText(c, "hello")
     val got = result.expect(net.recv(s, 32), "net.recv: the call failed")
     print(got)
 

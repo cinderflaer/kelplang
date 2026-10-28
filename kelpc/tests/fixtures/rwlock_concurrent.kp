@@ -60,12 +60,12 @@ fun main() {
         s.overlap.store(value = true, order = atomic.Ordering.SeqCst)
         *v
     }
-    print(option.is_some(o = first))
+    print(option.isSome(o = first))
     s.w_go.store(value = true, order = atomic.Ordering.SeqCst)
     var queued = false
     while !queued {
         val got = s.rw.try_read { v -> *v }
-        if option.is_none(o = got) {
+        if option.isNone(o = got) {
             queued = true
         }
     }

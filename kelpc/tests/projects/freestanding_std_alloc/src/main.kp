@@ -58,7 +58,7 @@ section(".text.boot") fun kmain() {
     val lifted = result.map(r = r, f = fun(v: &i32) => i32 = v + 1)
 
     var n: int = doubled.len() + filtered.len() + s.len()
-    if any && option.is_some(o = &mapped) && result.is_ok(r = &lifted) {
+    if any && option.isSome(o = &mapped) && result.isOk(r = &lifted) {
         n = n + 1
     }
     while true { n = n + 1 }

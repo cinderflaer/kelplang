@@ -1,6 +1,6 @@
 impl "std/process"
 
-pub fun count() => int = process.arg_count()
+pub fun count() => int = process.argCount()
 
 // Everything after `argv[0]`, joined with commas.
 pub fun after_program_name() => String {

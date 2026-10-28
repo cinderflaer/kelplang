@@ -42,7 +42,7 @@ fun err_tag(e: &tls.TlsError) => String = when e {
 
 fun pem(dir: &str, name: &str) => Bytes {
     val p = path(dir, name)
-    return when tlsfile.read_pem(p, "file") {
+    return when tlsfile.readPem(p, "file") {
         Ok(b) -> b
         Err(_) -> Bytes.empty()
     }
@@ -53,11 +53,11 @@ fun ca_bytes(dir: &str) => Bytes = pem(dir, "ca.pem")
 // A configuration, as one line: "ok" or the error tag, plus "leak" when the
 // pass phrase or the key text reached the error text.
 fun config_line(label: &str, dir: &str, cert: &str, key: &str, phrase: &str) => String {
-    var opts = tls.server_options()
+    var opts = tls.serverOptions()
     if str.len(phrase) > 0 {
-        opts = opts.key_password(phrase)
+        opts = opts.keyPassword(phrase)
     }
-    val r = tls.server_config_pem_with(pem(dir, cert), pem(dir, key), &opts)
+    val r = tls.serverConfigPemWith(pem(dir, cert), pem(dir, key), &opts)
     var line = String.with_capacity(64)
     line.push_str(label)
     line.push_str(" ")
@@ -69,7 +69,7 @@ fun config_line(label: &str, dir: &str, cert: &str, key: &str, phrase: &str) => 
         Err(e) -> {
             val tmp_6857 = err_tag(&e)
             line.push_str(tmp_6857)
-            val text = tls.error_text(e)
+            val text = tls.errorText(e)
             if str.contains(text, "swordfish") || str.contains(text, "PRIVATE KEY") {
                 line.push_str(" leak")
             }
@@ -90,7 +90,7 @@ fun encrypted_keys(dir: &str) {
 }
 
 fun key_line(name: &str, p: &str) => String {
-    val r = tlsfile.read_key(p)
+    val r = tlsfile.readKey(p)
     var line = String.with_capacity(64)
     line.push_str("key ")
     line.push_str(name)
@@ -102,7 +102,7 @@ fun key_line(name: &str, p: &str) => String {
         Err(e) -> {
             val tag = err_tag(&e)
             line.push_str(tag)
-            val text = tls.error_text(e)
+            val text = tls.errorText(e)
             if str.contains(text, "0644") {
                 line.push_str(" mode=0644")
             }
@@ -135,8 +135,8 @@ fun key_perms(dir: &str) {
 fun server_main(job: move Job) => u64 {
     val args = process.args()
     val dir = args.get(2).clone()
-    val opts = tls.server_options()
-    val built = tls.server_config_pem_with(pem(dir, "server.pem"), pem(dir, "server.key"), &opts)
+    val opts = tls.serverOptions()
+    val built = tls.serverConfigPemWith(pem(dir, "server.pem"), pem(dir, "server.key"), &opts)
     return when built {
         Ok(cfg) -> serve_rounds(cfg, job.fd, job.rounds, dir.as_str(), &opts)
         Err(_) -> 0
@@ -164,7 +164,7 @@ fun serve_rounds(cfg: tls.ServerConfig, fd: i32, rounds: i32, dir: &str, opts: &
                         val got = tls.read(t, 64)
                         when got {
                             Ok(b) -> {
-                                val w = tls.write_all(t, b)
+                                val w = tls.writeAll(t, b)
                                 done = done + 1
                             }
                             Err(_) -> {
@@ -182,13 +182,13 @@ fun serve_rounds(cfg: tls.ServerConfig, fd: i32, rounds: i32, dir: &str, opts: &
             }
         }
         if i == 1 {
-            codes = codes + 256 * reload_code(cfg.reload_pem(pem(dir, "expired.pem"), pem(dir, "server.key"), opts))
+            codes = codes + 256 * reload_code(cfg.reloadPem(pem(dir, "expired.pem"), pem(dir, "server.key"), opts))
         }
         if i == 2 {
-            codes = codes + 4096 * reload_code(cfg.reload_pem(pem(dir, "server.pem"), pem(dir, "other_server.key"), opts))
+            codes = codes + 4096 * reload_code(cfg.reloadPem(pem(dir, "server.pem"), pem(dir, "other_server.key"), opts))
         }
         if i == 3 {
-            codes = codes + 65536 * reload_code(cfg.reload_pem(pem(dir, "server.pem"), pem(dir, "server.key"), opts))
+            codes = codes + 65536 * reload_code(cfg.reloadPem(pem(dir, "server.pem"), pem(dir, "server.key"), opts))
         }
     }
     cfg.free()
@@ -269,15 +269,15 @@ fun server_line(packed: u64) => String {
 }
 
 fun client_round(label: &str, dir: &str, port: u16) => String {
-    val opts = tls.client_options().with_ca_pem(ca_bytes(dir)).with_timeout_ms(10000)
+    val opts = tls.clientOptions().withCaPem(ca_bytes(dir)).withTimeoutMs(10000)
     val s = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
-    val hs = tls.handshake_opts(s, "localhost", &opts)
+    val hs = tls.handshakeOpts(s, "localhost", &opts)
     var line = String.with_capacity(64)
     line.push_str(label)
     line.push_str(" ")
     when hs {
         Ok(t) -> {
-            val w = tls.write_all(t, Bytes.from_str("hello"))
+            val w = tls.writeAll(t, Bytes.from_str("hello"))
             val r = tls.read(t, 64)
             when r {
                 Ok(b) -> {
@@ -303,9 +303,9 @@ fun client_round(label: &str, dir: &str, port: u16) => String {
 }
 
 fun reload(dir: &str) {
-    val l = net.listen_on("127.0.0.1", 0)
+    val l = net.listenOn("127.0.0.1", 0)
     var lm = net.Listener(fd = l.fd)
-    lm.set_timeout(10000)
+    lm.setTimeout(10000)
     val port = l.port()
     val h = thread.spawn(server_main, Job(fd = l.fd, rounds = 4))
     val line6 = client_round("round 1", dir, port)
@@ -337,7 +337,7 @@ fun reload(dir: &str) {
 // `listen_on` binds the host it is given: loopback answers on 127.0.0.1 and
 // the port it reports is the one that was bound.
 fun listen_host() {
-    val l = net.listen_on("127.0.0.1", 0)
+    val l = net.listenOn("127.0.0.1", 0)
     val port = l.port()
     val c = result.expect(net.connect("127.0.0.1", port), "net.connect: the call failed")
     val s = result.expect(net.accept(l), "net.accept: the call failed")

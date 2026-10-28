@@ -4,12 +4,12 @@ impl "std/thread"
 impl "std/result"
 
 fun worker(x: move i64) => u64 {
-    thread.current_id()
+    thread.currentId()
 }
 
 fun main() {
-    val main_id = thread.current_id()
-    val main_id_again = thread.current_id()
+    val main_id = thread.currentId()
+    val main_id_again = thread.currentId()
     val h = thread.spawn(worker, 1)
     when thread.join(h) {
         Ok(worker_id) -> {

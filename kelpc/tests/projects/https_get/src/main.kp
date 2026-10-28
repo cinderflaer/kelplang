@@ -17,7 +17,7 @@ impl "std/result"
 fun server_port() => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "server_port: argv[1] is not a port number",
     )
     return p.to_u16()
@@ -34,7 +34,7 @@ fun url_for(path: &str) => String {
 
 // The reason of a failed request is the panic text, as `http.get` gave it.
 fun fail_text(e: &http.HttpErr) => http.Response {
-    val text = http.http_error_text(e)
+    val text = http.httpErrorText(e)
     panic(text.as_str())
 }
 
@@ -46,5 +46,5 @@ fun main() {
     }
     print(r.status)
     print(r.body)
-    print(r.is_ok())
+    print(r.isOk())
 }

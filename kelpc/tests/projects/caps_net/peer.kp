@@ -32,16 +32,16 @@ pub fun report() => String {
     // `recv_into` writes into a buffer the caller sized: the "read exactly the
     // bytes I know are coming" form. The buffer's length is its capacity.
     var buf = mem.alloc(4)
-    val first_recv = result.expect(net.recv_into(server, buf, 0), "net.recv_into: the call failed")
-    result.expect(net.send_all(client, Bytes.from_str("+more")), "net.send_all: the call failed")
+    val first_recv = result.expect(net.recvInto(server, buf, 0), "net.recv_into: the call failed")
+    result.expect(net.sendAll(client, Bytes.from_str("+more")), "net.send_all: the call failed")
     val second = result.expect(net.recv(server, 64), "net.recv: the call failed")
-    net.send_text(server, "pong")
+    net.sendText(server, "pong")
     val back = result.expect(net.recv(client, 64), "net.recv: the call failed")
 
     // The peer address is the *connected* address, so it starts with the
     // address the client named; the port is whatever the kernel assigned.
-    val who = server.peer_addr()
-    val loopback = str.starts_with(who, "127.0.0.1:")
+    val who = server.peerAddr()
+    val loopback = str.startsWith(who, "127.0.0.1:")
 
     var out = String.empty()
     push_num(out, first_send.to_u64())

@@ -18,7 +18,7 @@ fun mk() => str {
     return "/etc/passwd"
 }
 
-pub fun inside_once() => String = result.expect(fs.read_text(mk()), "fs.read_text: the call failed")
+pub fun inside_once() => String = result.expect(fs.readText(mk()), "fs.read_text: the call failed")
 
 // The control: a path out of the grant, the same on every evaluation.
-pub fun outside() => String = result.expect(fs.read_text("/etc/passwd"), "fs.read_text: the call failed")
+pub fun outside() => String = result.expect(fs.readText("/etc/passwd"), "fs.read_text: the call failed")

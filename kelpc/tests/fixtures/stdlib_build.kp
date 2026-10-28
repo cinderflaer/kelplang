@@ -15,9 +15,9 @@ fun main() {
     // it would overflow), both round-tripped through the parsers. Both have a
     // literal spelling since a `u64` context admitted the whole `u64` range
     // (MISSING-x8Wq3); the parser path is what this fixture is testing.
-    val big = str.parse_u64("18446744073709551615")
+    val big = str.parseU64("18446744073709551615")
     print(str.from_u64(result.unwrap(r = big)))
-    val min = str.parse_i64("-9223372036854775808")
+    val min = str.parseI64("-9223372036854775808")
     print(str.from_i64(result.unwrap(r = min)))
     print(str.from_u64(9))
 }

@@ -18,15 +18,15 @@ impl "std/http" caps(net = ["127.0.0.1:*"])
 fun arg_u64(i: int) => u64 {
     val args = process.args()
     return result.expect(
-        r = str.parse_u64(args.get(i).as_str()),
+        r = str.parseU64(args.get(i).as_str()),
         message = "http_server: an argument is not a number",
     )
 }
 
 fun say(text: &str) {
     val f = io.stdout()
-    val a = f.write_str(text)
-    val b = f.write_str("\n")
+    val a = f.writeStr(text)
+    val b = f.writeStr("\n")
 }
 
 fun big() => http.ServerResponse {
@@ -46,7 +46,7 @@ fun echo(req: &http.ServerRequest) => http.ServerResponse {
 }
 
 fun param(req: &http.ServerRequest, name: &str) => String {
-    val v = req.query_param(name)
+    val v = req.queryParam(name)
     return when v {
         Some(s) -> s
         None -> String.from_str("<none>")
@@ -54,9 +54,9 @@ fun param(req: &http.ServerRequest, name: &str) => String {
 }
 
 fun handle(req: &http.ServerRequest) => http.ServerResponse {
-    val segs = req.path_segments()
+    val segs = req.pathSegments()
     if segs.len() == 0 {
-        return http.ok_text("hello")
+        return http.okText("hello")
     }
     val first = segs.get(0).as_str()
     if str.eq(first, "echo") {
@@ -71,7 +71,7 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
         out.push_str(req.path)
         out.push_str(" ")
         out.push_str(req.query)
-        return http.ok_text(out)
+        return http.okText(out)
     }
     if str.eq(first, "users") && segs.len() == 2 {
         var out = String.with_capacity(64)
@@ -90,7 +90,7 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
             out.push_str(segs.get(i).as_str())
             i = i + 1
         }
-        return http.ok_text(out)
+        return http.okText(out)
     }
     if str.eq(first, "q") {
         var out = String.with_capacity(64)
@@ -108,14 +108,14 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
         var out = String.with_capacity(64)
         val v = req.header("x-test")
         out.push_str(v)
-        if req.has_header("X-TEST") {
+        if req.hasHeader("X-TEST") {
             out.push_str("|has")
         }
-        if !req.has_header("x-absent") {
+        if !req.hasHeader("x-absent") {
             out.push_str("|absent")
         }
-        val r = http.ok_text(out)
-        return r.with_header("X-Reply", "yes")
+        val r = http.okText(out)
+        return r.withHeader("X-Reply", "yes")
     }
     if str.eq(first, "nocontent") {
         return http.status(204)
@@ -124,20 +124,20 @@ fun handle(req: &http.ServerRequest) => http.ServerResponse {
         return http.status(418)
     }
     if str.eq(first, "bad") {
-        return http.bad_request("nope")
+        return http.badRequest("nope")
     }
     if str.eq(first, "close") {
-        val r = http.ok_text("bye")
-        return r.with_header("Connection", "close")
+        val r = http.okText("bye")
+        return r.withHeader("Connection", "close")
     }
     if str.eq(first, "big") {
         return big()
     }
     if str.eq(first, "len") {
         val n = fmt.uint(req.body.len().to_u64())
-        return http.ok_text(n)
+        return http.okText(n)
     }
-    return http.not_found()
+    return http.notFound()
 }
 
 fun fd_count() => int {

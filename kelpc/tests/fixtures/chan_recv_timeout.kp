@@ -25,15 +25,15 @@ fun describe(r: move result.Result<i64, sync.RecvTimeout>) {
 
 fun main() {
     val (tx, rx) = sync.bounded<i64>(2)
-    describe(rx.recv_timeout(30))
+    describe(rx.recvTimeout(30))
     val h = thread.spawn(send_once, tx.clone())
-    describe(rx.recv_timeout(20000))
+    describe(rx.recvTimeout(20000))
     when thread.join(h) {
         Ok(_) -> {}
         Err(e) -> print(e.message)
     }
     give_up(tx)
-    describe(rx.recv_timeout(20000))
+    describe(rx.recvTimeout(20000))
 }
 // stdout-begin
 // stdout: timeout

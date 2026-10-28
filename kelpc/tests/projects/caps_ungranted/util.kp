@@ -1,4 +1,4 @@
 impl "std/fs"
 impl "std/result"
 
-fun read_note() => String = result.expect(fs.read_text("__KELP_SCRATCH__/kelp_caps_granted/note.txt"), "fs.read_text: the call failed")
+fun read_note() => String = result.expect(fs.readText("__KELP_SCRATCH__/kelp_caps_granted/note.txt"), "fs.read_text: the call failed")

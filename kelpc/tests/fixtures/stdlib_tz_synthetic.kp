@@ -159,7 +159,7 @@ fun name_refusals(st: mut Stats) {
     while i < denied.len() {
         val name = denied.get(i)
         val got = tz.load(name.as_str())
-        t(st, name.as_str(), result.is_err(r = got))
+        t(st, name.as_str(), result.isErr(r = got))
         if let Err(e) = got {
             if let Denied = e {
             } else {
@@ -169,7 +169,7 @@ fun name_refusals(st: mut Stats) {
         i = i + 1
     }
     val empty = tz.load("")
-    t(st, "empty name", result.is_err(r = empty))
+    t(st, "empty name", result.isErr(r = empty))
     if let Err(e) = empty {
         if let NotFound = e {
         } else {
@@ -177,7 +177,7 @@ fun name_refusals(st: mut Stats) {
         }
     }
     val missing = tz.load("No/Such_Zone")
-    t(st, "missing zone", result.is_err(r = missing))
+    t(st, "missing zone", result.isErr(r = missing))
     if let Err(e) = missing {
         if let NotFound = e {
         } else {
@@ -185,9 +185,9 @@ fun name_refusals(st: mut Stats) {
         }
     }
     val bad_dir = tz.load_in("relative", "UTC")
-    t(st, "relative directory", result.is_err(r = bad_dir))
+    t(st, "relative directory", result.isErr(r = bad_dir))
     val bad_inner = tz.load_in("/etc", "../passwd")
-    t(st, "escaping name in load_in", result.is_err(r = bad_inner))
+    t(st, "escaping name in load_in", result.isErr(r = bad_inner))
 }
 
 // Every corrupt file answers `Corrupt` with a message that says what is wrong.
@@ -243,7 +243,7 @@ fun corrupt_cases(st: mut Stats) {
     while k < cases.len() {
         val data = cases.get(k)
         val got = tz.parse(data.clone())
-        t(st, "corrupt case", result.is_err(r = got))
+        t(st, "corrupt case", result.isErr(r = got))
         if let Err(e) = got {
             if let Corrupt(message) = e {
                 t(st, "corrupt message is non-empty", message.len() > 0)
@@ -260,34 +260,34 @@ fun main() {
 
     // utc and fixed
     val u = tz.utc()
-    t(st, "utc offset", u.offset_at(0).seconds == 0)
-    same(st, "utc name", u.offset_at(0).abbrev.clone(), "UTC")
-    t(st, "utc not dst", !u.offset_at(0).is_dst)
+    t(st, "utc offset", u.offsetAt(0).seconds == 0)
+    same(st, "utc name", u.offsetAt(0).abbrev.clone(), "UTC")
+    t(st, "utc not dst", !u.offsetAt(0).is_dst)
     same(st, "utc epoch", u.format(0, "%Y-%m-%d %H:%M:%S"), "1970-01-01 00:00:00")
     val f = tz.fixed(19800)
-    t(st, "fixed offset", f.offset_at(0).seconds == 19800)
-    same(st, "fixed name", f.offset_at(0).abbrev.clone(), "+05:30")
+    t(st, "fixed offset", f.offsetAt(0).seconds == 19800)
+    same(st, "fixed name", f.offsetAt(0).abbrev.clone(), "+05:30")
     same(st, "fixed z", f.format(0, "%z"), "+0530")
     same(st, "fixed east", f.format(0, "%Y-%m-%d %H:%M:%S"), "1970-01-01 05:30:00")
     val g = tz.fixed(-12600)
-    same(st, "fixed west name", g.offset_at(0).abbrev.clone(), "-03:30")
-    same(st, "fixed zero is utc", tz.fixed(0).offset_at(0).abbrev.clone(), "UTC")
+    same(st, "fixed west name", g.offsetAt(0).abbrev.clone(), "-03:30")
+    same(st, "fixed zero is utc", tz.fixed(0).offsetAt(0).abbrev.clone(), "UTC")
 
     // a version 2 file with a footer and no transitions
     var data = build('2', 0, "EST5EDT,M3.2.0,M11.1.0", true)
     t(st, "the fixture file is 152 bytes", data.len() == 152)
     val parsed = tz.parse(data.clone())
-    t(st, "parses", result.is_ok(r = parsed))
+    t(st, "parses", result.isOk(r = parsed))
     if let Ok(z) = parsed {
-        t(st, "est in march", z.offset_at(1710000000).seconds == -18000)
-        same(st, "est abbrev", z.offset_at(1710000000).abbrev.clone(), "EST")
-        t(st, "edt in july", z.offset_at(1720000000).seconds == -14400)
-        t(st, "edt is dst", z.offset_at(1720000000).is_dst)
-        t(st, "footer start", z.offset_at(1710053999).seconds == -18000)
-        t(st, "footer started", z.offset_at(1710054000).seconds == -14400)
-        t(st, "footer end", z.offset_at(1730613600).seconds == -18000)
+        t(st, "est in march", z.offsetAt(1710000000).seconds == -18000)
+        same(st, "est abbrev", z.offsetAt(1710000000).abbrev.clone(), "EST")
+        t(st, "edt in july", z.offsetAt(1720000000).seconds == -14400)
+        t(st, "edt is dst", z.offsetAt(1720000000).is_dst)
+        t(st, "footer start", z.offsetAt(1710053999).seconds == -18000)
+        t(st, "footer started", z.offsetAt(1710054000).seconds == -14400)
+        t(st, "footer end", z.offsetAt(1730613600).seconds == -18000)
 
-        val lp = z.local_parts(1710000000)
+        val lp = z.localParts(1710000000)
         t(st, "local year", lp.year == 2024)
         t(st, "local month", lp.month == 3)
         t(st, "local day", lp.day == 9)
@@ -298,9 +298,9 @@ fun main() {
         t(st, "local yday", lp.yday == 69)
         t(st, "local offset", lp.offset.seconds == -18000)
 
-        val gap = z.to_unix(2024, 3, 10, 2, 30, 0)
-        val amb = z.to_unix(2024, 11, 3, 1, 30, 0)
-        val one = z.to_unix(2024, 3, 10, 1, 30, 0)
+        val gap = z.toUnix(2024, 3, 10, 2, 30, 0)
+        val amb = z.toUnix(2024, 11, 3, 1, 30, 0)
+        val one = z.toUnix(2024, 3, 10, 1, 30, 0)
         val gap_text = label(gap)
         val amb_text = label(amb)
         val one_text = label(one)
@@ -325,9 +325,9 @@ fun main() {
 
         // a pre-1970 wall clock, which no transition covers: the footer rule
         // runs backwards as happily as forwards
-        val early = z.to_unix(1969, 12, 31, 23, 59, 59)
+        val early = z.toUnix(1969, 12, 31, 23, 59, 59)
         same(st, "pre-1970", label(early), "one 17999")
-        val epoch = z.to_unix(1970, 1, 1, 0, 0, 0)
+        val epoch = z.toUnix(1970, 1, 1, 0, 0, 0)
         same(st, "epoch", label(epoch), "one 18000")
 
         // the formatter
@@ -353,8 +353,8 @@ fun main() {
     var ist = build('2', 0, "IST-5:30", true)
     val istz = tz.parse(ist.clone())
     if let Ok(z) = istz {
-        t(st, "half-hour offset", z.offset_at(0).seconds == 19800)
-        same(st, "half-hour name", z.offset_at(0).abbrev.clone(), "IST")
+        t(st, "half-hour offset", z.offsetAt(0).seconds == 19800)
+        same(st, "half-hour name", z.offsetAt(0).abbrev.clone(), "IST")
         same(st, "half-hour z", z.format(0, "%z"), "+0530")
     } else {
         t(st, "ist parses", false)
@@ -365,9 +365,9 @@ fun main() {
     t(st, "version 1 is 69 bytes", v1.len() == 69)
     val v1z = tz.parse(v1.clone())
     if let Ok(z) = v1z {
-        t(st, "v1 before", z.offset_at(-1).seconds == -18000)
-        t(st, "v1 at", z.offset_at(0).seconds == -14400)
-        t(st, "v1 after", z.offset_at(1000000000).seconds == -14400)
+        t(st, "v1 before", z.offsetAt(-1).seconds == -18000)
+        t(st, "v1 at", z.offsetAt(0).seconds == -14400)
+        t(st, "v1 after", z.offsetAt(1000000000).seconds == -14400)
     } else {
         t(st, "v1 parses", false)
     }
@@ -376,9 +376,9 @@ fun main() {
     var v2 = build('2', 1, "", false)
     val v2z = tz.parse(v2.clone())
     if let Ok(z) = v2z {
-        t(st, "v2 no footer before", z.offset_at(-1).seconds == -18000)
-        t(st, "v2 no footer at", z.offset_at(0).seconds == -14400)
-        t(st, "v2 no footer after", z.offset_at(4102444800).seconds == -14400)
+        t(st, "v2 no footer before", z.offsetAt(-1).seconds == -18000)
+        t(st, "v2 no footer at", z.offsetAt(0).seconds == -14400)
+        t(st, "v2 no footer after", z.offsetAt(4102444800).seconds == -14400)
     } else {
         t(st, "v2 no footer parses", false)
     }
@@ -387,11 +387,11 @@ fun main() {
     var secs = build('2', 0, "ABC-1:02:03", true)
     val secs_z = tz.parse(secs.clone())
     if let Ok(z) = secs_z {
-        t(st, "fractional offset", z.offset_at(0).seconds == 3723)
-        same(st, "fractional name", z.offset_at(0).abbrev.clone(), "ABC")
+        t(st, "fractional offset", z.offsetAt(0).seconds == 3723)
+        same(st, "fractional name", z.offsetAt(0).abbrev.clone(), "ABC")
         same(st, "fractional z", z.format(0, "%z"), "+0102")
         same(st, "fractional stamp", z.format(0, "%Y-%m-%d %H:%M:%S %Z"), "1970-01-01 01:02:03 ABC")
-        same(st, "fractional epoch", label(z.to_unix(1970, 1, 1, 0, 0, 0)), "one -3723")
+        same(st, "fractional epoch", label(z.toUnix(1970, 1, 1, 0, 0, 0)), "one -3723")
     } else {
         t(st, "fractional offset parses", false)
     }
@@ -401,13 +401,13 @@ fun main() {
     var lh = build('2', 0, "<+1030>-10:30<+11>-11,M10.1.0,M4.1.0", true)
     val lh_z = tz.parse(lh.clone())
     if let Ok(z) = lh_z {
-        t(st, "quoted january is dst", z.offset_at(4103658000).seconds == 39600)
-        t(st, "quoted january is dst flag", z.offset_at(4103658000).is_dst)
-        t(st, "quoted july is standard", z.offset_at(4119298200).seconds == 37800)
+        t(st, "quoted january is dst", z.offsetAt(4103658000).seconds == 39600)
+        t(st, "quoted january is dst flag", z.offsetAt(4103658000).is_dst)
+        t(st, "quoted july is standard", z.offsetAt(4119298200).seconds == 37800)
         same(st, "quoted january name and z", z.format(4103658000, "%Z %z"), "+11 +1100")
         same(st, "quoted july name and z", z.format(4119298200, "%Z %z"), "+1030 +1030")
-        same(st, "quoted january instant", label(z.to_unix(2100, 1, 15, 12, 0, 0)), "one 4103658000")
-        same(st, "quoted july instant", label(z.to_unix(2100, 7, 15, 12, 0, 0)), "one 4119298200")
+        same(st, "quoted january instant", label(z.toUnix(2100, 1, 15, 12, 0, 0)), "one 4103658000")
+        same(st, "quoted july instant", label(z.toUnix(2100, 7, 15, 12, 0, 0)), "one 4119298200")
     } else {
         t(st, "quoted footer parses", false)
     }
@@ -416,13 +416,13 @@ fun main() {
     var jr = build('2', 0, "AAA3BBB,J60/0,J300/0", true)
     val jr_z = tz.parse(jr.clone())
     if let Ok(z) = jr_z {
-        t(st, "j rule january", z.offset_at(1704067200).seconds == -10800)
-        t(st, "j rule march", z.offset_at(1709258400).seconds == -7200)
-        t(st, "j rule december", z.offset_at(1735614000).seconds == -10800)
-        same(st, "j rule name", z.offset_at(1709258400).abbrev.clone(), "BBB")
-        same(st, "j rule start instant", label(z.to_unix(2024, 3, 1, 0, 0, 0)), "one 1709258400")
-        same(st, "j rule end instant", label(z.to_unix(2024, 10, 27, 0, 0, 0)), "one 1729998000")
-        same(st, "j rule june instant", label(z.to_unix(2024, 6, 1, 12, 0, 0)), "one 1717250400")
+        t(st, "j rule january", z.offsetAt(1704067200).seconds == -10800)
+        t(st, "j rule march", z.offsetAt(1709258400).seconds == -7200)
+        t(st, "j rule december", z.offsetAt(1735614000).seconds == -10800)
+        same(st, "j rule name", z.offsetAt(1709258400).abbrev.clone(), "BBB")
+        same(st, "j rule start instant", label(z.toUnix(2024, 3, 1, 0, 0, 0)), "one 1709258400")
+        same(st, "j rule end instant", label(z.toUnix(2024, 10, 27, 0, 0, 0)), "one 1729998000")
+        same(st, "j rule june instant", label(z.toUnix(2024, 6, 1, 12, 0, 0)), "one 1717250400")
     } else {
         t(st, "j rule parses", false)
     }
@@ -432,10 +432,10 @@ fun main() {
     var nr = build('2', 0, "AAA3BBB,0/0,365/0", true)
     val nr_z = tz.parse(nr.clone())
     if let Ok(z) = nr_z {
-        t(st, "n rule before midnight", z.offset_at(1704067200).seconds == -7200)
-        t(st, "n rule at the end", z.offset_at(1735614000).seconds == -10800)
-        same(st, "n rule first hour is a gap", label(z.to_unix(2024, 1, 1, 0, 0, 0)), "gap")
-        same(st, "n rule late december", label(z.to_unix(2024, 12, 31, 12, 0, 0)), "one 1735657200")
+        t(st, "n rule before midnight", z.offsetAt(1704067200).seconds == -7200)
+        t(st, "n rule at the end", z.offsetAt(1735614000).seconds == -10800)
+        same(st, "n rule first hour is a gap", label(z.toUnix(2024, 1, 1, 0, 0, 0)), "gap")
+        same(st, "n rule late december", label(z.toUnix(2024, 12, 31, 12, 0, 0)), "one 1735657200")
     } else {
         t(st, "n rule parses", false)
     }
@@ -446,9 +446,9 @@ fun main() {
     var bad_time = build('2', 0, "EST5EDT,M3.2.0,M11.1.0/999999", true)
     val bad_z = tz.parse(bad_time.clone())
     if let Ok(z) = bad_z {
-        t(st, "unreadable footer falls back", z.offset_at(1720000000).seconds == -18000)
-        same(st, "unreadable footer name", z.offset_at(1720000000).abbrev.clone(), "EST")
-        same(st, "unreadable footer instant", label(z.to_unix(2024, 7, 1, 12, 0, 0)), "one 1719853200")
+        t(st, "unreadable footer falls back", z.offsetAt(1720000000).seconds == -18000)
+        same(st, "unreadable footer name", z.offsetAt(1720000000).abbrev.clone(), "EST")
+        same(st, "unreadable footer instant", label(z.toUnix(2024, 7, 1, 12, 0, 0)), "one 1719853200")
     } else {
         t(st, "unreadable footer parses", false)
     }

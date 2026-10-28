@@ -12,34 +12,34 @@ impl "std/result"
 fun server_port() => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "server_port: argv[1] is not a port number",
     )
     return p.to_u16()
 }
 
 fun fail(e: move tls.TlsError) => tls.TlsStream {
-    val text = tls.error_text(e)
+    val text = tls.errorText(e)
     panic(text)
 }
 
 fun exercise(t: tls.TlsStream) {
     val w = tls.write(t, Bytes.from_str("GET /a HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
-    print(result.is_ok(r = w))
-    val wa = tls.write_all(t, Bytes.from_str("GET /b HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
-    print(result.is_ok(r = wa))
+    print(result.isOk(r = w))
+    val wa = tls.writeAll(t, Bytes.from_str("GET /b HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+    print(result.isOk(r = wa))
     var buf = mem.alloc(64)
-    val rd = tls.read_into(t, buf, 0)
-    print(result.is_ok(r = rd))
+    val rd = tls.readInto(t, buf, 0)
+    print(result.isOk(r = rd))
     val r = tls.read(t, 64)
-    print(result.is_ok(r = r))
+    print(result.isOk(r = r))
     val sd = tls.shutdown(t)
-    print(result.is_ok(r = sd))
+    print(result.isOk(r = sd))
 }
 
 fun main() {
     var s = result.expect(net.connect("127.0.0.1", server_port()), "net.connect: the call failed")
-    s.set_timeout(5000)
+    s.setTimeout(5000)
     val hs = tls.handshake(s, "127.0.0.1")
     val t = when hs {
         Ok(v) -> v

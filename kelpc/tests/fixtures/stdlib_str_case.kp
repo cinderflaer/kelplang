@@ -4,20 +4,20 @@ impl "std/str"
 
 fun main() {
     // Latin with diacritics, and the sharp s, whose simple uppercase is itself.
-    print(str.to_upper("café naïve"))
-    print(str.to_lower("ÉCOLE Ñandú"))
-    print(str.to_upper("straße"))
+    print(str.toUpper("café naïve"))
+    print(str.toLower("ÉCOLE Ñandú"))
+    print(str.toUpper("straße"))
     // Greek, including the final sigma: its simple uppercase is capital sigma.
-    print(str.to_upper("αβγ ωσς"))
-    print(str.to_lower("ΑΒΓ ΩΣ"))
+    print(str.toUpper("αβγ ωσς"))
+    print(str.toLower("ΑΒΓ ΩΣ"))
     // Cyrillic.
-    print(str.to_upper("привет ёж"))
-    print(str.to_lower("ПРИВЕТ ЁЖ"))
+    print(str.toUpper("привет ёж"))
+    print(str.toLower("ПРИВЕТ ЁЖ"))
     // A dotted capital I lowercases to a plain i under the simple mapping.
-    print(str.to_lower("İstanbul"))
+    print(str.toLower("İstanbul"))
     // A two-byte letter whose lowercase is three bytes: the output is re-sized.
-    print(str.to_lower("Ⱥ"))
-    print(str.to_lower("Ⱥ").len())
+    print(str.toLower("Ⱥ"))
+    print(str.toLower("Ⱥ").len())
 }
 // stdout-begin
 // stdout: CAFÉ NAÏVE

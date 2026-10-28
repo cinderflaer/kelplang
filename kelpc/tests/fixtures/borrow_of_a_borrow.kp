@@ -4,7 +4,7 @@
 impl "std/option"
 
 fun check(o: option.Option<i64>) {
-    if option.is_none(&o) {
+    if option.isNone(&o) {
         print("none")
     }
 }

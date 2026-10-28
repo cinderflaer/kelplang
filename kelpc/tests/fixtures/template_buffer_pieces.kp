@@ -23,7 +23,7 @@ fun main() {
     print("2 borrowed=$named after=${9}")
     print("3 view=${view.slice(1, 4)} tail=${42}")
     print("4 bytes=${Bytes.from_str("by")} len=${named.len()}")
-    print("5 two buffers=${str.to_upper("ab")}${"cd"}")
+    print("5 two buffers=${str.toUpper("ab")}${"cd"}")
 }
 // stdout-begin
 // stdout: 1 owned=one scalar=7 float=1.500000

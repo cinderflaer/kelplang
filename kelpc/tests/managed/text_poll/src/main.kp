@@ -28,12 +28,12 @@ fun main() {
     val t = thread.spawn(worker, 2000000)
     var i: i64 = 0
     while i < 8 {
-        val k = big.char_count()
+        val k = big.charCount()
         i = i + 1
     }
     when thread.join(t) {
         Ok(v) -> print(v)
         Err(e) -> print(e.message)
     }
-    print(big.char_count())
+    print(big.charCount())
 }

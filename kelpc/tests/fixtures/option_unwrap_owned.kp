@@ -13,7 +13,7 @@ fun main() {
     // with `move`: an empty one answers with the fallback, an occupied one with
     // the payload it was given.
     val empty: option.Option<String> = option.Option.None
-    print(option.unwrap_or(o = empty, fallback = String.from_str(s = "none")))
+    print(option.unwrapOr(o = empty, fallback = String.from_str(s = "none")))
     print(option.expect(o = option.Option.Some(value = String.from_str(s = "expected")), message = "none"))
 
     // The same read through `if let`: `held` is an owned local, so the payload

@@ -11,5 +11,5 @@ pub fun probe() => bool {
         code = 7,
         signal = 0,
     )
-    return c.wait() == 7 && !c.is_running()
+    return c.wait() == 7 && !c.isRunning()
 }

@@ -11,7 +11,7 @@ impl "std/result"
 fun main() {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "argv[1] is not a port number",
     )
     val port_text = str.from_u64(p)

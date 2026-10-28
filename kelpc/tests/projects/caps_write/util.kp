@@ -3,7 +3,7 @@ impl "std/result"
 
 pub fun exercise() {
     val text = String.from_str("hello")
-    result.expect(fs.write_text("__KELP_SCRATCH__/kelp_caps_write/a.txt", text), "fs.write_text: the call failed")
+    result.expect(fs.writeText("__KELP_SCRATCH__/kelp_caps_write/a.txt", text), "fs.write_text: the call failed")
     print(fs.exists("__KELP_SCRATCH__/kelp_caps_write/a.txt"))
     print(fs.size("__KELP_SCRATCH__/kelp_caps_write/a.txt"))
 
@@ -16,7 +16,7 @@ pub fun exercise() {
     print(fs.exists("__KELP_SCRATCH__/kelp_caps_write/b.txt"))
 
     fs.mkdir("__KELP_SCRATCH__/kelp_caps_write/sub")
-    print(fs.is_dir("__KELP_SCRATCH__/kelp_caps_write/sub"))
+    print(fs.isDir("__KELP_SCRATCH__/kelp_caps_write/sub"))
 
     val bytes = Bytes.from_str("raw")
     result.expect(fs.write("__KELP_SCRATCH__/kelp_caps_write/c.bin", bytes), "fs.write: the call failed")

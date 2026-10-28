@@ -22,7 +22,7 @@ fun main() {
     print(p.addr() != q.addr())
 
     a.reset()
-    val z: Ptr<u8> = a.alloc_zeroed(size = 4, align = 4)
+    val z: Ptr<u8> = a.allocZeroed(size = 4, align = 4)
     unsafe {
         print(z.read())
         print(z.offset(1).read())

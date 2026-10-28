@@ -31,11 +31,11 @@ fun main() {
     // The conversions the type takes part in, both directions.
     val n: isize = 0 - 7
     print(n.to_i64())
-    print(option.is_none(o = n.try_to_u32()))
-    print(option.is_some(o = n.try_to_i32()))
+    print(option.isNone(o = n.try_to_u32()))
+    print(option.isSome(o = n.try_to_i32()))
     val big: isize = 4000000000
-    print(option.is_none(o = big.try_to_i32()))
-    print(option.is_some(o = big.try_to_u64()))
+    print(option.isNone(o = big.try_to_i32()))
+    print(option.isSome(o = big.try_to_u64()))
 }
 // stdout-begin
 // stdout: 6

@@ -29,7 +29,7 @@ fun main() {
     // problem, not a caller's. A *response* that says "no" is not a panic.
     val resp = result.expect(http.get(url.as_str()), "http.get: the call failed")
 
-    if !resp.is_ok() {
+    if !resp.isOk() {
         print!("download failed: HTTP ")
         print(resp.status)
         process.exit(1)

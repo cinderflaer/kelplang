@@ -1,4 +1,4 @@
 impl "std/fs"
 impl "std/result"
 
-pub fun load(path: str) => String = result.expect(fs.read_text(path), "fs.read_text: the call failed")
+pub fun load(path: str) => String = result.expect(fs.readText(path), "fs.read_text: the call failed")

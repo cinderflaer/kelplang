@@ -35,7 +35,7 @@ fun span_of(re: mut regex.Regex, text: &str) => String {
 
 // The steps one `find` over `text` takes with a fresh counter.
 fun steps_of(re: mut regex.Regex, text: &str) => i64 {
-    re.reset_steps()
+    re.resetSteps()
     val m = re.find(text)
     return re.steps()
 }
@@ -44,15 +44,15 @@ fun main() {
     // Each of these is exponential for a backtracker.
     val bad_a = repeated("a", 30, "b")
     var p1 = compile_or_die("(a+)+$")
-    print(p1.is_match(bad_a))
+    print(p1.isMatch(bad_a))
     val s1 = steps_of(p1, bad_a.as_str())
     print(s1 < 5000)
     var p2 = compile_or_die("(a|aa)+$")
-    print(p2.is_match(bad_a))
+    print(p2.isMatch(bad_a))
     print(steps_of(p2, bad_a.as_str()) < 5000)
     val bad_x = repeated("x", 30, "")
     var p3 = compile_or_die("(x+x+)+y")
-    print(p3.is_match(bad_x))
+    print(p3.isMatch(bad_x))
     print(steps_of(p3, bad_x.as_str()) < 5000)
 
     // The same patterns, with an input that does match, give the right span.
@@ -66,7 +66,7 @@ fun main() {
 
     // Longer inputs of the exponential kind: 200 a's.
     val long_a = repeated("a", 200, "b")
-    print(p1.is_match(long_a))
+    print(p1.isMatch(long_a))
     print(steps_of(p1, long_a.as_str()) < 100000)
 
     // Linearity on the step counter: doubling the input at most doubles the

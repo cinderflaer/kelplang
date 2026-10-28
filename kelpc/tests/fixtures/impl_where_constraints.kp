@@ -48,7 +48,7 @@ impl<I: iter.Iterator> iter.Iterator for Keep<I> where I::Item: fmt.Display {
 }
 
 fun main() {
-    print(iter.sum_i64(Wrap(inner = iter.range(0, 3))))
+    print(iter.sumI64(Wrap(inner = iter.range(0, 3))))
     print(iter.count(Keep(inner = Tags(left = 2))))
 }
 // stdout-begin

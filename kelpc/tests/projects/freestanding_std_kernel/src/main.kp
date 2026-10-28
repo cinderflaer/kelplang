@@ -56,15 +56,15 @@ fun line(label: str, value: int) {
 section(".text.boot") fun kmain() {
     val full: option.Option<i32> = find(7)
     val empty: option.Option<i32> = find(1)
-    line(label = "some ", value = flag(option.is_some(o = &full)))
-    line(label = "none ", value = flag(option.is_none(o = &empty)))
+    line(label = "some ", value = flag(option.isSome(o = &full)))
+    line(label = "none ", value = flag(option.isNone(o = &empty)))
     line(label = "unwrapped ", value = option.unwrap(o = full).to_int())
 
     val good: result.Result<i32, i32> = classify(3)
     val bad: result.Result<i32, i32> = classify(-1)
-    line(label = "ok ", value = flag(result.is_ok(r = &good)))
-    line(label = "err ", value = flag(result.is_err(r = &bad)))
-    line(label = "fallback ", value = result.unwrap_or(r = &bad, fallback = 9).to_int())
+    line(label = "ok ", value = flag(result.isOk(r = &good)))
+    line(label = "err ", value = flag(result.isErr(r = &bad)))
+    line(label = "fallback ", value = result.unwrapOr(r = &bad, fallback = 9).to_int())
 
     // The arena carves a page-aligned block out of a static region; only the
     // returned address and the byte written through it are checked.

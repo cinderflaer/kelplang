@@ -7,11 +7,11 @@ impl "std/str"
 
 fun main() {
     var form = http.multipart("xXboundaryXx")
-    form.add_field("content", "hello")
-    form.add_field("a\"b\r\nX: y", "v")
-    form.add_file("file", "n\"ote.txt", "text/plain", Bytes.from_str("line1\nline2"))
-    print(form.content_type())
-    val req = http.multipart_request("http://127.0.0.1:1/up", &mut form)
+    form.addField("content", "hello")
+    form.addField("a\"b\r\nX: y", "v")
+    form.addFile("file", "n\"ote.txt", "text/plain", Bytes.from_str("line1\nline2"))
+    print(form.contentType())
+    val req = http.multipartRequest("http://127.0.0.1:1/up", &mut form)
     val text = str.replace(req.body.as_str(), "\r", "\\r")
     print(text)
     print(req.headers.get(0).value)

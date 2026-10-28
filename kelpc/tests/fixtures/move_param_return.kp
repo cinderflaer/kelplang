@@ -34,7 +34,7 @@ fun measure(s: move String) => int {
 
 fun main() {
     print(option.expect(o = taken("abcd", take = true), message = "x"))
-    print(option.is_none(o = taken("abcd", take = false)))
+    print(option.isNone(o = taken("abcd", take = false)))
     print(length_if_any("abc", n = 1))
     print(measure("hello"))
 }

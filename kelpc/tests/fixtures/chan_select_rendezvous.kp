@@ -29,7 +29,7 @@ fun main() {
     print(first)
 
     val h = thread.spawn(taker, Job(rx = rx, ack = ack))
-    thread.sleep_ms(30)
+    thread.sleepMs(30)
     val second = select {
         send(tx, 9) -> "sent",
         timeout(2000) -> "timed out",

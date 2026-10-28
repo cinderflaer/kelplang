@@ -1,4 +1,4 @@
 impl "std/fs"
 impl "std/result"
 
-pub fun outside() => String = result.expect(fs.read_text("/etc/passwd"), "fs.read_text: the call failed")
+pub fun outside() => String = result.expect(fs.readText("/etc/passwd"), "fs.read_text: the call failed")

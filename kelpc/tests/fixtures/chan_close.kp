@@ -25,7 +25,7 @@ fun show(o: move option.Option<i64>) => i64 = when o {
 }
 
 fun state(rx: &sync.Receiver<i64>) => str {
-    return when rx.recv_timeout(0) {
+    return when rx.recvTimeout(0) {
         Ok(_) -> "value"
         Err(e) -> when e {
             Timeout -> "open"

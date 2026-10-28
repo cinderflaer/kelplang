@@ -61,8 +61,8 @@ fun make<X: convert.From<i32>>(v: i32) => X {
 }
 
 fun main() {
-    print(result.is_err(r = lift_io()))
-    print(result.is_err(r = lift_parse()))
+    print(result.isErr(r = lift_io()))
+    print(result.isErr(r = lift_parse()))
     val a = make<AppErr>(v = 5)
     when a {
         Io(code, _) -> print(code)

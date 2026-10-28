@@ -10,8 +10,8 @@ fun main() {
     // An absolute second argument replaces the first.
     val c = path.join(a = "/tmp", b = "/abs")
     print(c)
-    print(path.is_absolute("/x"))
-    print(path.is_absolute("x"))
+    print(path.isAbsolute("/x"))
+    print(path.isAbsolute("x"))
 }
 // stdout-begin
 // stdout: /tmp/x.txt

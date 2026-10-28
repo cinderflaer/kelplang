@@ -13,8 +13,8 @@ fun main() {
     print(math.sqrt(2.0))
     print(math.floor(x = 2.75))
     print(math.sign(x = -3.5))
-    print(math.is_finite(x = 1.0))
-    print(math.is_nan(x = 0.0))
+    print(math.isFinite(x = 1.0))
+    print(math.isNan(x = 0.0))
 }
 // stdout-begin
 // stdout: 3.141593

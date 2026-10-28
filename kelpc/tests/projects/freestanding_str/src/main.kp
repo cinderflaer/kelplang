@@ -11,7 +11,7 @@ section(".text.boot") fun kmain() {
         if str.eq("kelp", "kelp") && !str.eq("kelp", "help") {
             acc = acc + str.len("kernel").to_u64()
         }
-        if str.starts_with("kernel", "ker") {
+        if str.startsWith("kernel", "ker") {
             acc = acc + str.byte("kelp", 1).to_u64()
         }
         if str.ptr("kelp").is_null() {

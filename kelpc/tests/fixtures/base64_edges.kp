@@ -8,16 +8,16 @@ impl "std/result"
 impl "std/mem"
 
 fun decode_show(text: &str) {
-    val r = encoding.base64_decode(text)
+    val r = encoding.base64Decode(text)
     when r {
-        Ok(b) -> print(encoding.hex_encode(&b))
+        Ok(b) -> print(encoding.hexEncode(&b))
         Err(_) -> print("invalid")
     }
 }
 
 fun enc_show(s: &str) {
     val b = Bytes.from_str(s)
-    print(encoding.base64_encode(&b))
+    print(encoding.base64Encode(&b))
 }
 
 fun main() {
@@ -34,14 +34,14 @@ fun main() {
         all.set(i, i.to_u8())
         i = i + 1
     }
-    print(encoding.base64_encode(&all))
+    print(encoding.base64Encode(&all))
     var big = mem.alloc(3001)
     i = 0
     while i < 3001 {
         big.set(i, ((i * 7) % 256).to_u8())
         i = i + 1
     }
-    val enc = encoding.base64_encode(&big)
+    val enc = encoding.base64Encode(&big)
     print(enc.len())
     decode_show("Zm9vYmFy")
     decode_show("Zm9vYg==")
@@ -54,7 +54,7 @@ fun main() {
     decode_show("Z===")
     decode_show("Zm=v")
     decode_show("+/+/")
-    val back = encoding.base64_decode(enc)
+    val back = encoding.base64Decode(enc)
     when back {
         Ok(b) -> {
             print(b.len())

@@ -41,12 +41,12 @@ fun main() {
     // `spawn`: the pipes stay open, so the child can be fed and read. Closing
     // stdin is what gives the child its end of file.
     var child = process.spawn("/bin/sh", sh("cat"))
-    child.stdin.write_text("hello\n")
+    child.stdin.writeText("hello\n")
     child.stdin.close()
     var out = Bytes.empty()
     var open = true
     while open {
-        if child.stdout.wait_readable(2000) {
+        if child.stdout.waitReadable(2000) {
             val chunk = child.stdout.read(8192)
             if chunk.is_empty() {
                 open = false
@@ -63,10 +63,10 @@ fun main() {
     // signal: `is_running` sees it, `kill` sends 9, and `wait` reports
     // 128 + signal rather than an exit status.
     var blocked = process.spawn("/bin/sh", sh("read x"))
-    print(blocked.is_running())
+    print(blocked.isRunning())
     blocked.kill(9)
     print(blocked.wait())
-    print(blocked.is_running())
+    print(blocked.isRunning())
 
     // A path that names no program passes the capability check and is refused
     // before the fork: the `Err` is `NotFound`, and no child was started.

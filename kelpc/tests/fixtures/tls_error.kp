@@ -23,12 +23,12 @@ fun err_name(e: move tls.TlsError) => String = when e {
 fun main() {
     val args = process.args()
     val parsed = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "tls_error: argv[1] is not a port number",
     )
     val host = args.get(2)
     var s = result.expect(net.connect(host.as_str(), parsed.to_u16()), "net.connect: the call failed")
-    s.set_timeout(4000)
+    s.setTimeout(4000)
     val hs = tls.handshake(s, host.as_str())
     when hs {
         Ok(_) -> print("ok")

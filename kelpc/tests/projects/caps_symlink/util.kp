@@ -1,4 +1,4 @@
 impl "std/fs"
 impl "std/result"
 
-pub fun follow() => String = result.expect(fs.read_text("__KELP_SCRATCH__/kelp_caps_symlink/escape"), "fs.read_text: the call failed")
+pub fun follow() => String = result.expect(fs.readText("__KELP_SCRATCH__/kelp_caps_symlink/escape"), "fs.read_text: the call failed")

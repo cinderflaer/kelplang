@@ -55,39 +55,39 @@ fun main() {
     val lo: i64 = 255
     val hi: i64 = 256
     print(u8_or(o = lo.try_to_u8(), fail = 0))
-    print(option.is_none(o = hi.try_to_u8()))
+    print(option.isNone(o = hi.try_to_u8()))
 
     // The lower bound of an unsigned target: only the sign can fail here, so
     // the emitted test is one comparison, not two.
     val neg: i64 = 0 - 1
-    print(option.is_none(o = neg.try_to_u64()))
+    print(option.isNone(o = neg.try_to_u64()))
     print(u64_or(o = 7.try_to_u64(), fail = 0))
 
     // A signed target's own floor, and one below it.
     val deep: i64 = 0 - 2147483648
     print(i32_or(o = deep.try_to_i32(), fail = 0))
-    print(option.is_none(o = (deep - 1).try_to_i32()))
-    print(option.is_none(o = deep.try_to_u16()))
+    print(option.isNone(o = (deep - 1).try_to_i32()))
+    print(option.isNone(o = deep.try_to_u16()))
 
     // An unsigned source above a signed target: both bounds are reachable, so
     // the emitted test has to carry both.
     val wide: u32 = 4294967295
-    print(option.is_none(o = wide.try_to_i32()))
+    print(option.isNone(o = wide.try_to_i32()))
     val small: u32 = 7
     print(i32_or(o = small.try_to_i32(), fail = 0))
-    print(option.is_none(o = wide.try_to_u8()))
+    print(option.isNone(o = wide.try_to_u8()))
 
     // The narrowest source still has fallible targets below it.
     val sixteen: u16 = 65535
-    print(option.is_none(o = sixteen.try_to_u8()))
+    print(option.isNone(o = sixteen.try_to_u8()))
     val fits: u16 = 255
     print(u8_or(o = fits.try_to_u8(), fail = 0))
 
     // A `u64` source: the upper bound is reachable only by a value no smaller
     // type can hold, and `usize` is the same width on this target.
     val big: u64 = 4294967296
-    print(option.is_none(o = big.try_to_u32()))
-    print(option.is_none(o = big.try_to_i32()))
+    print(option.isNone(o = big.try_to_u32()))
+    print(option.isNone(o = big.try_to_i32()))
     val ok: u64 = 7
     print(u32_or(o = ok.try_to_u32(), fail = 0))
 
@@ -110,7 +110,7 @@ fun main() {
     if let Some(v) = lifted {
         print(v)
     }
-    print(option.is_none(o = pick(n = 900)))
+    print(option.isNone(o = pick(n = 900)))
 }
 // stdout-begin
 // stdout: 255

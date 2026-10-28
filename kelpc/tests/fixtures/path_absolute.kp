@@ -11,9 +11,9 @@ fun main() {
     print(path.absolute("/a/b", "/abs/./x"))
 
     val here = fs.cwd()
-    print(path.is_absolute(here))
+    print(path.isAbsolute(here))
     val joined = path.absolute(here, "notes.txt")
-    print(str.ends_with(joined, "/notes.txt"))
+    print(str.endsWith(joined, "/notes.txt"))
 }
 // stdout-begin
 // stdout: /a/b/c.txt

@@ -122,7 +122,7 @@ fun run_scenario(id: i32) {
             b.set_focus(ids.get(0))
         }
         val px0 = b.pixels_written_total()
-        val start = time.now_mono_ns()
+        val start = time.nowMonoNs()
         val frames = scenario_frames(id)
         var n: i32 = 0
         var toggle: i32 = 0
@@ -152,7 +152,7 @@ fun run_scenario(id: i32) {
             allocs_total = allocs_total + b.frame_alloc_count()
             n += 1
         }
-        val end = time.now_mono_ns()
+        val end = time.nowMonoNs()
         val px1 = b.pixels_written_total()
         pixels_total = pixels_total + (px1 - px0)
         // The samples are microseconds per frame; a run under a microsecond reads 0, which is what a

@@ -28,7 +28,7 @@ fun main() {
     print(list.any(xs = xs, f = fun(x: &i32) => bool = x > 2))
     print(list.all(xs = xs, f = fun(x: &i32) => bool = x > 0))
 
-    val at = list.find_index(xs = xs, f = fun(x: &i32) => bool = x == 3)
+    val at = list.findIndex(xs = xs, f = fun(x: &i32) => bool = x == 3)
     print(option.expect(o = at, message = "none"))
 
     // An owned element type: the callback borrows, so nothing is moved out of
@@ -41,9 +41,9 @@ fun main() {
     print(lens.get(0))
     print(lens.get(1))
 
-    val long = list.find_index(names, fun(s: &String) => bool = s.len() > 2)
+    val long = list.findIndex(names, fun(s: &String) => bool = s.len() > 2)
     print(option.expect(o = long, message = "none"))
-    print(list.any(names, fun(s: &String) => bool = str.starts_with(s.as_str(), "cd")))
+    print(list.any(names, fun(s: &String) => bool = str.startsWith(s.as_str(), "cd")))
     print(names.len())
 }
 // stdout-begin

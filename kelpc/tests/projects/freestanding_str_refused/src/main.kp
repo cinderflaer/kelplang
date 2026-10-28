@@ -5,6 +5,6 @@ impl "std/str"
 fun kmain() {
     var n: u64 = 0
     while true {
-        n = n + str.char_count("kelp").to_u64()
+        n = n + str.charCount("kelp").to_u64()
     }
 }

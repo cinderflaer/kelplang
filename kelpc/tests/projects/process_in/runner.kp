@@ -17,12 +17,12 @@ fun sh(script: &str) => List<String> {
 // `run_in`: the child's cwd is `dir`, so `marker.txt` lands there rather than
 // in the parent's directory, which is the whole point of the `_in` form.
 pub fun marker_code(dir: &str) => i32 {
-    val r = result.expect(process.run_in(dir, "/bin/sh", sh("printf hi > marker.txt")), "process.run_in: the call failed")
+    val r = result.expect(process.runIn(dir, "/bin/sh", sh("printf hi > marker.txt")), "process.run_in: the call failed")
     return r.code
 }
 
 pub fun pwd_is(dir: &str) => bool {
-    val r = result.expect(process.run_in(dir, "/bin/sh", sh("pwd")), "process.run_in: the call failed")
+    val r = result.expect(process.runIn(dir, "/bin/sh", sh("pwd")), "process.run_in: the call failed")
     // `contains` rather than `ends_with`: `pwd` ends its line with a newline.
     return str.contains(r.out.as_str(), dir)
 }
@@ -30,7 +30,7 @@ pub fun pwd_is(dir: &str) => bool {
 // `spawn_in` is `run_in` without the drain loop: the child is left holding the
 // pipes, and the caller decides when to wait.
 pub fun spawn_marker_code(dir: &str) => i32 {
-    var child = process.spawn_in(dir, "/bin/sh", sh("printf hi2 > spawned.txt"))
+    var child = process.spawnIn(dir, "/bin/sh", sh("printf hi2 > spawned.txt"))
     child.stdin.close()
     return child.wait()
 }
@@ -39,7 +39,7 @@ pub fun spawn_marker_code(dir: &str) => i32 {
 // its stderr, before any `exec`.
 pub fun bad_dir_code(dir: &str) => String {
     val bad = path.join(dir, "nope")
-    return when process.run_in(bad, "/bin/sh", sh("true")) {
+    return when process.runIn(bad, "/bin/sh", sh("true")) {
         Ok(_) -> String.from_str("ran")
         Err(e) -> err_name(e)
     }
@@ -47,7 +47,7 @@ pub fun bad_dir_code(dir: &str) => String {
 
 pub fun bad_dir_message(dir: &str) => bool {
     val bad = path.join(dir, "nope")
-    return when process.run_in(bad, "/bin/sh", sh("true")) {
+    return when process.runIn(bad, "/bin/sh", sh("true")) {
         Ok(_) -> false
         Err(e) -> when e {
             DirNotFound -> true
@@ -60,7 +60,7 @@ pub fun bad_dir_message(dir: &str) => bool {
 // `/tmp` is not in the grant. If the check ever moved to argument 0 of the
 // `_in` forms, this call would be denied at the call site instead of running.
 pub fun dir_outside_grant() => String {
-    val r = result.expect(process.run_in("/tmp", "/bin/sh", sh("printf out-of-grant-cwd")), "process.run_in: the call failed")
+    val r = result.expect(process.runIn("/tmp", "/bin/sh", sh("printf out-of-grant-cwd")), "process.run_in: the call failed")
     return String.from_str(r.out.as_str())
 }
 
@@ -79,7 +79,7 @@ fun err_name(e: &process.ProcErr) => String = when e {
 }
 
 pub fun try_ok(dir: &str) => String {
-    val r = process.run_in(dir, "/bin/sh", sh("printf there"))
+    val r = process.runIn(dir, "/bin/sh", sh("printf there"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)
@@ -110,7 +110,7 @@ pub fun try_not_executable(dir: &str) => String {
 
 pub fun try_dir_missing(dir: &str) => String {
     val bad = path.join(dir, "nope")
-    val r = process.run_in(bad, "/bin/sh", sh("true"))
+    val r = process.runIn(bad, "/bin/sh", sh("true"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
         Err(e) -> err_name(e)

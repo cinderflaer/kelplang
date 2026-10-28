@@ -19,7 +19,7 @@ impl "std/result"
 fun arg_port(at: int) => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(at).as_str()),
+        r = str.parseU64(args.get(at).as_str()),
         message = "arg_port: an argument is not a port number",
     )
     return p.to_u16()
@@ -53,16 +53,16 @@ fun main() {
     show("fresh", http.get(cut))
 
     var pool = http.pool("127.0.0.1", port)
-    show("pool-cut", pool.send(http.make_get(cut)))
+    show("pool-cut", pool.send(http.makeGet(cut)))
     print("pool kept ${pool.len()}")
 
     val loop_url = url_for(port, "/loop")
-    show("pool-loop", pool.send(http.make_get(loop_url)))
+    show("pool-loop", pool.send(http.makeGet(loop_url)))
     print("pool kept ${pool.len()}")
 
     val hello = url_for(port, "/hello")
-    show("pool-hello", pool.send(http.make_get(hello)))
+    show("pool-hello", pool.send(http.makeGet(hello)))
     print("pool kept ${pool.len()}")
-    pool.close_all()
+    pool.closeAll()
     print("survived")
 }

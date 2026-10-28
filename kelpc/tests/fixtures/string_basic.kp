@@ -3,7 +3,7 @@
 fun main() {
     val greeting = String.from_str("héllo")
     print(greeting.len())
-    print(greeting.char_count())
+    print(greeting.charCount())
     print(greeting.is_empty())
     print(greeting)
 

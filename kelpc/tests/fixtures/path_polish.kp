@@ -7,8 +7,8 @@ fun main() {
     print(path.stem("/a/b/archive.tar.gz"))
     print(path.stem("Makefile"))
     print(path.stem("/a/.bashrc"))
-    print(path.has_extension("/a/b/note.txt", "txt"))
-    print(path.has_extension("/a/b/note.txt", "md"))
+    print(path.hasExtension("/a/b/note.txt", "txt"))
+    print(path.hasExtension("/a/b/note.txt", "md"))
 
     val parts = path.split("/a//b/")
     print(parts.len())
@@ -19,13 +19,13 @@ fun main() {
     all.push("/a")
     all.push("b")
     all.push("c")
-    print(path.join_all(all))
+    print(path.joinAll(all))
 
     var abs: List<String> = List.empty()
     abs.push("/a")
     abs.push("/etc")
     abs.push("x")
-    print(path.join_all(abs))
+    print(path.joinAll(abs))
 }
 // stdout-begin
 // stdout: archive.tar

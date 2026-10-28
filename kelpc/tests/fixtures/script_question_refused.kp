@@ -3,5 +3,5 @@
 
 impl "std/str"
 
-val n = str.parse_i64("5")?
+val n = str.parseI64("5")?
 print(n)

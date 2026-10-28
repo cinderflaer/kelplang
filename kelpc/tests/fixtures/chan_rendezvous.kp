@@ -33,7 +33,7 @@ fun main() {
     val (tx, rx) = sync.rendezvous<i64>()
     val (ack, ack_rx) = sync.bounded<bool>(1)
     val h = thread.spawn(worker, Job(tx = tx, ack = ack))
-    thread.sleep_ms(30)
+    thread.sleepMs(30)
     when ack_rx.try_recv() {
         Some(_) -> print("sent")
         None -> print("blocked")
@@ -54,7 +54,7 @@ fun main() {
     val (tx2, rx2) = sync.rendezvous<i64>()
     val (ack2, ack2_rx) = sync.bounded<bool>(1)
     val h2 = thread.spawn(back_worker, Job(tx = tx2, ack = ack2))
-    thread.sleep_ms(30)
+    thread.sleepMs(30)
     hang_up(rx2)
     when thread.join(h2) {
         Ok(_) -> {}

@@ -3,14 +3,14 @@ impl "std/result"
 
 fun main() {
     val o: option.Option<i32> = option.Option.Some(value = 4)
-    print(o.is_some())
-    print(o.is_none())
+    print(o.isSome())
+    print(o.isNone())
     val p = o.map(fun(x: &i32) => i32 = x + 1)
     print(when p { Some(v) -> v  None -> 0 })
     o.each(fun(x: &i32) { print(x) })
     val r: result.Result<i32, i32> = result.Result.Ok(value = 3)
-    print(r.is_ok())
-    print(r.is_err())
+    print(r.isOk())
+    print(r.isErr())
 }
 // stdout-begin
 // stdout: true

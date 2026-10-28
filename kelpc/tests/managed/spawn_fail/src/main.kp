@@ -4,7 +4,7 @@
 impl "std/thread"
 
 fun nap(n: i64) => i64 {
-    thread.sleep_ms(60000)
+    thread.sleepMs(60000)
     n
 }
 

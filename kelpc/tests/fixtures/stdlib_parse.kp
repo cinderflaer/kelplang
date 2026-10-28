@@ -6,7 +6,7 @@ impl "std/result"
 
 // The reason, as a number, so the fixture can print it.
 fun why(s: &str) => i32 {
-    val r = str.parse_i64(s)
+    val r = str.parseI64(s)
     if let Err(e) = r {
         if let Empty = e {
             return 1
@@ -19,38 +19,38 @@ fun why(s: &str) => i32 {
 }
 
 fun main() {
-    val a = str.parse_i64("123")
-    print(result.is_ok(r = a))
+    val a = str.parseI64("123")
+    print(result.isOk(r = a))
     print(result.unwrap(r = a))
-    val m = str.parse_i64("-9223372036854775808")
-    print(result.is_ok(r = m))
+    val m = str.parseI64("-9223372036854775808")
+    print(result.isOk(r = m))
     print(result.unwrap(r = m))
-    print(result.is_err(r = str.parse_i64("9223372036854775808")))
-    print(result.is_err(r = str.parse_i64("12x")))
-    print(result.is_err(r = str.parse_i64("")))
-    print(result.is_err(r = str.parse_i64(" 12")))
+    print(result.isErr(r = str.parseI64("9223372036854775808")))
+    print(result.isErr(r = str.parseI64("12x")))
+    print(result.isErr(r = str.parseI64("")))
+    print(result.isErr(r = str.parseI64(" 12")))
     print(why(s = ""))
     print(why(s = "12x"))
     print(why(s = "5"))
 
-    val u = str.parse_u64("18446744073709551615")
-    print(result.is_ok(r = u))
+    val u = str.parseU64("18446744073709551615")
+    print(result.isOk(r = u))
     print(str.from_u64(result.unwrap(r = u)))
-    print(result.is_err(r = str.parse_u64("-1")))
-    print(result.is_err(r = str.parse_u64("18446744073709551616")))
+    print(result.isErr(r = str.parseU64("-1")))
+    print(result.isErr(r = str.parseU64("18446744073709551616")))
 
-    val f = str.parse_f64("2.5e2")
-    print(result.is_ok(r = f))
+    val f = str.parseF64("2.5e2")
+    print(result.isOk(r = f))
     print(result.unwrap(r = f))
-    print(result.is_err(r = str.parse_f64("2.5x")))
+    print(result.isErr(r = str.parseF64("2.5x")))
 
     // Codepoint-level text: `char_at` is a character index, `byte_index` maps
     // it back, and a multi-byte character reports its codepoint (é = 233).
-    print(str.char_at("héllo", 0))
-    print(str.char_at("héllo", 1))
-    print(str.byte_index("héllo", 2))
-    print(str.char_at("abc", 9))
-    print(str.char_count("héllo"))
+    print(str.charAt("héllo", 0))
+    print(str.charAt("héllo", 1))
+    print(str.byteIndex("héllo", 2))
+    print(str.charAt("abc", 9))
+    print(str.charCount("héllo"))
 }
 // stdout-begin
 // stdout: true

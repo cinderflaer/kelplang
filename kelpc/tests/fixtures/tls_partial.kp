@@ -50,7 +50,7 @@ fun fail_unit(e: move tls.TlsError) {
 fun arg_port() => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "tls_partial: argv[1] is not a port number",
     )
     return p.to_u16()
@@ -59,7 +59,7 @@ fun arg_port() => u16 {
 fun arg_reply_len() => int {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(2).as_str()),
+        r = str.parseU64(args.get(2).as_str()),
         message = "tls_partial: argv[2] is not the reply length",
     )
     return p.to_int()
@@ -68,14 +68,14 @@ fun arg_reply_len() => int {
 fun main() {
     val reply_len = arg_reply_len()
     var s = result.expect(net.connect("127.0.0.1", arg_port()), "net.connect: the call failed")
-    s.set_timeout(30000)
+    s.setTimeout(30000)
     val hs = tls.handshake(s, "127.0.0.1")
     val t = when hs {
         Ok(v) -> v
         Err(e) -> fail(e)
     }
     val body = payload(1048576)
-    val sent = tls.write_all(t, body)
+    val sent = tls.writeAll(t, body)
     when sent {
         Ok(n) -> print(n)
         Err(e) -> fail_unit(e)
@@ -87,7 +87,7 @@ fun main() {
     var got: int = 0
     var going = true
     while going {
-        val r = tls.read_into(t, buf, got)
+        val r = tls.readInto(t, buf, got)
         when r {
             Ok(n) -> {
                 if n == 0 {
@@ -100,7 +100,7 @@ fun main() {
         }
     }
     print(got)
-    print(encoding.hex_encode(encoding.sha1(buf)))
+    print(encoding.hexEncode(encoding.sha1(buf)))
     // Ending the session is what frees the `SSL*` the handshake allocated.
     val sd = tls.shutdown(t)
     net.close(s)

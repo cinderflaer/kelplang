@@ -48,7 +48,7 @@ impl Shape for Circle {
 
 /// Reads a file named by `path`.
 pub fun load(path: &str) => String {
-    return result.expect(fs.read_text(path), "fs.read_text: the call failed")
+    return result.expect(fs.readText(path), "fs.read_text: the call failed")
 }
 
 /// Makes a circle from a radius.

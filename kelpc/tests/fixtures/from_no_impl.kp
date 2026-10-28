@@ -20,5 +20,5 @@ fun outer() => result.Result<i32, AppErr> {
 }
 
 fun main() {
-    print(result.is_err(r = outer()))
+    print(result.isErr(r = outer()))
 }

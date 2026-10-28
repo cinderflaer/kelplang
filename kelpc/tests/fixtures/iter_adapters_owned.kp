@@ -5,7 +5,7 @@ fun main() {
     names.push("ann")
     names.push("bo")
     names.push("cyrus")
-    var long = iter.filter(iter.into_iter(names), fun(s: &String) => bool = s.len() > 2)
+    var long = iter.filter(iter.intoIter(names), fun(s: &String) => bool = s.len() > 2)
     var lens = iter.map(long, fun(s: &String) => int = s.len())
     for n in lens {
         print(n)
@@ -13,7 +13,7 @@ fun main() {
     var more: List<String> = List.empty()
     more.push("x")
     more.push("yy")
-    for p in iter.enumerate(iter.into_iter(more)) {
+    for p in iter.enumerate(iter.intoIter(more)) {
         val (i, s) = p
         print(i)
         print(s.len())

@@ -5,10 +5,10 @@ impl "std/result"
 
 fun main() {
     val path = "/tmp/kelp_fs_set_mode.txt"
-    result.expect(fs.write_text(path, "x"), "fs.write_text: the call failed")
-    fs.set_mode(path, 420)
+    result.expect(fs.writeText(path, "x"), "fs.write_text: the call failed")
+    fs.setMode(path, 420)
     print(fs.metadata(path).mode)
-    fs.set_mode(path, 493)
+    fs.setMode(path, 493)
     print(fs.metadata(path).mode)
     result.expect(fs.remove(path), "fs.remove: the call failed")
 }

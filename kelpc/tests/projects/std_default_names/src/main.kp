@@ -27,7 +27,7 @@ fun prefixed(n: i32) => option.Option<i32> {
 }
 
 fun parse_or(s: &str) => i64 {
-    if let Ok(n) = str.parse_i64(s = s) {
+    if let Ok(n) = str.parseI64(s = s) {
         return n
     }
     return -1
@@ -45,13 +45,13 @@ fun main() {
         Some(value) -> print(value)
         None -> print(-1)
     }
-    print(half(7).is_none())
-    print(prefixed(2).is_some())
+    print(half(7).isNone())
+    print(prefixed(2).isSome())
     print(parse_or(s = "41") + 1)
     print(parse_or(s = "x"))
-    print(prefixed(3).is_some())
-    print(result.is_err(r = non_negative(n = -2)))
-    print(str.to_upper(s = "kelp"))
+    print(prefixed(3).isSome())
+    print(result.isErr(r = non_negative(n = -2)))
+    print(str.toUpper(s = "kelp"))
     print(fmt.int(n = 5))
     print(iter.count(it = iter.range(a = 0, b = 4)))
     print(Point(x = 3, y = 4).to_text())

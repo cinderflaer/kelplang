@@ -3,11 +3,11 @@ impl "std/result"
 section(".text.boot") fun kmain() {
     val ok: result.Result<i32, i32> = result.Result.Ok(value = 3)
     val bad: result.Result<i32, i32> = result.Result.Err(error = 4)
-    var n: i32 = result.unwrap_or(r = &ok, fallback = 0)
-    if result.is_err(r = &bad) {
-        n = n + result.unwrap_err(r = &bad)
+    var n: i32 = result.unwrapOr(r = &ok, fallback = 0)
+    if result.isErr(r = &bad) {
+        n = n + result.unwrapErr(r = &bad)
     }
-    if result.is_ok(r = &ok) {
+    if result.isOk(r = &ok) {
         n = n + result.expect(r = ok, message = "not ok")
     }
     while true { n = n + 1 }

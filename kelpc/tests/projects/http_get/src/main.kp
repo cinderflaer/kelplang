@@ -20,7 +20,7 @@ fun hdrs() => List<http.Header> {
 fun server_port() => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "server_port: argv[1] is not a port number",
     )
     return p.to_u16()
@@ -55,8 +55,8 @@ fun main() {
     print(r1.status)
     print(r1.body)
     print(r1.reusable)
-    print(r1.has_header("x-test"))
-    print(r1.has_header("absent"))
+    print(r1.hasHeader("x-test"))
+    print(r1.hasHeader("absent"))
     print(r1.header("x-test"))
     print(pool.len())
 
@@ -74,7 +74,7 @@ fun main() {
     // A 404 is a normal return, not a panic.
     val r4 = result.expect(pool.send(req_for("/missing")), "pool.send: the call failed")
     print(r4.status)
-    print(r4.is_ok())
+    print(r4.isOk())
 
     // `Connection: close` means the body is read to end of file and the
     // connection is *not* kept: the pool goes back to empty.
@@ -83,5 +83,5 @@ fun main() {
     print(r5.body)
     print(r5.reusable)
     print(pool.len())
-    pool.close_all()
+    pool.closeAll()
 }

@@ -8,7 +8,7 @@ impl "std/option"
 impl "std/sync"
 
 fun late(tx: move sync.Sender<i64>) {
-    thread.sleep_ms(30)
+    thread.sleepMs(30)
     val back = tx.send(42)
 }
 

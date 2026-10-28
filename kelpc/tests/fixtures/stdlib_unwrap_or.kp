@@ -8,23 +8,23 @@ impl "std/result"
 fun main() {
     val some: option.Option<i32> = option.Option.Some(value = 4)
     val none: option.Option<i32> = option.Option.None
-    print(some.unwrap_or(0))
-    print(none.unwrap_or(9))
+    print(some.unwrapOr(0))
+    print(none.unwrapOr(9))
 
     // The error is hidden by the default: the `Err` payload is dropped, so
     // its type needs no `Copy`.
     val ok: result.Result<i32, String> = result.Result.Ok(value = 3)
     val bad: result.Result<i32, String> = result.Result.Err(error = "bad")
-    print(ok.unwrap_or(-1))
-    print(bad.unwrap_or(-1))
+    print(ok.unwrapOr(-1))
+    print(bad.unwrapOr(-1))
 
     // The free forms still take their receiver as before.
     val name: option.Option<String> = option.Option.Some(value = "kelp")
-    print(option.unwrap_or(o = name, fallback = "none"))
+    print(option.unwrapOr(o = name, fallback = "none"))
     val gone: option.Option<String> = option.Option.None
-    print(option.unwrap_or(o = gone, fallback = "none"))
-    print(result.unwrap_or(r = ok, fallback = 0))
-    print(result.unwrap_or(r = bad, fallback = 0))
+    print(option.unwrapOr(o = gone, fallback = "none"))
+    print(result.unwrapOr(r = ok, fallback = 0))
+    print(result.unwrapOr(r = bad, fallback = 0))
 }
 // stdout-begin
 // stdout: 4

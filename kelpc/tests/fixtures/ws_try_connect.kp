@@ -16,7 +16,7 @@ impl "std/result"
 fun arg_port(at: int) => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(at).as_str()),
+        r = str.parseU64(args.get(at).as_str()),
         message = "arg_port: an argument is not a port number",
     )
     return p.to_u16()

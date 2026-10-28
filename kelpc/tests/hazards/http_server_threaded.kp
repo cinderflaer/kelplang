@@ -16,15 +16,15 @@ impl "std/http" caps(net = ["127.0.0.1:*"])
 fun arg_u64(i: int) => u64 {
     val args = process.args()
     return result.expect(
-        r = str.parse_u64(args.get(i).as_str()),
+        r = str.parseU64(args.get(i).as_str()),
         message = "http_server_threaded: an argument is not a number",
     )
 }
 
 fun say(text: &str) {
     val f = io.stdout()
-    val a = f.write_str(text)
-    val b = f.write_str("\n")
+    val a = f.writeStr(text)
+    val b = f.writeStr("\n")
 }
 
 fun fd_count() => int {
@@ -34,11 +34,11 @@ fun fd_count() => int {
 
 fun handle(req: &http.ServerRequest) => http.ServerResponse {
     if str.eq(req.path, "/id") {
-        thread.sleep_ms(200)
-        val id = fmt.uint(thread.current_id())
-        return http.ok_text(id)
+        thread.sleepMs(200)
+        val id = fmt.uint(thread.currentId())
+        return http.okText(id)
     }
-    return http.ok_text("hello")
+    return http.okText("hello")
 }
 
 fun main() {

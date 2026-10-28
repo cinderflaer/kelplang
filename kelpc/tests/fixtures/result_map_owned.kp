@@ -25,22 +25,22 @@ fun main() {
     // `map` over an owned error type, the case the borrow receiver could not
     // express.
     val failed: result.Result<i32, Bad> = result.map(r = parse(-3), f = fun(n: &i32) => i32 = n * 2)
-    print(result.is_err(r = failed))
+    print(result.isErr(r = failed))
 
     // `map_err` over an owned success payload: the `Ok` arm moves the `String`
     // on, and the callback borrows the `Bad`.
     val kept: result.Result<String, Bad> = result.Result.Ok(value = "kept")
-    val renamed: result.Result<String, String> = result.map_err(r = kept, f = fun(e: &Bad) => String = "unused")
-    print(result.is_ok(r = renamed))
+    val renamed: result.Result<String, String> = result.mapErr(r = kept, f = fun(e: &Bad) => String = "unused")
+    print(result.isOk(r = renamed))
 
     // `map_err` over an owned error: the callback reads it through a borrow and
     // the rebuilt `Err` owns whatever it returns.
     val bad: result.Result<i32, Bad> = result.Result.Err(error = Bad(code = 7))
-    val tagged: result.Result<i32, String> = result.map_err(
+    val tagged: result.Result<i32, String> = result.mapErr(
         r = bad,
         f = fun(e: &Bad) => String = "bad"
     )
-    print(result.is_err(r = tagged))
+    print(result.isErr(r = tagged))
 }
 // stdout-begin
 // stdout: 5

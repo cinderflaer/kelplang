@@ -5,5 +5,5 @@ impl "std/path"
 // needs no path argument, so it is the domain gate and nothing else.
 pub fun where_is_absolute() => bool {
     val here = fs.cwd()
-    return path.is_absolute(here)
+    return path.isAbsolute(here)
 }

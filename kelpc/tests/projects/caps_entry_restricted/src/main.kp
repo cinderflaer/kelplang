@@ -8,8 +8,8 @@ impl "std/result"
 
 fun main() {
     val note = "__KELP_SCRATCH__/kelp_caps_entry_restricted/note.txt"
-    result.expect(fs.write_text(note, String.from_str("hi")), "fs.write_text: the call failed")
+    result.expect(fs.writeText(note, String.from_str("hi")), "fs.write_text: the call failed")
     print(fs.exists(note))
-    val contents = result.expect(fs.read_text(note), "fs.read_text: the call failed")
+    val contents = result.expect(fs.readText(note), "fs.read_text: the call failed")
     print(contents)
 }

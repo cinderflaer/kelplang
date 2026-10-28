@@ -8,8 +8,8 @@ impl "std/str"
 fun main() {
     print(Bytes.from_str("x"))
     print("y")
-    print(str.to_upper("ab"))
-    print("w = ${str.to_upper("cd")}")
+    print(str.toUpper("ab"))
+    print("w = ${str.toUpper("cd")}")
 }
 // stdout-begin
 // stdout: x

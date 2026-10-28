@@ -33,7 +33,7 @@ fun fail_unit(e: move tls.TlsError) {
 fun arg_port() => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "tls_reset_read: argv[1] is not a port number",
     )
     return p.to_u16()
@@ -41,13 +41,13 @@ fun arg_port() => u16 {
 
 fun main() {
     var s = result.expect(net.connect("127.0.0.1", arg_port()), "net.connect: the call failed")
-    s.set_timeout(5000)
+    s.setTimeout(5000)
     val hs = tls.handshake(s, "127.0.0.1")
     val t = when hs {
         Ok(v) -> v
         Err(e) -> fail(e)
     }
-    val sent = tls.write_all(t, Bytes.from_str("GET /a HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+    val sent = tls.writeAll(t, Bytes.from_str("GET /a HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
     when sent {
         Ok(_) -> print("write ok")
         Err(e) -> {

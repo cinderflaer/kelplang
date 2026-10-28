@@ -12,5 +12,5 @@ fun outer() => result.Result<i32, errors.AppErr> {
 
 fun main() {
     val r = outer()
-    print(result.is_err(r = r))
+    print(result.isErr(r = r))
 }

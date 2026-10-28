@@ -254,7 +254,7 @@ fun check(label: &str, pat: &str, r: &Ref, root: i32, seed: u64, count: i32, nul
             gs = x.start.to_i64()
             ge = x.end.to_i64()
         }
-        val yes = re.is_match(text)
+        val yes = re.isMatch(text)
         if gs != rs || ge != re_end || yes != (rs >= 0) {
             bad += 1
             print("DIFF ${label} on '${text}': engine ${gs}..${ge}, reference ${rs}..${re_end}")

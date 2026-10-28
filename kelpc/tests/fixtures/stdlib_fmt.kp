@@ -12,33 +12,33 @@ fun main() {
     print(fmt.hex(0))
     print(fmt.hex(255))
     print(fmt.hex(48879))
-    print(fmt.pad_left("7", 3, 48))
-    print(fmt.pad_left("long", 3, 32))
-    print(fmt.pad_right("7", 3, 46))
+    print(fmt.padLeft("7", 3, 48))
+    print(fmt.padLeft("long", 3, 32))
+    print(fmt.padRight("7", 3, 46))
     print(fmt.bytes(Bytes.from_str("ab")))
     print(fmt.bytes(Bytes.empty()))
     // A `String` is not a `str` (open item 21): the owned result is bound
     // and viewed before it can be concatenated.
-    val padded = fmt.pad_left("7", 3, 48)
+    val padded = fmt.padLeft("7", 3, 48)
     print(str.concat(padded, "!"))
 
-    print(fmt.commas_u64(0))
-    print(fmt.commas_u64(999))
-    print(fmt.commas_u64(1000))
-    print(fmt.commas_u64(1234567))
+    print(fmt.commasU64(0))
+    print(fmt.commasU64(999))
+    print(fmt.commasU64(1000))
+    print(fmt.commasU64(1234567))
     // `u64` max has a literal spelling now (MISSING-x8Wq3); this keeps the
     // arithmetic form `fpl/hash` writes for the FNV offset basis, and each part
     // is bound with its type because a literal that is only the receiver of a
     // method call gets no type from anywhere and defaults to `i32`.
     val unit: u64 = 4294967296
     val mask: u64 = 4294967295
-    print(fmt.commas_u64(mask * unit + mask))
-    print(fmt.commas_i64(0 - 1234567))
-    print(fmt.human_size(0))
-    print(fmt.human_size(1023))
-    print(fmt.human_size(1024))
-    print(fmt.human_size(1536))
-    print(fmt.human_size(1099511627776))
+    print(fmt.commasU64(mask * unit + mask))
+    print(fmt.commasI64(0 - 1234567))
+    print(fmt.humanSize(0))
+    print(fmt.humanSize(1023))
+    print(fmt.humanSize(1024))
+    print(fmt.humanSize(1536))
+    print(fmt.humanSize(1099511627776))
 }
 // stdout-begin
 // stdout: 0

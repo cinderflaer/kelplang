@@ -41,13 +41,13 @@ fun main() {
     print(str.less("z", "é"))
 
     // The predicate agrees with the literal form it replaces, at both ends.
-    print(str.is_digit('0'))
-    print(str.is_digit('9'))
-    print(str.is_digit('5'))
-    print(str.is_digit('/'))
-    print(str.is_digit(':'))
-    print(str.is_digit('a'))
-    print(str.is_digit(' '))
+    print(str.isDigit('0'))
+    print(str.isDigit('9'))
+    print(str.isDigit('5'))
+    print(str.isDigit('/'))
+    print(str.isDigit(':'))
+    print(str.isDigit('a'))
+    print(str.isDigit(' '))
 
     // A digit check is what a hand-written number parser needs, so the fixture
     // parses one: "12x34" stops at the x with the value it has, and the digit
@@ -58,7 +58,7 @@ fun main() {
     var digits: i64 = 0
     while i < str.len(text) {
         val c = str.byte(text, i)
-        if !str.is_digit(c) {
+        if !str.isDigit(c) {
             i = str.len(text)
         } else {
             value = value * 10 + (c - '0').to_i64()

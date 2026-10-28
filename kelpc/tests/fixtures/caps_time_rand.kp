@@ -5,12 +5,12 @@ impl "std/time"
 impl "std/rand"
 
 fun main() {
-    print(time.now_unix() > 0)
-    print(time.now_mono_ns() > 0)
+    print(time.nowUnix() > 0)
+    print(time.nowMonoNs() > 0)
     print(rand.below(n = 10) < 10)
     val b = rand.bytes(n = 4)
     print(b.len())
-    time.sleep_ms(ms = 1)
+    time.sleepMs(ms = 1)
     print("slept")
 }
 // stdout-begin

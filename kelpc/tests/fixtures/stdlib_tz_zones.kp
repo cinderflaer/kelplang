@@ -55,7 +55,7 @@ fun has_zone(dir: String, name: &str) => bool {
     }
     val head = str.concat(dir.as_str(), "/")
     val path = str.concat(head, name)
-    return fs.is_file(path)
+    return fs.isFile(path)
 }
 
 fun dir_of(name: &str) => String {
@@ -73,33 +73,33 @@ fun dir_of(name: &str) => String {
 // One zone's checks, with a mode for the cases that have to be written
 // differently in each.
 fun check_new_york(st: mut Stats, z: &tz.Zone) {
-    val before = z.offset_at(1710053999)
-    val after = z.offset_at(1710054000)
+    val before = z.offsetAt(1710053999)
+    val after = z.offsetAt(1710054000)
     t(st, "ny est before the jump", before.seconds == -18000)
     same(st, "ny est name", before.abbrev.clone(), "EST")
     t(st, "ny edt at the jump", after.seconds == -14400)
     t(st, "ny edt is dst", after.is_dst)
     same(st, "ny edt name", after.abbrev.clone(), "EDT")
 
-    val gap24 = z.to_unix(2024, 3, 10, 2, 30, 0)
-    val amb24 = z.to_unix(2024, 11, 3, 1, 30, 0)
-    val one24 = z.to_unix(2024, 3, 10, 1, 30, 0)
+    val gap24 = z.toUnix(2024, 3, 10, 2, 30, 0)
+    val amb24 = z.toUnix(2024, 11, 3, 1, 30, 0)
+    val one24 = z.toUnix(2024, 3, 10, 1, 30, 0)
     same(st, "ny 2024 spring forward", label(gap24), "gap")
     same(st, "ny 2024 fall back", label(amb24), "ambiguous 1730611800 1730615400")
     same(st, "ny 2024 last est", label(one24), "one 1710052200")
-    same(st, "ny 2025 spring forward", label(z.to_unix(2025, 3, 9, 2, 30, 0)), "gap")
-    same(st, "ny 2025 fall back", label(z.to_unix(2025, 11, 2, 1, 30, 0)), "ambiguous 1762061400 1762065000")
-    same(st, "ny 2026 spring forward", label(z.to_unix(2026, 3, 8, 2, 30, 0)), "gap")
-    same(st, "ny 2026 fall back", label(z.to_unix(2026, 11, 1, 1, 30, 0)), "ambiguous 1793511000 1793514600")
+    same(st, "ny 2025 spring forward", label(z.toUnix(2025, 3, 9, 2, 30, 0)), "gap")
+    same(st, "ny 2025 fall back", label(z.toUnix(2025, 11, 2, 1, 30, 0)), "ambiguous 1762061400 1762065000")
+    same(st, "ny 2026 spring forward", label(z.toUnix(2026, 3, 8, 2, 30, 0)), "gap")
+    same(st, "ny 2026 fall back", label(z.toUnix(2026, 11, 1, 1, 30, 0)), "ambiguous 1793511000 1793514600")
 
     // 2100 is past the last transition in the file, so these two run on the
     // footer rule alone
-    val summer = z.to_unix(2100, 6, 15, 12, 0, 0)
-    val winter = z.to_unix(2100, 1, 15, 12, 0, 0)
+    val summer = z.toUnix(2100, 6, 15, 12, 0, 0)
+    val winter = z.toUnix(2100, 1, 15, 12, 0, 0)
     same(st, "ny footer summer", label(summer), "one 4116758400")
     same(st, "ny footer winter", label(winter), "one 4103715600")
-    t(st, "ny footer summer offset", z.offset_at(4116758400).seconds == -14400)
-    t(st, "ny footer winter offset", z.offset_at(4103715600).seconds == -18000)
+    t(st, "ny footer summer offset", z.offsetAt(4116758400).seconds == -14400)
+    t(st, "ny footer winter offset", z.offsetAt(4103715600).seconds == -18000)
     same(st, "ny footer summer Z", z.format(4116758400, "%Z"), "EDT")
     same(
         st,
@@ -109,61 +109,61 @@ fun check_new_york(st: mut Stats, z: &tz.Zone) {
     )
 
     // before 1970, which the 64-bit table covers with its own transitions
-    val moon = z.to_unix(1969, 7, 20, 20, 17, 0)
+    val moon = z.toUnix(1969, 7, 20, 20, 17, 0)
     same(st, "ny 1969", label(moon), "one -14168580")
-    t(st, "ny 1969 offset", z.offset_at(-14168580).seconds == -14400)
+    t(st, "ny 1969 offset", z.offsetAt(-14168580).seconds == -14400)
     same(st, "ny 1969 stamp", z.format(-14168580, "%Y-%m-%d %H:%M:%S %Z"), "1969-07-20 20:17:00 EDT")
-    val e1900 = z.to_unix(1900, 1, 1, 0, 0, 0)
+    val e1900 = z.toUnix(1900, 1, 1, 0, 0, 0)
     same(st, "ny 1900", label(e1900), "one -2208970800")
-    t(st, "ny 1900 offset", z.offset_at(-2208970800).seconds == -18000)
-    t(st, "ny 2000 is est", z.offset_at(946702800).seconds == -18000)
+    t(st, "ny 1900 offset", z.offsetAt(-2208970800).seconds == -18000)
+    t(st, "ny 2000 is est", z.offsetAt(946702800).seconds == -18000)
 }
 
 fun check_berlin(st: mut Stats, z: &tz.Zone) {
-    t(st, "ber cet before", z.offset_at(1711846799).seconds == 3600)
-    t(st, "ber cest at", z.offset_at(1711846800).seconds == 7200)
-    same(st, "ber spring forward", label(z.to_unix(2024, 3, 31, 2, 30, 0)), "gap")
-    same(st, "ber fall back", label(z.to_unix(2024, 10, 27, 2, 30, 0)), "ambiguous 1729989000 1729992600")
+    t(st, "ber cet before", z.offsetAt(1711846799).seconds == 3600)
+    t(st, "ber cest at", z.offsetAt(1711846800).seconds == 7200)
+    same(st, "ber spring forward", label(z.toUnix(2024, 3, 31, 2, 30, 0)), "gap")
+    same(st, "ber fall back", label(z.toUnix(2024, 10, 27, 2, 30, 0)), "ambiguous 1729989000 1729992600")
     same(st, "ber summer stamp", z.format(1720000000, "%Y-%m-%d %H:%M:%S %z %Z"), "2024-07-03 11:46:40 +0200 CEST")
     // past the last transition: the footer rule
-    t(st, "ber 2100 summer", z.offset_at(4119328800).seconds == 7200)
-    t(st, "ber 2100 winter", z.offset_at(4103694000).seconds == 3600)
+    t(st, "ber 2100 summer", z.offsetAt(4119328800).seconds == 7200)
+    t(st, "ber 2100 winter", z.offsetAt(4103694000).seconds == 3600)
     same(st, "ber 2100 summer Z", z.format(4119328800, "%Z"), "CEST")
-    same(st, "ber 1900", label(z.to_unix(1900, 1, 1, 0, 0, 0)), "one -2208992400")
+    same(st, "ber 1900", label(z.toUnix(1900, 1, 1, 0, 0, 0)), "one -2208992400")
 }
 
 fun check_kolkata(st: mut Stats, z: &tz.Zone) {
-    t(st, "kol half hour", z.offset_at(1700000000).seconds == 19800)
-    same(st, "kol name", z.offset_at(1700000000).abbrev.clone(), "IST")
-    t(st, "kol not dst", !z.offset_at(1700000000).is_dst)
+    t(st, "kol half hour", z.offsetAt(1700000000).seconds == 19800)
+    same(st, "kol name", z.offsetAt(1700000000).abbrev.clone(), "IST")
+    t(st, "kol not dst", !z.offsetAt(1700000000).is_dst)
     same(st, "kol z", z.format(0, "%z"), "+0530")
     same(st, "kol stamp", z.format(0, "%Y-%m-%d %H:%M:%S %Z"), "1970-01-01 05:30:00 IST")
-    same(st, "kol 2024", label(z.to_unix(2024, 1, 1, 0, 0, 0)), "one 1704047400")
-    same(st, "kol 1900", label(z.to_unix(1900, 1, 1, 0, 0, 0)), "one -2209008070")
-    t(st, "kol 1900 was mmt", z.offset_at(-2209008070).seconds == 19270)
+    same(st, "kol 2024", label(z.toUnix(2024, 1, 1, 0, 0, 0)), "one 1704047400")
+    same(st, "kol 1900", label(z.toUnix(1900, 1, 1, 0, 0, 0)), "one -2209008070")
+    t(st, "kol 1900 was mmt", z.offsetAt(-2209008070).seconds == 19270)
     // a year with no DST at all, through the footer
-    t(st, "kol 2100", z.offset_at(4102444800).seconds == 19800)
+    t(st, "kol 2100", z.offsetAt(4102444800).seconds == 19800)
 }
 
 fun check_lord_howe(st: mut Stats, z: &tz.Zone) {
-    val jan = z.to_unix(2024, 1, 15, 12, 0, 0)
-    val jul = z.to_unix(2024, 7, 15, 12, 0, 0)
+    val jan = z.toUnix(2024, 1, 15, 12, 0, 0)
+    val jul = z.toUnix(2024, 7, 15, 12, 0, 0)
     same(st, "lh january", label(jan), "one 1705280400")
     same(st, "lh july", label(jul), "one 1721007000")
-    t(st, "lh summer offset", z.offset_at(1705280400).seconds == 39600)
-    t(st, "lh winter offset", z.offset_at(1721007000).seconds == 37800)
+    t(st, "lh summer offset", z.offsetAt(1705280400).seconds == 39600)
+    t(st, "lh winter offset", z.offsetAt(1721007000).seconds == 37800)
     // the DST step is half an hour here, not a whole one
-    t(st, "lh dst step is 30 minutes", z.offset_at(1705280400).seconds - z.offset_at(1721007000).seconds == 1800)
-    same(st, "lh summer Z", z.offset_at(1705280400).abbrev.clone(), "+11")
-    same(st, "lh winter Z", z.offset_at(1721007000).abbrev.clone(), "+1030")
-    same(st, "lh spring forward", label(z.to_unix(2024, 10, 6, 2, 15, 0)), "gap")
-    same(st, "lh fall back", label(z.to_unix(2024, 4, 7, 1, 45, 0)), "ambiguous 1712414700 1712416500")
-    t(st, "lh at the jump", z.offset_at(1712415600).seconds == 37800)
-    t(st, "lh before the jump", z.offset_at(1712415599).seconds == 39600)
+    t(st, "lh dst step is 30 minutes", z.offsetAt(1705280400).seconds - z.offsetAt(1721007000).seconds == 1800)
+    same(st, "lh summer Z", z.offsetAt(1705280400).abbrev.clone(), "+11")
+    same(st, "lh winter Z", z.offsetAt(1721007000).abbrev.clone(), "+1030")
+    same(st, "lh spring forward", label(z.toUnix(2024, 10, 6, 2, 15, 0)), "gap")
+    same(st, "lh fall back", label(z.toUnix(2024, 4, 7, 1, 45, 0)), "ambiguous 1712414700 1712416500")
+    t(st, "lh at the jump", z.offsetAt(1712415600).seconds == 37800)
+    t(st, "lh before the jump", z.offsetAt(1712415599).seconds == 39600)
     // 2100, on the footer rule, in both seasons
-    t(st, "lh 2100 january", z.offset_at(4103658000).seconds == 39600)
-    t(st, "lh 2100 july", z.offset_at(4119298200).seconds == 37800)
-    t(st, "lh 2100 january is dst", z.offset_at(4103658000).is_dst)
+    t(st, "lh 2100 january", z.offsetAt(4103658000).seconds == 39600)
+    t(st, "lh 2100 july", z.offsetAt(4119298200).seconds == 37800)
+    t(st, "lh 2100 january is dst", z.offsetAt(4103658000).is_dst)
     same(st, "lh 2100 january Z", z.format(4103658000, "%Z"), "+11")
 }
 

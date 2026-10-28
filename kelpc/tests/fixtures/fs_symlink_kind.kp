@@ -9,16 +9,16 @@ fun main() {
     val root = "/tmp/kelp_fs_symlink_kind"
     val target = "/tmp/kelp_fs_symlink_kind_target"
     if fs.exists(root) {
-        result.expect(fs.remove_all(root), "fs.remove_all: the call failed")
+        result.expect(fs.removeAll(root), "fs.remove_all: the call failed")
     }
     if fs.exists(target) {
-        result.expect(fs.remove_all(target), "fs.remove_all: the call failed")
+        result.expect(fs.removeAll(target), "fs.remove_all: the call failed")
     }
 
-    result.expect(fs.mkdir_all(root), "fs.mkdir_all: the call failed")
-    result.expect(fs.mkdir_all(target), "fs.mkdir_all: the call failed")
+    result.expect(fs.mkdirAll(root), "fs.mkdir_all: the call failed")
+    result.expect(fs.mkdirAll(target), "fs.mkdir_all: the call failed")
     val keep = path.join(target, "keep.txt")
-    result.expect(fs.write_text(keep, "keep\n"), "fs.write_text: the call failed")
+    result.expect(fs.writeText(keep, "keep\n"), "fs.write_text: the call failed")
 
     val note = path.join(root, "note.txt")
     val sub = path.join(root, "sub")
@@ -30,9 +30,9 @@ fun main() {
     val dangling = path.join(root, "dangling")
     val missing = path.join(root, "missing")
 
-    result.expect(fs.write_text(note, "kept\n"), "fs.write_text: the call failed")
+    result.expect(fs.writeText(note, "kept\n"), "fs.write_text: the call failed")
     fs.mkdir(sub)
-    result.expect(fs.write_text(inner, "inner\n"), "fs.write_text: the call failed")
+    result.expect(fs.writeText(inner, "inner\n"), "fs.write_text: the call failed")
     result.expect(fs.symlink(target = note.as_str(), link = file_link.as_str()), "fs.symlink: the call failed")
     result.expect(fs.symlink(target = sub.as_str(), link = dir_link.as_str()), "fs.symlink: the call failed")
     result.expect(fs.symlink(target = target, link = out_link.as_str()), "fs.symlink: the call failed")
@@ -40,13 +40,13 @@ fun main() {
     result.expect(fs.symlink(target = missing.as_str(), link = dangling.as_str()), "fs.symlink: the call failed")
 
     // A link answers `true` here and resolves through the other predicates.
-    print(fs.is_symlink(file_link))
-    print(fs.is_file(file_link))
-    print(fs.is_dir(dir_link))
-    print(fs.is_symlink(note))
-    print(fs.read_link(file_link))
+    print(fs.isSymlink(file_link))
+    print(fs.isFile(file_link))
+    print(fs.isDir(dir_link))
+    print(fs.isSymlink(note))
+    print(fs.readLink(file_link))
     // A broken link still has a target text.
-    print(fs.is_symlink(dangling))
+    print(fs.isSymlink(dangling))
     print(fs.exists(dangling))
 
     // `back` points at `root` itself and `dir-link` at `sub`; neither is walked
@@ -54,12 +54,12 @@ fun main() {
     val found = fs.walk(root)
     print(found.len())
 
-    result.expect(fs.remove_all(root), "fs.remove_all: the call failed")
+    result.expect(fs.removeAll(root), "fs.remove_all: the call failed")
     print(fs.exists(root))
     // The link to `target` was unlinked, not descended: the target's own file
     // is still there.
     print(fs.exists(keep))
 
-    result.expect(fs.remove_all(target), "fs.remove_all: the call failed")
+    result.expect(fs.removeAll(target), "fs.remove_all: the call failed")
     print(fs.exists(target))
 }

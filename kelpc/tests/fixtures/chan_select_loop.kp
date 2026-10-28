@@ -15,7 +15,7 @@ fun producer(feed: move Feed) {
     var i: i64 = 1
     while i <= 3 {
         val queued = feed.tx.send(feed.base * i)
-        thread.sleep_ms(2)
+        thread.sleepMs(2)
         i += 1
     }
 }

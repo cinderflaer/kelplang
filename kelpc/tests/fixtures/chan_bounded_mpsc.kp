@@ -12,7 +12,7 @@ fun producer(tx: move sync.Sender<i64>) {
     var i: i64 = 0
     while i < 250 {
         val back = tx.send(i)
-        if option.is_some(o = back) {
+        if option.isSome(o = back) {
             panic("the receiver is alive, so nothing may come back")
         }
         i += 1

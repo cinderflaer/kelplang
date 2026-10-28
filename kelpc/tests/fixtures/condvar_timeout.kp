@@ -9,7 +9,7 @@ fun main() {
     val m: Mutex<i64> = Mutex.new(0)
     val cv: Condvar = Condvar.new()
     val timed = m.wait_while_timeout(&cv, is_zero, 30) { v -> *v }
-    print(option.is_none(o = timed))
+    print(option.isNone(o = timed))
     m.lock { v -> *v = 7 }
     val got = m.wait_while_timeout(&cv, is_zero, 30) { v -> *v }
     print(option.unwrap(o = got))

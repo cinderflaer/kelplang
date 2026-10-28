@@ -8,13 +8,13 @@ pub fun build() {
     val dir = "__KELP_SCRATCH__/kelp_caps_link"
     val target = path.join(dir, "target.txt")
     val link = path.join(dir, "link.txt")
-    result.expect(fs.write_text(target, String.from_str("hello link")), "fs.write_text: the call failed")
+    result.expect(fs.writeText(target, String.from_str("hello link")), "fs.write_text: the call failed")
     result.expect(fs.symlink(target, link.as_str()), "fs.symlink: the call failed")
 
     // Both ends are inside the grant, so following the link resolves to a path
     // the check admits: a link is transparent to every access below it.
-    print(fs.is_file(link))
-    print(result.expect(fs.read_text(link), "fs.read_text: the call failed"))
+    print(fs.isFile(link))
+    print(result.expect(fs.readText(link), "fs.read_text: the call failed"))
 
     // Removing the target leaves the link dangling, and `exists` follows it,
     // which is the proof that this is a link and not a copy.

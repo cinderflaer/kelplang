@@ -6,5 +6,5 @@ impl "std/fs"
 fun main() {
     print(util.read_note())
     print(fs.exists("__KELP_SCRATCH__/kelp_caps_granted/note.txt"))
-    print(fs.is_file("__KELP_SCRATCH__/kelp_caps_granted/note.txt"))
+    print(fs.isFile("__KELP_SCRATCH__/kelp_caps_granted/note.txt"))
 }

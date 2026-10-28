@@ -1,4 +1,4 @@
-// MISSING-p5Xtr: `Response.retry_after()` and `Response.rate_limit()`. A
+// MISSING-p5Xtr: `Response.retryAfter()` and `Response.rateLimit()`. A
 // `429` naming a delay and a spent bucket, then a plain `200` that names
 // none of these headers, the second request is the "absent, not a panic"
 // half of the fixture.
@@ -20,7 +20,7 @@ fun hdrs() => List<http.Header> {
 fun server_port() => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "server_port: argv[1] is not a port number",
     )
     return p.to_u16()
@@ -75,8 +75,8 @@ fun main() {
     // A 429 naming a delay and a spent per-route bucket.
     val limited = result.expect(pool.send(req_for("/limited")), "pool.send: the call failed")
     print(limited.status)
-    print_u64_opt(limited.retry_after())
-    val rl = limited.rate_limit()
+    print_u64_opt(limited.retryAfter())
+    val rl = limited.rateLimit()
     print_u64_opt(rl.limit)
     print_u64_opt(rl.remaining)
     print_f64_opt(rl.reset)
@@ -88,13 +88,13 @@ fun main() {
     // above already showed `remaining = 0` printing as `0`, not `none`).
     val plain = result.expect(pool.send(req_for("/plain")), "pool.send: the call failed")
     print(plain.status)
-    print_u64_opt(plain.retry_after())
-    val rl2 = plain.rate_limit()
+    print_u64_opt(plain.retryAfter())
+    val rl2 = plain.rateLimit()
     print_u64_opt(rl2.limit)
     print_u64_opt(rl2.remaining)
     print_f64_opt(rl2.reset)
     print_f64_opt(rl2.reset_after)
     print_str_opt(rl2.bucket)
 
-    pool.close_all()
+    pool.closeAll()
 }

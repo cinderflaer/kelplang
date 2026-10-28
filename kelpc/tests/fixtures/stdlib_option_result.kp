@@ -41,13 +41,13 @@ fun index_of(xs: &List<String>, needle: &str) => option.Option<String> {
 
 fun main() {
     val good = quarter(n = 8)
-    print(result.is_ok(r = good))
-    print(result.is_err(r = good))
-    print(result.unwrap_or(r = good, fallback = -1))
+    print(result.isOk(r = good))
+    print(result.isErr(r = good))
+    print(result.unwrapOr(r = good, fallback = -1))
 
     val bad = quarter(n = 3)
-    print(result.is_ok(r = bad))
-    print(result.unwrap_or(r = bad, fallback = -1))
+    print(result.isOk(r = bad))
+    print(result.unwrapOr(r = bad, fallback = -1))
 
     var xs: List<String> = List.empty()
     xs.push("a")
@@ -57,13 +57,13 @@ fun main() {
     // is handed out by value), so each of them consumes the binding it is
     // given. `is_some` borrows, and the second read gets a fresh result.
     val hit = find(xs = xs, needle = "b")
-    print(option.is_some(o = hit))
-    print(option.unwrap_or(o = find(xs = xs, needle = "b"), fallback = -1))
+    print(option.isSome(o = hit))
+    print(option.unwrapOr(o = find(xs = xs, needle = "b"), fallback = -1))
     print(option.unwrap(o = hit))
 
     val miss = find(xs = xs, needle = "z")
-    print(option.is_none(o = miss))
-    print(option.unwrap_or(o = miss, fallback = -1))
+    print(option.isNone(o = miss))
+    print(option.unwrapOr(o = miss, fallback = -1))
 
     // `if let` over both, with an owned payload read through the borrow.
     val word = find(xs = xs, needle = "a")
@@ -80,8 +80,8 @@ fun main() {
     }
 
     // `?` on an `Option` in an `Option`-returning function.
-    print(option.is_some(o = index_of(xs = xs, needle = "b")))
-    print(option.is_none(o = index_of(xs = xs, needle = "z")))
+    print(option.isSome(o = index_of(xs = xs, needle = "b")))
+    print(option.isNone(o = index_of(xs = xs, needle = "z")))
 }
 // stdout-begin
 // stdout: true

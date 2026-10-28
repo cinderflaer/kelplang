@@ -8,10 +8,10 @@ fun main() {
         print(i)
     }
     // A step and a descending range are the same loop with a different step.
-    for i in iter.range_step(0, 6, 2) {
+    for i in iter.rangeStep(0, 6, 2) {
         print(i)
     }
-    for i in iter.range_step(3, 0, -1) {
+    for i in iter.rangeStep(3, 0, -1) {
         print(i)
     }
 }

@@ -9,13 +9,13 @@ fun main() {
     print(option.unwrap(o = got))
     val busy = rw.read { v ->
         val w = rw.try_write { x -> *x = 9 }
-        print(option.is_none(o = w))
+        print(option.isNone(o = w))
         *v
     }
     print(busy)
     rw.write { v ->
         val r = rw.try_read { x -> *x }
-        print(option.is_none(o = r))
+        print(option.isNone(o = r))
         *v = 5
     }
     print(rw.read { v -> *v })

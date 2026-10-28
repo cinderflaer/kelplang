@@ -9,7 +9,7 @@ fun main() {
     print(str.len("héllo"))
     print(str.substring("hello", 2))
     print(str.byte("abc", 1))
-    print(math.is_nan(x = 0.0))
+    print(math.isNan(x = 0.0))
 }
 // stdout-begin
 // stdout: true

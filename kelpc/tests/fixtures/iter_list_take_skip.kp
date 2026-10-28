@@ -7,11 +7,11 @@ fun main() {
     xs.push(3)
     xs.push(4)
     xs.push(5)
-    for x in iter.into_iter(xs) {
+    for x in iter.intoIter(xs) {
         print(x)
     }
     print(iter.count(iter.take(iter.range(0, 100), 7)))
-    print(iter.sum_i64(iter.skip(iter.range(0, 10), 7)))
+    print(iter.sumI64(iter.skip(iter.range(0, 10), 7)))
 }
 // stdout-begin
 // stdout: 1

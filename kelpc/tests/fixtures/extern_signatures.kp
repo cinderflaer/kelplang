@@ -31,7 +31,7 @@ fun main() {
     print(math.sqrt(x = 2.0))
     print(math.pow(base = 2.0, exp = 10.0))
     print(math.floor(x = 2.75))
-    print(math.is_nan(x = 0.0))
+    print(math.isNan(x = 0.0))
 
     var b = mem.alloc(2)
     b.set(0, 104)
@@ -41,8 +41,8 @@ fun main() {
     print(fmt.hex(n = 255))
     print(str.from_f64(x = 3.14159, decimals = 2))
     print(str.substring(s = "hello", from = 1))
-    print(result.unwrap(r = str.parse_i64("42")))
-    print(result.is_err(r = str.parse_i64("nope")))
+    print(result.unwrap(r = str.parseI64("42")))
+    print(result.isErr(r = str.parseI64("nope")))
     print(path.normalize("/a//b/./c"))
     print(path.normalize("/a/b/../c"))
 }

@@ -62,7 +62,7 @@ fun main() {
     print(option.expect(o = some.map(fun(x: &i32) => i32 = x + add), message = "none"))
     val ok: result.Result<i32, i32> = result.Result.Ok(value = 4)
     val err: result.Result<i32, i32> = result.Result.Err(error = 5)
-    print(result.unwrap_err(r = result.map_err(r = err, f = fun(e: &i32) => i32 = e * limit)))
+    print(result.unwrapErr(r = result.mapErr(r = err, f = fun(e: &i32) => i32 = e * limit)))
     print(result.expect(r = result.map(r = ok, f = fun(x: &i32) => i32 = x * factor), message = "unreachable"))
 }
 // stdout-begin

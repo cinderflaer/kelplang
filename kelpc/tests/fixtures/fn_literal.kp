@@ -58,7 +58,7 @@ fun main() {
         val q = safe_div(a, b)?
         return option.Option.Some(value = q + 1)
     }
-    print(option.is_none(o = chain(1, 0)))
+    print(option.isNone(o = chain(1, 0)))
     print(option.expect(o = chain(9, 3), message = "unreachable"))
 }
 // stdout-begin

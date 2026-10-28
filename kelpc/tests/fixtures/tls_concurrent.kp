@@ -17,19 +17,19 @@ impl "std/tls"
 datac Job(val port: i32, val id: i64)
 
 fun fail(e: move tls.TlsError) => tls.TlsStream {
-    val text = tls.error_text(e)
+    val text = tls.errorText(e)
     panic(text)
 }
 
 fun fail_unit(e: move tls.TlsError) {
-    val text = tls.error_text(e)
+    val text = tls.errorText(e)
     panic(text)
 }
 
 fun arg_port() => i32 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "tls_concurrent: argv[1] is not a port number",
     )
     return p.to_u16().to_i32()
@@ -52,7 +52,7 @@ fun worker(j: move Job) => i32 {
     req.push_str(id_text)
     req.push_str("\r\n\r\n")
     var s = result.expect(net.connect("127.0.0.1", j.port.to_u16()), "net.connect: the call failed")
-    s.set_timeout(20000)
+    s.setTimeout(20000)
     val hs = tls.handshake(s, "127.0.0.1")
     // A failed handshake panics with its own text: the joiner turns that into a
     // mismatch, and the panic names which worker and why rather than a bare 0.
@@ -60,7 +60,7 @@ fun worker(j: move Job) => i32 {
         Ok(v) -> v
         Err(e) -> fail(e)
     }
-    val sent = tls.write_all(t, req.clone().into_bytes())
+    val sent = tls.writeAll(t, req.clone().into_bytes())
     when sent {
         Ok(_) -> {}
         Err(e) -> fail_unit(e)

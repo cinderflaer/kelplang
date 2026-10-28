@@ -17,7 +17,7 @@ fun hdrs() => List<http.Header> {
 fun server_port() => u16 {
     val args = process.args()
     val p = result.expect(
-        r = str.parse_u64(args.get(1).as_str()),
+        r = str.parseU64(args.get(1).as_str()),
         message = "server_port: argv[1] is not a port number",
     )
     return p.to_u16()
@@ -55,7 +55,7 @@ fun main() {
 
     // A POST with a body and a content type, straight through `Client.send`.
     val echo_url = url_for("/echo")
-    val posted = http.post_text(echo_url, "payload", "text/plain")
+    val posted = http.postText(echo_url, "payload", "text/plain")
     print(posted.status)
     print(posted.text())
 }

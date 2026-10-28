@@ -61,7 +61,7 @@ fun either(v: &J, c: bool) => &str {
 //    block and `return cand` was refused.
 fun round_trip(n: i64) => String {
     val cand = fmt.int(n)
-    val back = str.parse_i64(cand)
+    val back = str.parseI64(cand)
     if let Ok(v) = back {
         if v == n {
             return cand

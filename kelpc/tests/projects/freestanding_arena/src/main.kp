@@ -80,7 +80,7 @@ section(".text.boot") fun kmain() {
     line(label = "reset ", value = a.used().to_int())
 
     // `alloc_zeroed` hands back a block with every byte written to zero.
-    val z: Ptr<u8> = a.alloc_zeroed(size = 4, align = 4)
+    val z: Ptr<u8> = a.allocZeroed(size = 4, align = 4)
     var sum: int = 0
     unsafe {
         sum = z.read().to_int() + z.offset(1).read().to_int()

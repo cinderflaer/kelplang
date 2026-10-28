@@ -177,23 +177,23 @@ fun run(label: str, rows: i32, use_memo: bool) {
             val num = str.from_i64(k.to_i64())
             val title = str.concat("changed ", num.as_str())
             st.items.set(idx.to_int(), Item(id = idx, title = title, done = false))
-            val start = time.now_mono_ns()
+            val start = time.nowMonoNs()
             val next = if use_memo {
                 view_memo(st)
             } else {
                 view_plain(st)
             }
-            val mid1 = time.now_mono_ns()
+            val mid1 = time.nowMonoNs()
             view_total += (mid1 - start) / 1000
             soft_backend.apply_diff_memo(backend = b, old = &tree, new = &next, store = store)
             tree = next
-            diff_total += (time.now_mono_ns() - mid1) / 1000
+            diff_total += (time.nowMonoNs() - mid1) / 1000
             b.layout()
             val d = b.paint(f)
             if d.count() > 0 {
                 p.present(f, d)
             }
-            total += (time.now_mono_ns() - start) / 1000
+            total += (time.nowMonoNs() - start) / 1000
             px += b.pixels_written()
             k += 1
         }

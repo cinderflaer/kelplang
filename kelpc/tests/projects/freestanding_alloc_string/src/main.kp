@@ -13,7 +13,7 @@ fun dealloc(_p: Ptr<u8>, _size: usize, _align: usize) {}
 
 fun kmain() {
     val s = String.from_str("no")
-    val n = s.char_count()
+    val n = s.charCount()
     if n == 2 {
     }
 }

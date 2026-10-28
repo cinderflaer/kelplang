@@ -8,7 +8,7 @@ impl "std/result"
 fun main() {
     val text_path = "/tmp/kelp_fs_try_read.txt"
     val bin_path = "/tmp/kelp_fs_try_read.bin"
-    result.expect(fs.write_text(text_path, "hello\n"), "fs.write_text: the call failed")
+    result.expect(fs.writeText(text_path, "hello\n"), "fs.write_text: the call failed")
 
     // A byte that is not valid UTF-8, so `try_read_text` can be shown failing
     // without a syscall failing.
@@ -27,12 +27,12 @@ fun main() {
         print(e.message)
     }
 
-    val text = fs.read_text(text_path)
+    val text = fs.readText(text_path)
     if let Ok(t) = text {
         print(t)
     }
 
-    val binary = fs.read_text(bin_path)
+    val binary = fs.readText(bin_path)
     if let Err(e) = binary {
         print(e.errno.to_i64())
         print(e.message)
@@ -40,7 +40,7 @@ fun main() {
 
     val opened = fs.open(text_path, "r")
     if let Ok(file) = opened {
-        print(file.is_open())
+        print(file.isOpen())
         file.close()
     }
 

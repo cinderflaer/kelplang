@@ -43,26 +43,26 @@ fun main() {
         headers = hs,
         body = Bytes.empty(),
     )
-    val segs = req.path_segments()
+    val segs = req.pathSegments()
     print(segs.len())
     print(segs.get(1).as_str())
     print(segs.get(2).as_str())
-    show(req.query_param("x"))
-    show(req.query_param("y"))
-    show(req.query_param("flag"))
-    show(req.query_param("e"))
-    show(req.query_param("bad"))
-    show(req.query_param("missing"))
+    show(req.queryParam("x"))
+    show(req.queryParam("y"))
+    show(req.queryParam("flag"))
+    show(req.queryParam("e"))
+    show(req.queryParam("bad"))
+    show(req.queryParam("missing"))
     val one = req.header("X-ONE")
     print(one)
-    print(req.has_header("X-one"))
-    print(req.has_header("x-two"))
+    print(req.hasHeader("X-one"))
+    print(req.hasHeader("x-two"))
 
     // The low-level loop: accept, read a request, answer, read the next.
     val server = http.listen(0)
     val client = result.expect(net.connect("127.0.0.1", server.port()), "net.connect: the call failed")
-    net.send_text(client, "GET /p?q=1 HTTP/1.1\r\nHost: h\r\n\r\nPOST /e HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\n\r\nhi")
-    result.expect(net.shutdown_write(client), "net.shutdown_write: the call failed")
+    net.sendText(client, "GET /p?q=1 HTTP/1.1\r\nHost: h\r\n\r\nPOST /e HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\n\r\nhi")
+    result.expect(net.shutdownWrite(client), "net.shutdown_write: the call failed")
     var conn = result.expect(server.accept(), "accept: the call failed")
     val first = conn.read_request(&lim)
     when first {
@@ -70,7 +70,7 @@ fun main() {
             print(r.method)
             print(r.path)
             print(r.query)
-            val resp = http.ok_text("one")
+            val resp = http.okText("one")
             val w = conn.write_response(&resp)
         }
         Err(_) -> print("unexpected error")
@@ -81,7 +81,7 @@ fun main() {
             print(r.method)
             print(r.body.len())
             val base = http.json("{}")
-            val resp = base.with_header("X-Seen", "yes")
+            val resp = base.withHeader("X-Seen", "yes")
             val w = conn.write_response(&resp)
         }
         Err(_) -> print("unexpected error")
@@ -92,7 +92,7 @@ fun main() {
     when third {
         Ok(_) -> print("unexpected request")
         Err(e) -> {
-            print(http.http_error_status(&e))
+            print(http.httpErrorStatus(&e))
             val w = conn.write_error(&e)
         }
     }
@@ -104,13 +104,13 @@ fun main() {
 
     // A refused request is answered by `write_error` with its status.
     val bad = result.expect(net.connect("127.0.0.1", server.port()), "net.connect: the call failed")
-    net.send_text(bad, "GET / HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nContent-Length: 4\r\n\r\n")
+    net.sendText(bad, "GET / HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nContent-Length: 4\r\n\r\n")
     var conn2 = result.expect(server.accept(), "accept: the call failed")
     val r2 = conn2.read_request(&lim)
     when r2 {
         Ok(_) -> print("unexpected request")
         Err(e) -> {
-            print(http.http_error_status(&e))
+            print(http.httpErrorStatus(&e))
             val w = conn2.write_error(&e)
         }
     }

@@ -38,25 +38,25 @@ fun main() {
     val len = text.map(fun(s: &String) => int = s.len())
     print(option.expect(o = len, message = "none"))
 
-    val shout = text.map(fun(s: &String) => String = str.to_upper(s.as_str()))
+    val shout = text.map(fun(s: &String) => String = str.toUpper(s.as_str()))
     if let Some(s) = shout {
         print(s)
     }
 
     // Chaining fallible steps does not nest.
-    print(option.expect(o = half(8).and_then(half), message = "none"))
-    print(option.is_none(o = half(9).and_then(half)))
+    print(option.expect(o = half(8).andThen(half), message = "none"))
+    print(option.isNone(o = half(9).andThen(half)))
 
     // `or_else` needs a `Copy` payload: it rebuilds `Some` from a copy.
     val empty: option.Option<i32> = option.Option.None
-    val seven = empty.or_else(fun() => option.Option<i32> = option.Option.Some(value = 7))
+    val seven = empty.orElse(fun() => option.Option<i32> = option.Option.Some(value = 7))
     // `each` is the `Unit` case of `map`.
     seven.each(fun(v: &i32) { print(v) })
 
     // `unwrap_or` takes the option with `move` (A-11), so it is the last use
     // of `seven`; `or_else` above stays a borrow, which is why the binding is
     // still here to observe.
-    print(option.unwrap_or(o = seven, fallback = 0))
+    print(option.unwrapOr(o = seven, fallback = 0))
 
     // Result: `map`/`map_err` take the result with `move`, so the side they
     // rebuild may be owned; the call hands over a fresh result. `and_then` and
@@ -64,14 +64,14 @@ fun main() {
     // `Copy`.
     val ok = result.map(r = parse_positive(21), f = fun(n: &i32) => i32 = n * 2)
     print(result.expect(r = ok, message = "err"))
-    val failed = result.map_err(r = parse_positive(-5), f = fun(e: &i32) => i32 = e + 100)
-    print(result.expect_err(r = failed, message = "ok"))
+    val failed = result.mapErr(r = parse_positive(-5), f = fun(e: &i32) => i32 = e + 100)
+    print(result.expectErr(r = failed, message = "ok"))
 
     // `and_then` chains, `or_else` recovers, `each` observes.
-    print(result.expect(r = parse_positive(4).and_then(parse_positive), message = "err"))
-    val recovered = parse_positive(-1).or_else(fun(e: &i32) => result.Result<i32, i32> = result.Result.Ok(value = e + 10))
+    print(result.expect(r = parse_positive(4).andThen(parse_positive), message = "err"))
+    val recovered = parse_positive(-1).orElse(fun(e: &i32) => result.Result<i32, i32> = result.Result.Ok(value = e + 10))
     print(result.expect(r = recovered, message = "err"))
-    parse_positive(4).and_then(parse_positive).each(fun(n: &i32) { print(n) })
+    parse_positive(4).andThen(parse_positive).each(fun(n: &i32) { print(n) })
 }
 // stdout-begin
 // stdout: 5

@@ -3,5 +3,5 @@
 impl "std/regex"
 
 fun main() {
-    print(regex.is_match("a(b", "ab"))
+    print(regex.isMatch("a(b", "ab"))
 }

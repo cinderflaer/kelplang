@@ -9,13 +9,13 @@ impl "std/result"
 fun main() {
     val root = "/tmp/kelp_fs_breadth_test"
     if fs.exists(root) {
-        result.expect(fs.remove_all(root), "fs.remove_all: the call failed")
+        result.expect(fs.removeAll(root), "fs.remove_all: the call failed")
     }
-    result.expect(fs.mkdir_all("/tmp/kelp_fs_breadth_test/a/b/c"), "fs.mkdir_all: the call failed")
-    result.expect(fs.write_text("/tmp/kelp_fs_breadth_test/a/b/c/note.txt", String.from_str("line one\nline two\n")), "fs.write_text: the call failed")
-    result.expect(fs.write_text("/tmp/kelp_fs_breadth_test/top.txt", String.from_str("top")), "fs.write_text: the call failed")
+    result.expect(fs.mkdirAll("/tmp/kelp_fs_breadth_test/a/b/c"), "fs.mkdir_all: the call failed")
+    result.expect(fs.writeText("/tmp/kelp_fs_breadth_test/a/b/c/note.txt", String.from_str("line one\nline two\n")), "fs.write_text: the call failed")
+    result.expect(fs.writeText("/tmp/kelp_fs_breadth_test/top.txt", String.from_str("top")), "fs.write_text: the call failed")
 
-    val lines = fs.read_lines("/tmp/kelp_fs_breadth_test/a/b/c/note.txt")
+    val lines = fs.readLines("/tmp/kelp_fs_breadth_test/a/b/c/note.txt")
     print(lines.len())
     print(lines.get(0).as_str())
     print(lines.get(1).as_str())
@@ -31,7 +31,7 @@ fun main() {
     fs.copy("/tmp/kelp_fs_breadth_test/top.txt", "/tmp/kelp_fs_breadth_test/copy.txt")
     {
         val f = result.expect(fs.open("/tmp/kelp_fs_breadth_test/copy.txt", "r"), "fs.open: the call failed")
-        val data = f.read_all()
+        val data = f.readAll()
         print!(data.as_str())
         print("")
         f.close()
@@ -44,10 +44,10 @@ fun main() {
     print(walked.len())
     print(walked.get(walked.len() - 1).as_str())
 
-    val tmp = fs.temp_path("/tmp/kelp_fs_breadth_test/tmp-")
-    print(str.starts_with(tmp, "/tmp/kelp_fs_breadth_test/tmp-"))
-    print(fs.is_file(tmp))
+    val tmp = fs.tempPath("/tmp/kelp_fs_breadth_test/tmp-")
+    print(str.startsWith(tmp, "/tmp/kelp_fs_breadth_test/tmp-"))
+    print(fs.isFile(tmp))
 
-    result.expect(fs.remove_all(root), "fs.remove_all: the call failed")
+    result.expect(fs.removeAll(root), "fs.remove_all: the call failed")
     print(fs.exists(root))
 }

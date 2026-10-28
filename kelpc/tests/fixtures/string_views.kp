@@ -15,26 +15,26 @@ fun main() {
     print(t)
     print(str.len(t))
 
-    val lead = str.trim_start(v)
+    val lead = str.trimStart(v)
     print(lead)
     print(str.len(lead))
 
     val tail = str.substring(t, 1)
     print(tail)
-    print(str.starts_with(t, prefix = "hello"))
-    print(str.ends_with(t, suffix = "lo"))
+    print(str.startsWith(t, prefix = "hello"))
+    print(str.endsWith(t, suffix = "lo"))
     print(str.contains(t, needle = "ell"))
     print(str.eq(t, b = "hello"))
     print(str.eq(t, b = "hellO"))
-    val m = str.index_of(t, needle = "l")
+    val m = str.indexOf(t, needle = "l")
     if let Some(at) = m {
         print(at)
     }
-    print(option.is_none(o = str.index_of(t, needle = "z")))
+    print(option.isNone(o = str.indexOf(t, needle = "z")))
 
     val b = Bytes.from_str("raw")
     print(b)
-    print(str.char_count("héllo"))
+    print(str.charCount("héllo"))
     print(str.trim("  own  "))
 }
 // stdout-begin
