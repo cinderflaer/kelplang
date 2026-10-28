@@ -649,7 +649,7 @@ fun same_classes(a: List<String>, b: List<String>) => bool {
 
 // Start, keep or stop one channel. `old` is the animation the node had, `new` the one it is given.
 fun sync_chan(ch: mut Chan, old: &anim.Anim, new: &anim.Anim, clock: u64) {
-    if anim.is_none(new) {
+    if anim.isNone(new) {
         ch.has = false
         ch.running = false
         return

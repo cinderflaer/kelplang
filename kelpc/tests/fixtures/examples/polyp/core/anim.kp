@@ -34,7 +34,7 @@ pub fun lerp(from: i32, to: i32, ms: i32, easing: Easing) => Anim {
 
 pub fun none() => Anim = Anim(from = 0, to = 0, ms = -1, ease = EASE_LINEAR)
 
-pub fun is_none(a: &Anim) => bool = a.ms < 0
+pub fun isNone(a: &Anim) => bool = a.ms < 0
 
 pub fun copy(a: &Anim) => Anim = Anim(from = a.from, to = a.to, ms = a.ms, ease = a.ease)
 

@@ -38,7 +38,7 @@ pub fun tail_args() => String {
     return out
 }
 
-pub fun arg_count() => int {
+pub fun argCount() => int {
     val args = process.args()
     return args.len()
 }

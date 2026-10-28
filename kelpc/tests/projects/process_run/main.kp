@@ -19,5 +19,5 @@ fun main() {
     // `process.args` is behind the same gate even though it names no
     // resource, so reading this process's own argv is `runner`'s job too.
     print(runner.tail_args())
-    print(runner.arg_count())
+    print(runner.argCount())
 }
