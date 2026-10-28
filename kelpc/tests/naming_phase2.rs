@@ -67,6 +67,16 @@ fn the_register_names_the_phase_one_set() {
     assert!(!names.iter().any(|n| n == "from_u64"), "str.from_u64 is the #262 path");
 }
 
+/// `String.char_count()` is a builtin method of the compiler, not a std name,
+/// and it has no camelCase spelling yet. These programs keep that call, and
+/// only that name, in snake_case until the builtin is renamed (a follow-up of
+/// #376).
+const BUILTIN_STRING_CALLS: &[&str] = &[
+    "tests/fixtures/string_basic.kp",
+    "tests/managed/text_poll/src/main.kp",
+    "tests/projects/freestanding_alloc_string/src/main.kp",
+];
+
 #[test]
 fn no_test_program_calls_a_renamed_name_in_snake_case() {
     let names = renamed_names();
@@ -77,11 +87,15 @@ fn no_test_program_calls_a_renamed_name_in_snake_case() {
     for file in &files {
         let text = fs::read_to_string(file).unwrap_or_default();
         for (index, line) in text.lines().enumerate() {
+            let rel = file.strip_prefix(manifest()).unwrap_or(file);
+            let rel_text = rel.display().to_string();
             for name in &names {
+                if name == "char_count" && BUILTIN_STRING_CALLS.iter().any(|f| rel_text == *f) {
+                    continue;
+                }
                 let call = format!(".{name}(");
                 if line.contains(&call) {
-                    let rel = file.strip_prefix(manifest()).unwrap_or(file).display();
-                    found.push(format!("{rel}:{}: {call}", index + 1));
+                    found.push(format!("{rel_text}:{}: {call}", index + 1));
                 }
             }
         }

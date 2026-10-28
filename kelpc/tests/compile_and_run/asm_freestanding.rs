@@ -413,7 +413,7 @@ pub(crate) fn a_reached_string_field_struct_is_still_refused_in_a_freestanding_b
 pub(crate) fn a_std_str_function_outside_the_freestanding_five_is_refused() {
     assert_rejected_with(
         "tests/projects/freestanding_str_refused",
-        "'std.str.char_count' is unavailable in a freestanding build",
+        "'std.str.charCount' is unavailable in a freestanding build",
     );
 }
 
