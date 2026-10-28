@@ -22,7 +22,7 @@ fun build_url(host: str, port: u16, path: str) => String {
     url.push_str("http://")
     url.push_str(host)
     url.push_str(":")
-    val port_str = fmt.uint(port.to_u64())
+    val port_str = port.to_u64().toText()
     url.push_str(port_str)
     url.push_str(path)
     return url
@@ -38,9 +38,7 @@ fun fetch_all(worker: int) => Outcome {
     var ok: int = 0
     var failed: int = 0
     var bytes: u64 = 0
-    var i: int = 0
-    while i < job.paths.len() {
-        val path = job.paths.get(i)
+    for path in job.paths {
         val url = build_url(job.host, job.port, path.as_str())
         val req = http.Request(
             method = "GET",
@@ -55,7 +53,6 @@ fun fetch_all(worker: int) => Outcome {
         } else {
             failed = failed + 1
         }
-        i = i + 1
     }
     return Outcome(ok = ok, failed = failed, bytes = bytes)
 }
@@ -93,13 +90,13 @@ fun report(label: str, o: &Outcome) {
     var msg = String.empty()
     msg.push_str(label)
     msg.push_str(": ")
-    val ok_str = fmt.uint(o.ok.to_u64())
+    val ok_str = o.ok.to_u64().toText()
     msg.push_str(ok_str)
     msg.push_str(" ok, ")
-    val failed_str = fmt.uint(o.failed.to_u64())
+    val failed_str = o.failed.to_u64().toText()
     msg.push_str(failed_str)
     msg.push_str(" failed, ")
-    val bytes_str = fmt.uint(o.bytes)
+    val bytes_str = o.bytes.toText()
     msg.push_str(bytes_str)
     msg.push_str(" bytes")
     print(msg)
@@ -154,13 +151,13 @@ fun main() {
 
     var summary = String.empty()
     summary.push_str("total: ")
-    val total_ok_str = fmt.uint(total_ok.to_u64())
+    val total_ok_str = total_ok.to_u64().toText()
     summary.push_str(total_ok_str)
     summary.push_str(" ok, ")
-    val total_failed_str = fmt.uint(total_failed.to_u64())
+    val total_failed_str = total_failed.to_u64().toText()
     summary.push_str(total_failed_str)
     summary.push_str(" failed, ")
-    val total_bytes_str = fmt.uint(total_bytes)
+    val total_bytes_str = total_bytes.toText()
     summary.push_str(total_bytes_str)
     summary.push_str(" bytes")
     print(summary)
