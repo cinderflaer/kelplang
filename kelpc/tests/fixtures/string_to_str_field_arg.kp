@@ -1,0 +1,31 @@
+// A `String` passed bare to a `str` parameter is borrowed for the call, as
+// `.as_str()` would borrow it. This pins the shapes that the removal of
+// `.as_str()` at `str` parameters relies on (issue #266): a `String` field of a
+// datac, a `String` from a call result, a free function and a method.
+impl "std/str"
+
+datac Row(val name: String) {
+    fits(limit: str) => int = str.len(name) + str.len(limit)
+}
+
+fun width(text: str) => int {
+    return str.len(text)
+}
+
+fun make() => String {
+    return "kelp"
+}
+
+fun main() {
+    val row = Row(name = "four")
+    print(width(row.name))
+    print(row.fits(row.name))
+    val word = make()
+    print(width(word))
+    print(row.fits(word))
+}
+// stdout-begin
+// stdout: 4
+// stdout: 8
+// stdout: 4
+// stdout: 8

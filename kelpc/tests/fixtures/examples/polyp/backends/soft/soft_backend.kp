@@ -1362,7 +1362,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
     if k == core.KIND_TEXT {
         val sc = text_scale_of(n, th)
         val ty = r.y + (r.h - font.text_height(sc)) / 2
-        px.add(font.draw_text(f, cs, r.x, ty, n.props.text.as_str(), sc, fade(st.fg, my_op, th.bg)))
+        px.add(font.draw_text(f, cs, r.x, ty, n.props.text, sc, fade(st.fg, my_op, th.bg)))
     } else if k == core.KIND_BUTTON {
         if st.has_bg {
             px.add(draw.fill_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, fade(st.bg, my_op, th.bg)))
@@ -1373,7 +1373,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
         val sc = text_scale_of(n, th)
         val tw = font.text_width(n.props.label, sc)
         val thh = font.text_height(sc)
-        px.add(font.draw_text(f, cs, r.x + (r.w - tw) / 2, r.y + (r.h - thh) / 2, n.props.label.as_str(), sc, fade(st.fg, my_op, th.bg)))
+        px.add(font.draw_text(f, cs, r.x + (r.w - tw) / 2, r.y + (r.h - thh) / 2, n.props.label, sc, fade(st.fg, my_op, th.bg)))
     } else if k == core.KIND_ENTRY {
         if st.has_bg {
             px.add(draw.fill_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, fade(st.bg, my_op, th.bg)))
@@ -1388,7 +1388,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
         }
         val sc = text_scale_of(n, th)
         val thh = font.text_height(sc)
-        px.add(font.draw_text(f, cs, r.x + st.pad, r.y + (r.h - thh) / 2, n.props.text.as_str(), sc, fade(st.fg, my_op, th.bg)))
+        px.add(font.draw_text(f, cs, r.x + st.pad, r.y + (r.h - thh) / 2, n.props.text, sc, fade(st.fg, my_op, th.bg)))
         if focused {
             var care = n.caret
             val n_bytes = n.props.text.len().to_i32()
@@ -1409,7 +1409,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
         }
         val sc = text_scale_of(n, th)
         val thh = font.text_height(sc)
-        px.add(font.draw_text(f, cs, r.x + th.box + th.gap, r.y + (r.h - thh) / 2, n.props.label.as_str(), sc, fade(st.fg, my_op, th.bg)))
+        px.add(font.draw_text(f, cs, r.x + th.box + th.gap, r.y + (r.h - thh) / 2, n.props.label, sc, fade(st.fg, my_op, th.bg)))
     } else if k == core.KIND_PROGRESS {
         px.add(draw.fill_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, fade(th.panel, my_op, th.bg)))
         val permille = eff_main(n, n.props.permille)

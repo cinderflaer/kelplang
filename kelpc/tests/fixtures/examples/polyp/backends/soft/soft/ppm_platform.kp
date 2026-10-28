@@ -49,7 +49,7 @@ fun mut PpmPlatform.dump(f: fb.Fb) {
         val index = fmt.int(n.to_i64())
         val mid = str.concat(head, index.as_str())
         val path = str.concat(mid, ".ppm")
-        debug.dump_ppm(f, path.as_str())
+        debug.dump_ppm(f, path)
         n += 1
     }
 }

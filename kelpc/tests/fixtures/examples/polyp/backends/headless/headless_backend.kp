@@ -507,11 +507,11 @@ fun html_of(n: &HNode) => String {
         val escaped = html_escape(n.props.text)
         val cls = if n.props.bold { " class=\"polyp-text polyp-bold\"" } else { " class=\"polyp-text\"" }
         val text_attrs = str.concat(cls, " data-kind=\"text\"")
-        return html_element("p", text_attrs.as_str(), escaped.as_str())
+        return html_element("p", text_attrs, escaped)
     }
     if n.kind == core.KIND_BUTTON {
         val label = html_escape(n.props.label)
-        return html_element("button", " type=\"button\" data-kind=\"button\"", label.as_str())
+        return html_element("button", " type=\"button\" data-kind=\"button\"", label)
     }
     if n.kind == core.KIND_COLUMN || n.kind == core.KIND_ROW {
         val flex = if n.kind == core.KIND_COLUMN { "polyp-column" } else { "polyp-row" }
@@ -527,17 +527,17 @@ fun html_of(n: &HNode) => String {
         attrs = append(attrs, " data-kind=\"")
         attrs = append(attrs, kind)
         attrs = append(attrs, "\"")
-        return html_element("div", attrs.as_str(), body.as_str())
+        return html_element("div", attrs, body)
     }
     if n.kind == core.KIND_SPACER {
         val px = fmt.int(n.props.height.to_i64())
         val attrs = str.concat(" style=\"height:", px.as_str())
         val spacer_attrs = str.concat(attrs, "px\" data-kind=\"spacer\"")
-        return html_element("div", spacer_attrs.as_str(), "")
+        return html_element("div", spacer_attrs, "")
     }
     val other = str.concat(" data-kind=\"", kind_name(n.kind))
     val other_attrs = str.concat(other, "\"")
-    return html_element("div", other_attrs.as_str(), body.as_str())
+    return html_element("div", other_attrs, body)
 }
 
 // The first frame as a complete HTML document. The style is inline so the file is self-contained.

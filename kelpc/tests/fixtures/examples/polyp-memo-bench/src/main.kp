@@ -116,7 +116,7 @@ fun view_plain(m: Model) => core.Node<Msg> {
             while i < m.items.len() {
                 val item = m.items.get(i)
                 val key = str.from_i64(item.id.to_i64())
-                sc.keyed(key.as_str()) { r -> fill_row(r, item.id, item.done, item.title.as_str()) }
+                sc.keyed(key.as_str()) { r -> fill_row(r, item.id, item.done, item.title) }
                 i += 1
             }
         }

@@ -107,9 +107,9 @@ fun run_draw() {
     val box = bytes(0xFF, 0, 0, 0, 1)
     val cjk = bytes(0xE4, 0xB8, 0xAD, 0, 3)
     val trunc = bytes(0xE4, 0xB8, 0, 0, 2)
-    val a = checksum_of_text(p, box.as_str())
-    val b = checksum_of_text(p, cjk.as_str())
-    val c = checksum_of_text(p, trunc.as_str())
+    val a = checksum_of_text(p, box)
+    val b = checksum_of_text(p, cjk)
+    val c = checksum_of_text(p, trunc)
     // No glyph and a malformed run are the same box, and each is one cell.
     if a == b && b == c {
         print("same box")
@@ -118,7 +118,7 @@ fun run_draw() {
     }
     val e = checksum_of_text(p, "e")
     val ea = bytes(0xC3, 0xA9, 0, 0, 2)
-    val ee = checksum_of_text(p, ea.as_str())
+    val ee = checksum_of_text(p, ea)
     if e != ee {
         print("accent drawn")
     } else {
@@ -128,10 +128,10 @@ fun run_draw() {
     var tail: String = "ab"
     tail.push(0xE2)
     tail.push(0x82)
-    val t1 = checksum_of_text(p, tail.as_str())
+    val t1 = checksum_of_text(p, tail)
     var tail2: String = "ab"
     tail2.push(0xF0)
-    val t2 = checksum_of_text(p, tail2.as_str())
+    val t2 = checksum_of_text(p, tail2)
     if t1 != t2 {
         print("tails differ")
     } else {

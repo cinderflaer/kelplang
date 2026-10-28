@@ -538,6 +538,14 @@ pub(crate) fn a_string_argument_is_borrowed_for_a_str_parameter() {
     assert_fixture_runs("tests/fixtures/string_to_str_arg.kp");
 }
 
+/// A bare `String` at a `str` parameter is borrowed for the call when it is a
+/// field of a datac, a call result, an argument of a free function or of a
+/// method. This is what lets the examples drop `.as_str()` there (issue #266).
+#[test]
+pub(crate) fn a_bare_string_argument_is_borrowed_at_str_parameters_of_functions_and_methods() {
+    assert_fixture_runs("tests/fixtures/string_to_str_field_arg.kp");
+}
+
 /// A `String` moved into a call in the same argument list as its borrow is
 /// refused by the borrow rules, as the explicit `.as_str()` form is.
 #[test]
