@@ -58,12 +58,12 @@ pub fun alloc_frame() => usize {
         if next + PAGE_SIZE > frames_end() {
             0
         } else {
-            FRAME_CURSOR = FRAME_CURSOR + PAGE_SIZE
+            FRAME_CURSOR += PAGE_SIZE
             val words: Ptr<u64> = Ptr.from_addr(next)
             var i: usize = 0
             while i < ENTRIES {
                 words.offset(i.to_isize()).write_volatile(0)
-                i = i + 1
+                i += 1
             }
             next
         }
@@ -159,7 +159,7 @@ fun walk(root: usize, va: usize) => usize {
             if entry & PTE_LEAF != 0 { return 0 }
             table = pte_ppn(entry)
         }
-        level = level - 1
+        level -= 1
     }
     return table
 }
@@ -177,7 +177,7 @@ pub fun map_range(root: usize, va: usize, pa: usize, len: usize, flags: u64) => 
     var offset: usize = 0
     while offset < len {
         if map_page(root, va + offset, pa + offset, flags) == false { return false }
-        offset = offset + PAGE_SIZE
+        offset += PAGE_SIZE
     }
     return true
 }
@@ -191,7 +191,7 @@ pub fun unmap_page(root: usize, va: usize) => bool {
         val entry: u64 = read_pte(table, vpn(va, level))
         if entry & PTE_V == 0 || entry & PTE_LEAF != 0 { return false }
         table = pte_ppn(entry)
-        level = level - 1
+        level -= 1
     }
     if read_pte(table, vpn0(va)) & PTE_V == 0 { return false }
     write_pte(table, vpn0(va), 0)
@@ -213,7 +213,7 @@ pub fun translate(root: usize, va: usize) => option.Option<usize> {
         }
         if level == 0 { return option.Option.None }
         table = pte_ppn(entry)
-        level = level - 1
+        level -= 1
     }
     return option.Option.None
 }
@@ -236,7 +236,7 @@ pub fun user_page_pa(root: usize, va: usize) => option.Option<usize> {
         }
         if level == 0 { return option.Option.None }
         table = pte_ppn(entry)
-        level = level - 1
+        level -= 1
     }
     return option.Option.None
 }

@@ -33,7 +33,7 @@ fun alloc(size: usize, align: usize) => Ptr<u8> {
             Ptr.null()
         } else {
             USED = start + size
-            ALLOCS = ALLOCS + 1
+            ALLOCS += 1
             val arena: Ptr<[u8; 16384]> = Ptr.from_mut(ARENA)
             val base: Ptr<u8> = arena.cast<u8>()
             base.byte_offset(start.to_isize())
@@ -48,7 +48,7 @@ fun alloc(size: usize, align: usize) => Ptr<u8> {
 fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
     unsafe {
         if p.is_null() == false {
-            DEALLOCS = DEALLOCS + 1
+            DEALLOCS += 1
         }
     }
 }
@@ -61,13 +61,13 @@ fun sum_one_to_ten() => i32 {
     var i: i32 = 1
     while i <= 10 {
         xs.push(i)
-        i = i + 1
+        i += 1
     }
     var sum: i32 = 0
     var j: int = 0
     while j < xs.len() {
         sum = sum + xs.get(j)
-        j = j + 1
+        j += 1
     }
     return sum
 }

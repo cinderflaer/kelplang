@@ -31,7 +31,7 @@ pub fun puts(s: str) {
     var i: int = 0
     while i < n {
         putc(str.byte(s, i))
-        i = i + 1
+        i += 1
     }
 }
 

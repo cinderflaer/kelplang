@@ -60,7 +60,7 @@ fun glob_match(pat: &str, path: &str) => bool {
         if pi + 1 < plen && pv.get(pi) == 42 && pv.get(pi + 1) == 42 {
             var rest = pi + 2
             if rest < plen && pv.get(rest) == 47 {
-                rest = rest + 1
+                rest += 1
             }
             // A trailing `**` matches everything below.
             if rest == plen {
@@ -74,7 +74,7 @@ fun glob_match(pat: &str, path: &str) => bool {
                 if p == slen {
                     return false
                 }
-                p = p + 1
+                p += 1
             }
         }
         if pv.get(pi) == 42 {
@@ -89,7 +89,7 @@ fun glob_match(pat: &str, path: &str) => bool {
                     if sv.get(p) == 47 {
                         return false
                     }
-                    p = p + 1
+                    p += 1
                 }
                 return true
             }
@@ -101,7 +101,7 @@ fun glob_match(pat: &str, path: &str) => bool {
                 if p == slen || sv.get(p) == 47 {
                     return false
                 }
-                p = p + 1
+                p += 1
             }
         }
         // The C version compares `*pat != *path` with `*path` at its
@@ -113,8 +113,8 @@ fun glob_match(pat: &str, path: &str) => bool {
         if pv.get(pi) != sv.get(si) {
             return false
         }
-        pi = pi + 1
-        si = si + 1
+        pi += 1
+        si += 1
     }
     return si == slen
 }
@@ -158,7 +158,7 @@ fun host_glob_at(pat: &str, pstart: int, text: &str, tstart: int, tend: int) => 
                 if p == tend || tv.get(p) == 46 || tv.get(p) == 58 {
                     return false
                 }
-                p = p + 1
+                p += 1
             }
         }
         if ti == tend {
@@ -167,8 +167,8 @@ fun host_glob_at(pat: &str, pstart: int, text: &str, tstart: int, tend: int) => 
         if pv.get(pi) != tv.get(ti) {
             return false
         }
-        pi = pi + 1
-        ti = ti + 1
+        pi += 1
+        ti += 1
     }
     return ti == tend
 }
@@ -206,7 +206,7 @@ fun host_end(hostport: &str) => int {
             end = i - 1
             i = 0
         } else {
-            i = i - 1
+            i -= 1
         }
     }
     if end >= 4096 {
@@ -225,7 +225,7 @@ fun has_colon(pat: &str) => bool {
         if pv.get(i) == 58 {
             return true
         }
-        i = i + 1
+        i += 1
     }
     return false
 }
@@ -263,7 +263,7 @@ fun path_normalize(s: &str, out: mut Bytes) => bool {
     var depth: int = 0
     while p < n {
         while p < n && sv.get(p) == 47 {
-            p = p + 1
+            p += 1
         }
         // The C version `break`s here when the path ended in separators. Kelp
         // has no `break`: guarding the body says the same thing, because the
@@ -271,7 +271,7 @@ fun path_normalize(s: &str, out: mut Bytes) => bool {
         if p < n {
             val start = p
             while p < n && sv.get(p) != 47 {
-                p = p + 1
+                p += 1
             }
             val len = p - start
             // `.` names the directory it sits in and `..` the one above, so
@@ -286,12 +286,12 @@ fun path_normalize(s: &str, out: mut Bytes) => bool {
                 }
                 // Pop: drop the last segment written, and the `/` before it.
                 while o > 1 && out.get(o - 1) != 47 {
-                    o = o - 1
+                    o -= 1
                 }
                 if o > 1 {
-                    o = o - 1
+                    o -= 1
                 }
-                depth = depth - 1
+                depth -= 1
             }
             if !this_dir && !up_dir {
                 // A separator is written before every segment but the first, so
@@ -301,7 +301,7 @@ fun path_normalize(s: &str, out: mut Bytes) => bool {
                         return false
                     }
                     out.set(o, 47)
-                    o = o + 1
+                    o += 1
                 }
                 if o + len >= cap {
                     return false
@@ -309,10 +309,10 @@ fun path_normalize(s: &str, out: mut Bytes) => bool {
                 var i: int = 0
                 while i < len {
                     out.set(o + i, sv.get(start + i))
-                    i = i + 1
+                    i += 1
                 }
-                o = o + len
-                depth = depth + 1
+                o += len
+                depth += 1
             }
         }
     }

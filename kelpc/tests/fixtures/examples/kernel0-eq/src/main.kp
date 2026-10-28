@@ -25,7 +25,7 @@ fun alloc(size: usize, align: usize) => Ptr<u8> {
             Ptr.null()
         } else {
             USED = start + size
-            ALLOCS = ALLOCS + 1
+            ALLOCS += 1
             val arena: Ptr<[u8; 262144]> = Ptr.from_mut(ARENA)
             val base: Ptr<u8> = arena.cast<u8>()
             base.byte_offset(start.to_isize())
@@ -39,7 +39,7 @@ fun alloc(size: usize, align: usize) => Ptr<u8> {
 fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
     unsafe {
         if p.is_null() == false {
-            DEALLOCS = DEALLOCS + 1
+            DEALLOCS += 1
         }
     }
 }
@@ -55,7 +55,7 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
                 val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())
                 dst.write(src.read())
             }
-            i = i + 1
+            i += 1
         }
         dealloc(p, old, align)
     }
@@ -78,7 +78,7 @@ fun Blob.eq(other: &Blob) => bool {
     var i: int = 0
     while i < self.data.len() {
         if self.data.get(i) != other.data.get(i) { return false }
-        i = i + 1
+        i += 1
     }
     return true
 }

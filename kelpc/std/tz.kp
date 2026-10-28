@@ -267,7 +267,7 @@ datac TzParser(
 fun floor_div(a: i64, b: i64) => i64 {
     var q = a / b
     if a % b != 0 && (a < 0) != (b < 0) {
-        q = q - 1
+        q -= 1
     }
     return q
 }
@@ -376,7 +376,7 @@ fun rule_day(r: &RuleDay, year: i32) => i64 {
         var dom = 1 + floor_mod(r.day.to_i64() - wd, 7) + (r.week.to_i64() - 1) * 7
         val last = days_in_month(year, r.month).to_i64()
         if dom > last {
-            dom = dom - 7
+            dom -= 7
         }
         return days_from_civil(year, r.month, dom.to_i32())
     }
@@ -384,7 +384,7 @@ fun rule_day(r: &RuleDay, year: i32) => i64 {
     if r.kind == 1 {
         var day = jan1 + r.n.to_i64() - 1
         if is_leap_year(year) && day >= days_from_civil(year, 3, 1) {
-            day = day + 1
+            day += 1
         }
         return day
     }
@@ -451,7 +451,7 @@ fun TzString.offsetAt(t: i64) => Offset {
         if rule_window_has(start, end, std_off, dst_off, y + dy, t) {
             dst = true
         }
-        dy = dy + 1
+        dy += 1
     }
     if dst {
         return Offset(seconds = dst_off, abbrev = dst_name.clone(), is_dst = true)
@@ -480,7 +480,7 @@ fun TzParser.peek() => i32 {
 fun mut TzParser.ident() => String {
     var out = String.empty()
     if self.peek() == 60 {
-        self.at = self.at + 1
+        self.at += 1
         while true {
             val c = self.peek()
             if c < 0 {
@@ -488,11 +488,11 @@ fun mut TzParser.ident() => String {
                 return out
             }
             if c == 62 {
-                self.at = self.at + 1
+                self.at += 1
                 return out
             }
             out.push(c.to_byte())
-            self.at = self.at + 1
+            self.at += 1
         }
     }
     while true {
@@ -505,7 +505,7 @@ fun mut TzParser.ident() => String {
             return out
         }
         out.push(c.to_byte())
-        self.at = self.at + 1
+        self.at += 1
     }
 }
 
@@ -529,8 +529,8 @@ fun mut TzParser.number() => i64 {
             self.fail()
             return 0
         }
-        digits = digits + 1
-        self.at = self.at + 1
+        digits += 1
+        self.at += 1
     }
 }
 
@@ -542,18 +542,18 @@ fun mut TzParser.hms() => i32 {
     var sign: i32 = 1
     if self.peek() == 45 {
         sign = -1
-        self.at = self.at + 1
+        self.at += 1
     } elif self.peek() == 43 {
-        self.at = self.at + 1
+        self.at += 1
     }
     val h = self.number()
     var m: i64 = 0
     var s: i64 = 0
     if self.peek() == 58 {
-        self.at = self.at + 1
+        self.at += 1
         m = self.number()
         if self.peek() == 58 {
-            self.at = self.at + 1
+            self.at += 1
             s = self.number()
         }
     }
@@ -582,18 +582,18 @@ fun parse_rule(p: mut TzParser) => RuleDay {
     var day: i32 = 0
     val c = p.peek()
     if c == 77 {
-        p.at = p.at + 1
+        p.at += 1
         month = p.number().to_i32()
         if p.peek() != 46 {
             p.fail()
         } else {
-            p.at = p.at + 1
+            p.at += 1
         }
         week = p.number().to_i32()
         if p.peek() != 46 {
             p.fail()
         } else {
-            p.at = p.at + 1
+            p.at += 1
         }
         day = p.number().to_i32()
         if month < 1 || month > 12 || week < 1 || week > 5 || day < 0 || day > 6 {
@@ -601,7 +601,7 @@ fun parse_rule(p: mut TzParser) => RuleDay {
         }
     } elif c == 74 {
         kind = 1
-        p.at = p.at + 1
+        p.at += 1
         n = p.number().to_i32()
         if n < 1 || n > 365 {
             p.fail()
@@ -616,7 +616,7 @@ fun parse_rule(p: mut TzParser) => RuleDay {
     var at: i32 = 7200
     var at_utc = false
     if p.peek() == 47 {
-        p.at = p.at + 1
+        p.at += 1
         val v = p.hms()
         if v < 0 {
             at_utc = true
@@ -664,12 +664,12 @@ fun parse_tz_string(text: &str) => TzString {
     if p.peek() != 44 {
         return none
     }
-    p.at = p.at + 1
+    p.at += 1
     val start = parse_rule(p)
     if p.peek() != 44 {
         p.fail()
     } else {
-        p.at = p.at + 1
+        p.at += 1
     }
     val end = parse_rule(p)
     if p.bad {
@@ -719,7 +719,7 @@ fun mut Reader.u32(what: &str) => u32 {
         return 0
     }
     val v = self.data.read_u32_be(self.at)
-    self.at = self.at + 4
+    self.at += 4
     return v
 }
 
@@ -729,7 +729,7 @@ fun mut Reader.i32(what: &str) => i32 {
         return 0
     }
     val v = self.data.read_i32_be(self.at)
-    self.at = self.at + 4
+    self.at += 4
     return v
 }
 
@@ -739,7 +739,7 @@ fun mut Reader.i64(what: &str) => i64 {
         return 0
     }
     val v = self.data.read_i64_be(self.at)
-    self.at = self.at + 8
+    self.at += 8
     return v
 }
 
@@ -749,7 +749,7 @@ fun mut Reader.u8(what: &str) => u8 {
         return 0
     }
     val v = self.data.get(self.at)
-    self.at = self.at + 1
+    self.at += 1
     return v
 }
 
@@ -780,7 +780,7 @@ fun nul_at(data: &Bytes, from: int, to: int) => int {
         if data.get(i) == 0 {
             return i
         }
-        i = i + 1
+        i += 1
     }
     return to
 }
@@ -791,7 +791,7 @@ fun bytes_to_string(data: &Bytes, from: int, to: int) => String {
     var i = from
     while i < to {
         out.push(data.get(i))
-        i = i + 1
+        i += 1
     }
     return out
 }
@@ -804,7 +804,7 @@ fun add_unique(xs: mut List<i32>, v: i32) {
         if xs.get(i) == v {
             found = true
         }
-        i = i + 1
+        i += 1
     }
     if !found {
         xs.push(v)
@@ -869,7 +869,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
             return corrupt(r.why)
         }
         use64 = true
-        block = block + 44
+        block += 44
     }
     val timecnt = first.timecnt
     val typecnt = first.typecnt
@@ -903,7 +903,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
         } else {
             times.push(r.i32(what = "the file ends in the middle of a transition time").to_i64())
         }
-        i = i + 1
+        i += 1
     }
     if r.bad {
         return corrupt(r.why)
@@ -912,7 +912,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
     i = 0
     while i < timecnt {
         at_type.push(r.u8(what = "the file ends in the middle of a transition type"))
-        i = i + 1
+        i += 1
     }
     var offs: List<i32> = List.empty()
     var dsts: List<bool> = List.empty()
@@ -931,7 +931,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
         offs.push(off)
         dsts.push(isdst == 1)
         desigs.push(desig)
-        i = i + 1
+        i += 1
     }
     if r.bad {
         return corrupt(r.why)
@@ -941,7 +941,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
         if at_type.get(i).to_int() >= typecnt {
             return corrupt("a transition names a time type that does not exist")
         }
-        i = i + 1
+        i += 1
     }
     val char_at = block + timecnt * width + timecnt + typecnt * 6
     var names: List<String> = List.empty()
@@ -954,7 +954,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
             return corrupt("an abbreviation is not terminated by a NUL")
         }
         names.push(bytes_to_string(r.data, from, end))
-        i = i + 1
+        i += 1
     }
     // The leap-second table and the two indicator blocks sit between the
     // abbreviations and the footer, and are skipped rather than applied.
@@ -963,7 +963,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
     if use64 && tail < r.data.len() && r.data.get(tail) == 10 {
         var end = tail + 1
         while end < r.data.len() && r.data.get(end) != 10 {
-            end = end + 1
+            end += 1
         }
         if end == r.data.len() {
             return corrupt("the TZ string in the footer is not terminated by a newline")
@@ -975,7 +975,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
     i = 0
     while i < typecnt {
         add_unique(xs = uniques, v = offs.get(i))
-        i = i + 1
+        i += 1
     }
     if tz.have {
         add_unique(xs = uniques, v = tz.std_off)
@@ -994,7 +994,7 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
             default_type = i.to_i32()
             found = true
         }
-        i = i + 1
+        i += 1
     }
     return result.Result.Ok(value = Zone(
         times = times,
@@ -1027,7 +1027,7 @@ fun name_ok(name: &str) => bool {
         if str.byte(name, i) == 0 {
             return false
         }
-        i = i + 1
+        i += 1
     }
     return !str.contains(name, "..")
 }
@@ -1047,7 +1047,7 @@ fun dir_ok(dir: &str) => bool {
         if str.byte(dir, i) == 0 {
             return false
         }
-        i = i + 1
+        i += 1
     }
     return !str.contains(dir, "..")
 }
@@ -1332,9 +1332,9 @@ fun Zone.toUnix(y: i32, m: i32, d: i32, h: i32, mi: i32, s: i32) => Resolved {
             if hits == 1 {
                 second = cand
             }
-            hits = hits + 1
+            hits += 1
         }
-        i = i + 1
+        i += 1
     }
     if hits == 0 {
         return Resolved.Gap
@@ -1365,10 +1365,10 @@ fun Zone.format(unix_seconds: i64, fmt: &str) => String {
         val c = fv.get(i)
         if c == 37 && i + 1 < fv.len() {
             format_spec(out = out, spec = fv.get(i + 1), lt = lt)
-            i = i + 2
+            i += 2
         } else {
             out.push(c)
-            i = i + 1
+            i += 1
         }
     }
     return out
@@ -1431,7 +1431,7 @@ fun push_pad(out: mut String, value: i64, width: int) {
     var i: int = 0
     while i < pad {
         out.push('0')
-        i = i + 1
+        i += 1
     }
     out.push_str(digits)
 }
@@ -1443,6 +1443,6 @@ fun push_three(out: mut String, table: &str, index: i32) {
     var k: i32 = 0
     while k < 3 {
         out.push(str.byte(table, (base + k).to_int()))
-        k = k + 1
+        k += 1
     }
 }

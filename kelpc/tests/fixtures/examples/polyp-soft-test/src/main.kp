@@ -145,7 +145,7 @@ fun ref_clamp_radius(radius: i32, w: i32, h: i32) => i32 {
     if h < m {
         m = h
     }
-    m = m / 2
+    m /= 2
     if r > m {
         r = m
     }

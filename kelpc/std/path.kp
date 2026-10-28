@@ -52,7 +52,7 @@ fun lastSep(s: &str) => int {
         if sv.get(i - 1) == 47 {
             return i
         }
-        i = i - 1
+        i -= 1
     }
     return 0
 }
@@ -74,7 +74,7 @@ fun extension(s: &str) => &str {
         if sv.get(i - 1) == 46 {
             return str.substring(s, i)
         }
-        i = i - 1
+        i -= 1
     }
     return str.substring(s, n)
 }
@@ -95,7 +95,7 @@ fun stem(s: &str) => String {
             cut = i - 1
             i = start
         } else {
-            i = i - 1
+            i -= 1
         }
     }
     if cut < n {
@@ -128,7 +128,7 @@ fun split(s: &str) => List<String> {
             }
             start = i + 1
         }
-        i = i + 1
+        i += 1
     }
     return out
 }
@@ -154,7 +154,7 @@ fun joinAll(parts: List<String>) => String {
             out.push_str("/")
             out.push_str(part)
         }
-        i = i + 1
+        i += 1
     }
     return out
 }
@@ -170,7 +170,7 @@ fun parent(s: &str) => String {
     var cut: int = end - 1
     val sv = s.view()
     while cut > 1 && sv.get(cut - 1) == 47 {
-        cut = cut - 1
+        cut -= 1
     }
     return str.prefix(s, cut)
 }
@@ -192,7 +192,7 @@ fun join(a: &str, b: &str) => String {
     var i: int = 0
     while i < la {
         out.set(i, av.get(i))
-        i = i + 1
+        i += 1
     }
     if sep == 1 {
         out.set(la, 47)
@@ -200,7 +200,7 @@ fun join(a: &str, b: &str) => String {
     var j: int = 0
     while j < lb {
         out.set(la + sep + j, bv.get(j))
-        j = j + 1
+        j += 1
     }
     return String.from_bytes(out)
 }

@@ -27,7 +27,7 @@ fun alloc(size: usize, align: usize) => Ptr<u8> {
             Ptr.null()
         } else {
             USED = start + size
-            ALLOCS = ALLOCS + 1
+            ALLOCS += 1
             val arena: Ptr<[u8; 65536]> = Ptr.from_mut(ARENA)
             val base: Ptr<u8> = arena.cast<u8>()
             base.byte_offset(start.to_isize())
@@ -41,7 +41,7 @@ fun alloc(size: usize, align: usize) => Ptr<u8> {
 fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
     unsafe {
         if p.is_null() == false {
-            DEALLOCS = DEALLOCS + 1
+            DEALLOCS += 1
         }
     }
 }
@@ -59,7 +59,7 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
                 val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())
                 dst.write(src.read())
             }
-            i = i + 1
+            i += 1
         }
         dealloc(p, old, align)
     }
@@ -100,7 +100,7 @@ fun build_and_print() {
     var i: int = 0
     while i < 300 {
         bytes.push((i % 26 + 65).to_u8())
-        i = i + 1
+        i += 1
     }
     if bytes.is_empty() == false && bytes.get(0) == 65 {
         bytes.set(0, 90)

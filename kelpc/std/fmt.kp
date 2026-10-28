@@ -54,7 +54,7 @@ fun padLeft(s: &str, width: int, fill: u8) => String {
     var i = n
     while i < width {
         out.push(fill)
-        i = i + 1
+        i += 1
     }
     out.push_str(s)
     return out
@@ -75,7 +75,7 @@ fun padRight(s: &str, width: int, fill: u8) => String {
     var i = n
     while i < width {
         out.push(fill)
-        i = i + 1
+        i += 1
     }
     return out
 }
@@ -120,14 +120,14 @@ fun groupDigits(text: &str) => String {
     var i: int = 0
     while i < start {
         out.push(tv.get(i))
-        i = i + 1
+        i += 1
     }
     while i < len {
         if i > start && (len - i) % 3 == 0 {
             out.push(',')
         }
         out.push(tv.get(i))
-        i = i + 1
+        i += 1
     }
     return out
 }

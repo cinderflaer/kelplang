@@ -423,7 +423,7 @@ fun find_head_end(b: Bytes) => int {
         if b.get(i) == 13 && b.get(i + 1) == 10 && b.get(i + 2) == 13 && b.get(i + 3) == 10 {
             return i + 4
         }
-        i = i + 1
+        i += 1
     }
     return 0
 }
@@ -439,7 +439,7 @@ fun head_text(b: Bytes, end: int) => String {
     var i: int = 0
     while i < n {
         raw.set(i, b.get(i))
-        i = i + 1
+        i += 1
     }
     return String.from_bytes(raw)
 }
@@ -478,7 +478,7 @@ fun split_head_headers(head: &str) => List<Header> {
                 ))
             }
         }
-        i = i + 1
+        i += 1
     }
     return hs
 }
@@ -494,7 +494,7 @@ fun header_value(hs: List<Header>, name: &str) => String {
         if name_eq(hs.get(i).name.as_str(), name) {
             return String.from_str(hs.get(i).value.as_str())
         }
-        i = i + 1
+        i += 1
     }
     return String.empty()
 }
@@ -783,18 +783,18 @@ fun Conn.send_frame(opcode: u8, data: &Bytes) {
         var i: int = 0
         while i < 8 {
             out.push(((n >> (56 - i * 8)) & 255).to_byte())
-            i = i + 1
+            i += 1
         }
     }
     var k: int = 0
     while k < 4 {
         out.push(key.get(k))
-        k = k + 1
+        k += 1
     }
     var i: int = 0
     while i < n {
         out.push(data.get(i) ^ key.get(i % 4))
-        i = i + 1
+        i += 1
     }
     conn_send_all(fd, tls_handle, out)
 }
@@ -924,8 +924,8 @@ fun mut Conn.read_exact(n: int) => Bytes {
     var got: int = 0
     while got < n && start < buf.len() {
         out.set(got, buf.get(start))
-        start = start + 1
-        got = got + 1
+        start += 1
+        got += 1
     }
     if start >= buf.len() {
         buf.clear()
@@ -936,7 +936,7 @@ fun mut Conn.read_exact(n: int) => Bytes {
         if k == 0 {
             panic("ws.recv: the connection closed in the middle of a frame")
         }
-        got = got + k
+        got += k
     }
     return out
 }
@@ -970,7 +970,7 @@ fun mut Conn.readFrame() => Frame {
         len = 0
         while i < 8 {
             len = (len << 8) | ext.get(i).to_u64()
-            i = i + 1
+            i += 1
         }
     }
     if opcode == OP_CLOSE || opcode == OP_PING || opcode == OP_PONG {
@@ -1031,7 +1031,7 @@ fun close_msg(data: Bytes) => Msg {
     var i: int = 2
     while i < data.len() {
         reason.push(data.get(i))
-        i = i + 1
+        i += 1
     }
     return Msg.Close(code = code, reason = String.from_bytes(reason))
 }

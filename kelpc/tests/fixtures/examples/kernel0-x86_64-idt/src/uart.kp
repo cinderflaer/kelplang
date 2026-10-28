@@ -19,7 +19,7 @@ pub fun puts(s: str) {
     var i: int = 0
     while i < n {
         putc(str.byte(s, i))
-        i = i + 1
+        i += 1
     }
 }
 
@@ -34,11 +34,11 @@ pub fun put_dec(value: int) {
     var i: int = 0
     while n > 0 {
         digits.set(i, 48 + (n % 10).to_u8())
-        n = n / 10
-        i = i + 1
+        n /= 10
+        i += 1
     }
     while i > 0 {
-        i = i - 1
+        i -= 1
         putc(digits.get(i))
     }
 }
@@ -57,7 +57,7 @@ pub fun put_hex(value: u64) {
             putc(87 + nib)
         }
         if shift == 0 { return }
-        shift = shift - 4
+        shift -= 4
     }
 }
 

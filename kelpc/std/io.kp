@@ -252,7 +252,7 @@ fun mut BufReader.readLineInto(out: mut String) => bool {
     while going {
         if start < end {
             val c = buf.get(start)
-            start = start + 1
+            start += 1
             if c == 10 {
                 going = false
             } else {
@@ -304,7 +304,7 @@ fun mut BufReader.readAll() => Bytes {
         var buffered = Bytes.empty()
         while start < end {
             buffered.push(buf.get(start))
-            start = start + 1
+            start += 1
         }
         out.append(buffered)
     }

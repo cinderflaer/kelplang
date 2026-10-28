@@ -25,7 +25,7 @@ pub fun puts(msg: Ptr<u8>, len: usize) {
         unsafe {
             putc(msg.offset(i.to_isize()).read_volatile())
         }
-        i = i + 1
+        i += 1
     }
 }
 

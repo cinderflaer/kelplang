@@ -147,7 +147,7 @@ fun run_scenario(id: i32) {
             } else {
                 tree = tick_tree(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = app.view, update = app.update))
             }
-            frames_total = frames_total + 1
+            frames_total += 1
             rects_total = rects_total + b.last_painted()
             allocs_total = allocs_total + b.frame_alloc_count()
             n += 1

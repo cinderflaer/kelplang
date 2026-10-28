@@ -104,7 +104,7 @@ fun boot_frame() => Ptr<trap.TrapFrame> {
 pub fun task(id: int) {
     var n: int = 0
     while true {
-        n = n + 1
+        n += 1
         if n % PRINT_EVERY.to_int() == 0 {
             uart.line(65 + id.to_u8(), n)
         }
@@ -136,7 +136,7 @@ fun pick() => Ptr<trap.TrapFrame> {
     var scanned: int = 0
     while scanned < NTASKS.to_int() && task_state(next) != STATE_READY.to_int() {
         next = (next + 1) % NTASKS.to_int()
-        scanned = scanned + 1
+        scanned += 1
     }
     if last < NTASKS.to_int() {
         set_task_state(last, STATE_READY)
@@ -156,7 +156,7 @@ pub fun schedule(frame: Ptr<trap.TrapFrame>) => Ptr<trap.TrapFrame> {
     if cause == trap.CAUSE_TIMER {
         timer.arm(timer.now() + timer.TICK)
         unsafe {
-            TICKS = TICKS + 1
+            TICKS += 1
         }
         if unsafe { TICKS } >= TICKS_DONE.to_int() {
             finish()
@@ -221,7 +221,7 @@ pub fun start() {
     var i: int = 0
     while i < NTASKS.to_int() {
         init_task(i)
-        i = i + 1
+        i += 1
     }
     trap.set(boot_frame(), trap.DISPATCH_OFF, Ptr.from_fn(schedule).addr().to_u64())
 

@@ -84,7 +84,7 @@ fun load_program(start: usize, end: usize) => usize {
             val target: Ptr<u8> = Ptr.from_addr(frame + i)
             target.write_volatile(source.read_volatile())
         }
-        i = i + 1
+        i += 1
     }
     return frame
 }

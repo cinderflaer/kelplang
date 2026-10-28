@@ -43,7 +43,7 @@ fun cb_update(s: mut Cb, m: i32) {
         s.checked = !s.checked
     }
     if m == 2 {
-        s.presses = s.presses + 1
+        s.presses += 1
     }
 }
 

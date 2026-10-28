@@ -44,7 +44,7 @@ pub fun put_hex(value: usize) {
                 uart.putc((87 + nib).to_u8())
             }
         }
-        i = i + 1
+        i += 1
     }
     if started == false {
         uart.putc(48)

@@ -48,10 +48,10 @@ fun fetch_all(worker: int) => Outcome {
         )
         val resp = result.expect(pool.send(req), "pool.send: the call failed")
         if resp.isOk() {
-            ok = ok + 1
+            ok += 1
             bytes = bytes + resp.body.len().to_u64()
         } else {
-            failed = failed + 1
+            failed += 1
         }
     }
     return Outcome(ok = ok, failed = failed, bytes = bytes)
@@ -64,7 +64,7 @@ fun job_for(worker: int) => FetchJob {
     var i: int = 3
     while i < args.len() {
         paths.push(args.get(i).clone())
-        i = i + 1
+        i += 1
     }
     val port = when str.parseU64(args.get(2).as_str()) {
         Ok(v) -> v.to_u16()

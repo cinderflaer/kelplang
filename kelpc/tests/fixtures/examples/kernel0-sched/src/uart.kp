@@ -46,7 +46,7 @@ pub fun puts(s: str) {
     var i: int = 0
     while i < n {
         putc(str.byte(s, i))
-        i = i + 1
+        i += 1
     }
 }
 
@@ -67,11 +67,11 @@ pub fun put_dec(value: int) {
         unsafe {
             p.offset(i.to_isize()).write_volatile((48 + n % 10).to_u8())
         }
-        n = n / 10
-        i = i + 1
+        n /= 10
+        i += 1
     }
     while i > 0 {
-        i = i - 1
+        i -= 1
         putc(unsafe { p.offset(i.to_isize()).read_volatile() })
     }
 }

@@ -118,7 +118,7 @@ fun args() => List<String> {
     var i: int = 0
     while i < n {
         out.push(arg_at_raw(i))
-        i = i + 1
+        i += 1
     }
     return out
 }

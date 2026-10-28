@@ -16,7 +16,7 @@ section(".text.boot") fun kmain() {
     unsafe {
         while i < 64 {
             sum = sum + at.offset(i).read().to_u64()
-            i = i + 1
+            i += 1
         }
     }
     if sum == 0 {

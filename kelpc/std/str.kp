@@ -64,9 +64,9 @@ fun charCount(s: &str) => int {
         // a character. (No bitwise operators in v1, so this is a range test.)
         val c = sv.get(i)
         if c < 128 || c >= 192 {
-            count = count + 1
+            count += 1
         }
-        i = i + 1
+        i += 1
     }
     return count
 }
@@ -132,7 +132,7 @@ fun indexOf(s: &str, needle: &str) => option.Option<int> {
         if view_starts_with_at(sv, nv, i) {
             return option.Option.Some(value = i)
         }
-        i = i + 1
+        i += 1
     }
     return option.Option.None
 }
@@ -151,7 +151,7 @@ fun startsWithAt(s: &str, needle: &str, at: int) => bool {
         if sv.get(at + i) != nv.get(i) {
             return false
         }
-        i = i + 1
+        i += 1
     }
     return true
 }
@@ -215,7 +215,7 @@ fun less(a: &str, b: &str) => bool {
         if ca != cb {
             return ca < cb
         }
-        i = i + 1
+        i += 1
     }
     return na < nb
 }
@@ -251,7 +251,7 @@ fun trimStart(s: &str) => &str {
     val n = sv.len()
     var i: int = 0
     while i < n && isSpace(sv.get(i)) {
-        i = i + 1
+        i += 1
     }
     return slice_from_raw(s, i)
 }
@@ -269,7 +269,7 @@ fun trimEnd(s: &str) => String {
     val n = sv.len()
     var end: int = n
     while end > 0 && isSpace(sv.get(end - 1)) {
-        end = end - 1
+        end -= 1
     }
     return prefix(s, end)
 }
@@ -284,7 +284,7 @@ fun prefix(s: &str, n: int) => String {
     var i: int = 0
     while i < n {
         out.set(i, sv.get(i))
-        i = i + 1
+        i += 1
     }
     return String.from_bytes(out)
 }
@@ -338,7 +338,7 @@ fun utf8_width(sv: View, i: int) => int {
         }
         lo = 128
         hi = 191
-        k = k + 1
+        k += 1
     }
     return w
 }
@@ -361,7 +361,7 @@ fun utf8_decode(sv: View, i: int, w: int) => u32 {
     var k: int = 1
     while k < w {
         cp = cp * 64 + (sv.get(i + k).to_u32() - 128)
-        k = k + 1
+        k += 1
     }
     return cp
 }
@@ -414,13 +414,13 @@ fun map_case(s: &str, upper: bool) => String {
     while i < n {
         val w = utf8_width(sv, i)
         if w == 0 {
-            size = size + 1
-            i = i + 1
+            size += 1
+            i += 1
         } else {
             val cp = utf8_decode(sv, i, w)
             val m = if upper { case_upper_cp(cp) } else { case_lower_cp(cp) }
             size = size + utf8_len(m)
-            i = i + w
+            i += w
         }
     }
     var out = mem.alloc(size)
@@ -430,13 +430,13 @@ fun map_case(s: &str, upper: bool) => String {
         val w = utf8_width(sv, i)
         if w == 0 {
             out.set(o, sv.get(i))
-            o = o + 1
-            i = i + 1
+            o += 1
+            i += 1
         } else {
             val cp = utf8_decode(sv, i, w)
             val m = if upper { case_upper_cp(cp) } else { case_lower_cp(cp) }
             o = o + utf8_put(out, o, m)
-            i = i + w
+            i += w
         }
     }
     return String.from_bytes(out)
@@ -514,7 +514,7 @@ fun case_hex32(data: &str, at: int) => u32 {
         var d: u32 = 0
         if c >= 97 { d = c - 87 } else { d = c - 48 }
         acc = acc * 16 + d
-        k = k + 1
+        k += 1
     }
     return acc
 }
@@ -549,9 +549,9 @@ fun repeat(s: &str, n: int) => String {
         var j: int = 0
         while j < ls {
             out.set(i * ls + j, sv.get(j))
-            j = j + 1
+            j += 1
         }
-        i = i + 1
+        i += 1
     }
     return String.from_bytes(out)
 }
@@ -569,7 +569,7 @@ fun copyRange(s: &str, from: int, to: int) => String {
     var i: int = 0
     while i < to - from {
         out.set(i, sv.get(from + i))
-        i = i + 1
+        i += 1
     }
     return String.from_bytes(out)
 }
@@ -599,10 +599,10 @@ fun split(s: &str, sep: &str) => List<String> {
     while i + lsep <= ls {
         if sv.get(i) == first && view_starts_with_at(sv, nv, i) {
             out.push(sv.slice(start, i).to_string())
-            i = i + lsep
+            i += lsep
             start = i
         } else {
-            i = i + 1
+            i += 1
         }
     }
     out.push(sv.slice(start, ls).to_string())
@@ -617,7 +617,7 @@ fun view_starts_with_at(sv: View, nv: View, at: int) => bool {
         if sv.get(at + i) != nv.get(i) {
             return false
         }
-        i = i + 1
+        i += 1
     }
     return true
 }
@@ -634,7 +634,7 @@ fun copyInto(dst: mut Bytes, at: int, src: &str) => int {
     var i: int = 0
     while i < n {
         dst.set(at + i, sv.get(i))
-        i = i + 1
+        i += 1
     }
     return at + n
 }
@@ -652,7 +652,7 @@ fun join(parts: List<String>, sep: &str) => String {
             out.push_str(sep)
         }
         out.push_str(parts.get(i).as_str())
-        i = i + 1
+        i += 1
     }
     return out
 }
@@ -688,13 +688,13 @@ fun from_u64(n: u64) => String {
     var v = n
     while v > 0 {
         rev.set(count, (v % 10 + 48).to_byte())
-        count = count + 1
-        v = v / 10
+        count += 1
+        v /= 10
     }
     var out = String.with_capacity(count)
     var i = count
     while i > 0 {
-        i = i - 1
+        i -= 1
         out.push(rev.get(i))
     }
     return out
@@ -723,8 +723,8 @@ fun from_i64(n: i64) => String {
             d = 0 - d
         }
         rev.set(count, (d + 48).to_byte())
-        count = count + 1
-        v = v / 10
+        count += 1
+        v /= 10
     }
     var out = String.with_capacity(21)
     if neg {
@@ -732,7 +732,7 @@ fun from_i64(n: i64) => String {
     }
     var i = count
     while i > 0 {
-        i = i - 1
+        i -= 1
         out.push(rev.get(i))
     }
     return out
@@ -831,10 +831,10 @@ fun replace(s: &str, from: &str, to: &str) => String {
     while i < ls {
         if i + lf <= ls && view_starts_with_at(sv, fv, i) {
             out.push_str(to)
-            i = i + lf
+            i += lf
         } else {
             out.push(sv.get(i))
-            i = i + 1
+            i += 1
         }
     }
     return out
@@ -857,9 +857,9 @@ fun byteIndex(s: &str, i: int) => int {
             if chars == i {
                 return at
             }
-            chars = chars + 1
+            chars += 1
         }
-        at = at + 1
+        at += 1
     }
     return n
 }
@@ -895,7 +895,7 @@ fun decodeAt(s: &str, at: int) => u32 {
             return 0
         }
         cp = cp * 64 + (sv.get(at + 1 + k).to_u32() - 128)
-        k = k + 1
+        k += 1
     }
     return cp
 }

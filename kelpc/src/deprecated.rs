@@ -1197,6 +1197,11 @@ pub const REGISTER: &[Outdated] = &[
         what: "`.write_text(`",
         instead: "write `.writeText(`, which is the same function under its camelCase name (issue #375)",
     },
+    Outdated {
+        id: "rmw-assign",
+        what: "`x = x + a` (a read-modify-write written out in full)",
+        instead: "write `x += a` (or `-=`, `*=`, `/=`, `%=` for the other operators), which is the same assignment (issue #268)",
+    },
 ];
 
 /// The snake_case names of the standard library that have a camelCase spelling (issue
@@ -1546,7 +1551,63 @@ pub fn scan_tokens(tokens: &[Token], module: &str) -> Vec<Diagnostic> {
         }
         found.push(finding(id, name.span, module));
     }
+    // `P = P OP a` at the start of a statement (issue #268): the spelling `P OP= a`
+    // replaces, and it is the same tree (`parse_assignment` desugars `OP=` to this).
+    // Only one name or number may follow the operator: `x += a + b` is `x + (a + b)`,
+    // which `x = x + a + b` is not, so a longer right side is never flagged.
+    for at in 0..tokens.len() {
+        let starts_statement = at == 0
+            || matches!(
+                tokens[at - 1].kind,
+                TokenKind::Newline | TokenKind::LBrace | TokenKind::RBrace | TokenKind::Semi
+            );
+        if !starts_statement {
+            continue;
+        }
+        let Some((target, after)) = name_path(tokens, at) else { continue };
+        if !matches!(tokens.get(after).map(|t| &t.kind), Some(TokenKind::Eq)) {
+            continue;
+        }
+        let Some((read, op_at)) = name_path(tokens, after + 1) else { continue };
+        if read != target {
+            continue;
+        }
+        let is_op = matches!(
+            tokens.get(op_at).map(|t| &t.kind),
+            Some(TokenKind::Plus | TokenKind::Minus | TokenKind::Star | TokenKind::Slash | TokenKind::Percent)
+        );
+        let atom_at = op_at + 1;
+        let is_atom = matches!(
+            tokens.get(atom_at).map(|t| &t.kind),
+            Some(TokenKind::Ident(_) | TokenKind::IntLit(_) | TokenKind::FloatLit(_))
+        );
+        let ends = matches!(
+            tokens.get(atom_at + 1).map(|t| &t.kind),
+            None | Some(TokenKind::Newline | TokenKind::Semi | TokenKind::RBrace | TokenKind::Eof)
+        );
+        if is_op && is_atom && ends {
+            found.push(finding("rmw-assign", tokens[at].span, module));
+        }
+    }
     found
+}
+
+/// The dotted name path (`x`, `s.count`) that starts at `at`: its names, and the
+/// index of the token after it. `None` when no name starts there. A call, an index
+/// or a bare `.` is not part of a path, so the path stops before it.
+fn name_path(tokens: &[Token], at: usize) -> Option<(Vec<&str>, usize)> {
+    let mut names = Vec::new();
+    let mut i = at;
+    while let Some(TokenKind::Ident(name)) = tokens.get(i).map(|t| &t.kind) {
+        names.push(name.as_str());
+        let dotted = matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::Dot))
+            && matches!(tokens.get(i + 2).map(|t| &t.kind), Some(TokenKind::Ident(_)));
+        i += if dotted { 2 } else { 1 };
+        if !dotted {
+            break;
+        }
+    }
+    (!names.is_empty()).then_some((names, i))
 }
 
 /// Whether the dot at `dot` sits in a declaration head (`fun Type.name(`, with
@@ -1639,6 +1700,40 @@ mod tests {
         assert_eq!(found.len(), 1, "{:?}", found.iter().map(|d| &d.message).collect::<Vec<_>>());
         assert!(found[0].message.contains("`Map.new()`"), "{}", found[0].message);
         assert!(found[0].message.contains("write `Map.empty()`"), "{}", found[0].message);
+    }
+
+    #[test]
+    fn a_read_modify_write_statement_is_flagged_once_per_statement() {
+        // `P = P OP a` at the start of a statement, with one name or number on the
+        // right, is the spelling `P OP= a` replaces (issue #268). Each statement
+        // gives one finding at the target's name, and a statement that opens a
+        // block or closes one on the same line is still a statement.
+        let text = "fun f() {\n    x = x + 1\n    s.count = s.count - n\n    i = i * 2\n    \
+                    if c { x = x / 2 }\n    y = y % 3.5\n}\n";
+        let tokens = Lexer::new(text).tokenize().expect("the sample lexes");
+        let found = scan_tokens(&tokens, "m");
+        let messages: Vec<&str> = found.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(found.len(), 5, "{messages:?}");
+        for m in &messages {
+            assert!(m.contains("`x = x + a`"), "{m}");
+            assert!(m.contains("write `x += a`"), "{m}");
+        }
+    }
+
+    #[test]
+    fn a_read_modify_write_with_a_compound_or_shadowing_right_side_is_not_flagged() {
+        // Left alone: a declaration that reuses its name (`val`, `var`), a right
+        // side with more than one operator (`x += a + b` is `x + (a + b)`, and
+        // `x = x + a + b` is `(x + a) + b`), a call, an index target, another
+        // name, a dotted operand, a string, a comment, and a line that is not a
+        // statement (a call argument).
+        let text = "val x = x + 1\nvar y = y + 1\nx = x + a * b\nx = x + a + b\nx = y + 1\n\
+                    x = x + f(1)\na[i] = a[i] + 1\nx = x + s.count\nval m = \"x = x + 1\"\n\
+                    // x = x + 1\nf(x = x + 1)\nx = x\n";
+        let tokens = Lexer::new(text).tokenize().expect("the sample lexes");
+        let found = scan_tokens(&tokens, "m");
+        let messages: Vec<&str> = found.iter().map(|d| d.message.as_str()).collect();
+        assert!(found.is_empty(), "{messages:?}");
     }
 
     #[test]
@@ -1738,6 +1833,15 @@ mod tests {
             let tokens = Lexer::new(&text)
                 .tokenize()
                 .unwrap_or_else(|e| panic!("'{id}' does not lex: {}", e.message));
+            // Every register entry, the read-modify-write one included (issue #268),
+            // is read off the same tokens the compiler reads, so a shipped module with
+            // any outdated spelling fails here.
+            let outdated = scan_tokens(&tokens, id);
+            assert!(
+                outdated.is_empty(),
+                "the shipped module '{id}' carries outdated syntax: {:?}",
+                outdated.iter().map(|d| d.message.as_str()).collect::<Vec<_>>()
+            );
             if let Err(e) = Parser::new(tokens).parse_program() {
                 panic!("'{id}' does not parse: {}", e.message);
             }

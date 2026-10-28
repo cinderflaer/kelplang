@@ -389,7 +389,7 @@ must_use fun removeAll(target: &str) => result.Result<unit, io.IoErr> {
                 if let Err(e) = failed {
                     return result.Result.Err(error = e)
                 }
-                i = i + 1
+                i += 1
             }
         }
     }
@@ -434,7 +434,7 @@ fun walk(dir: &str) => List<String> {
             if is_directory {
                 pending.push(path.join(current, entries.get(i).as_str()))
             }
-            i = i + 1
+            i += 1
         }
     }
     return out

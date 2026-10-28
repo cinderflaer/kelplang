@@ -152,10 +152,10 @@ fun write(root: usize, fd: usize, ptr: usize, len: usize) => Reply {
                 val target: Ptr<u8> = byte(buf + i)
                 target.write_volatile(source.read_volatile())
             }
-            i = i + 1
+            i += 1
         }
         uart.puts_bytes(byte(buf), chunk)
-        done = done + chunk
+        done += chunk
     }
     return Reply.Done(len.to_u64())
 }
@@ -181,7 +181,7 @@ fun user_range_readable(root: usize, ptr: usize, len: usize) => bool {
         if len - done < chunk {
             chunk = len - done
         }
-        done = done + chunk
+        done += chunk
     }
     return true
 }
