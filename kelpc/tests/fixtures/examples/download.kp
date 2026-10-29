@@ -49,7 +49,7 @@ fun main() {
     // `resp.body` is an owned `Bytes`, and `fs.write` takes it by borrow, so
     // this is the byte-exact path: no utf-8 validation, no text round trip. A
     // `String` in Kelp is validated utf-8 and could not hold an image.
-    val part = str.concat(out.as_str(), ".part")
+    val part = "${out}.part"
     result.expect(fs.write(part, resp.body), "fs.write: the call failed")
     fs.sync(part)
     result.expect(fs.rename(part, out.as_str()), "fs.rename: the call failed")
@@ -67,10 +67,6 @@ fun main() {
     }
 
     val bytes = fmt.uint(on_disk)
-    var msg = String.empty()
-    msg.push_str("wrote ")
-    msg.push_str(bytes)
-    msg.push_str(" bytes to ")
-    msg.push_str(out.as_str())
+    val msg = "wrote ${bytes} bytes to ${out}"
     print(msg)
 }

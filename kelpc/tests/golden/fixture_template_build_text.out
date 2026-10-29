@@ -1,0 +1,6 @@
+http://h.example:80/a
+/tmp/x
+/tmp/x
+GET /p HTTP/1.1 Host: h.example:8080 Key: k1
+<b size="3">t</b>
+say "hi" kelp

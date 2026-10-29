@@ -586,6 +586,11 @@ pub(crate) fn a_template_string_binds_and_passes_as_a_string() {
 }
 
 #[test]
+pub(crate) fn a_template_builds_text_in_place_of_a_concat_run() {
+    assert_fixture_runs("tests/fixtures/template_build_text.kp");
+}
+
+#[test]
 pub(crate) fn a_passdown_is_not_visible_from_another_module() {
     assert_project_rejected(
         "pd_module_scope",

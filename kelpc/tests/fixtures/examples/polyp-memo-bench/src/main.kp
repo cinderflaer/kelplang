@@ -62,7 +62,7 @@ fun make(n: i32) => Model {
     var i: i32 = 0
     while i < n {
         val num = str.from_i64(i.to_i64())
-        val t = str.concat("row ", num.as_str())
+        val t = "row ${num}"
         items.push(Item(id = i, title = t, done = false))
         i += 1
     }
@@ -175,7 +175,7 @@ fun run(label: str, rows: i32, use_memo: bool) {
         while k < n {
             val idx = (k * 7) % rows
             val num = str.from_i64(k.to_i64())
-            val title = str.concat("changed ", num.as_str())
+            val title = "changed ${num}"
             st.items.set(idx.to_int(), Item(id = idx, title = title, done = false))
             val start = time.nowMonoNs()
             val next = if use_memo {

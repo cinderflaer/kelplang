@@ -82,7 +82,7 @@ fun newline() {
 }
 
 fun build_and_print() {
-    val greeting = str.concat("hello ", "kelp")
+    val greeting = String.from_str("hello kelp")
     var shout: String = greeting.clone()
     shout.push_str("!")
     put_str("s: ")

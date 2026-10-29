@@ -18,14 +18,8 @@ datac FetchJob(val host: String, val port: u16, val paths: List<String>)
 datac Outcome(val ok: int, val failed: int, val bytes: u64)
 
 fun build_url(host: str, port: u16, path: str) => String {
-    var url = String.empty()
-    url.push_str("http://")
-    url.push_str(host)
-    url.push_str(":")
     val port_str = port.to_u64().toText()
-    url.push_str(port_str)
-    url.push_str(path)
-    return url
+    return "http://${host}:${port_str}${path}"
 }
 
 // One worker's whole run: its own pool, one request per path in its own

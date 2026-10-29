@@ -1,0 +1,48 @@
+// Text is built with a template, not with `str.concat` runs or a `push_str` run (issue #269).
+// The shapes below are the ones the examples and the standard library now use: a `&str`
+// parameter in a template, a chain of concatenations folded into one template, a run of pushes
+// that becomes the `var` declaration, a piece bound to a `val` before one push (a template passed
+// straight to a borrowing call is refused), and a literal quote.
+fun label(host: &str, port: u16, path: &str) => String {
+    val port_text = port.to_u64().toText()
+    return "http://${host}:${port_text}${path}"
+}
+
+fun joined(dir: &str, name: &str) => String {
+    val sep = if str.byte(dir, str.len(dir) - 1) == 47 { "" } else { "/" }
+    return "${dir}${sep}${name}"
+}
+
+fun build_head(host: &str, path: &str, key: &str) => String {
+    var out = "GET ${path} HTTP/1.1 Host: ${host}"
+    if str.len(host) > 3 {
+        out.push_str(":")
+        val port_text = str.from_i64(8080)
+        out.push_str(port_text)
+    }
+    val tail = " Key: ${key}"
+    out.push_str(tail)
+    return out
+}
+
+fun tagged(text: &str) => String {
+    val shown = str.from_i64(3)
+    return "<b size=\"${shown}\">${text}</b>"
+}
+
+fun main() {
+    print(label("h.example", 80, "/a"))
+    print(joined("/tmp", "x"))
+    print(joined("/tmp/", "x"))
+    print(build_head("h.example", "/p", "k1"))
+    print(tagged("t"))
+    val name = String.from_str("kelp")
+    print("say \"hi\" ${name}")
+}
+// stdout-begin
+// stdout: http://h.example:80/a
+// stdout: /tmp/x
+// stdout: /tmp/x
+// stdout: GET /p HTTP/1.1 Host: h.example:8080 Key: k1
+// stdout: <b size="3">t</b>
+// stdout: say "hi" kelp

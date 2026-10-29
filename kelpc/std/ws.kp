@@ -366,7 +366,7 @@ fun parse_port(text: &str) => u16 {
 /// text plus the GUID (RFC 6455 4.2.2). The key is used as the *text* the
 /// client sent, not as the sixteen bytes it was made from.
 fun accept_for(key: &str) => String {
-    val material = str.concat(key, WS_GUID)
+    val material = "${key}${WS_GUID}"
     val digest = encoding.sha1(Bytes.from_str(material.as_str()))
     return encoding.base64Encode(digest)
 }
@@ -379,8 +379,7 @@ fun accept_for(key: &str) => String {
 /// argument does not borrow itself into a `&str` parameter).
 fun with_number(prefix: &str, n: u64, suffix: &str) => String {
     val digits = n.toText()
-    val middle = str.concat(prefix, digits.as_str())
-    return str.concat(middle, suffix)
+    return "${prefix}${digits}${suffix}"
 }
 
 /// Builds the HTTP `GET` request that opens a WebSocket, through the blank line that ends the head.
@@ -389,11 +388,7 @@ fun with_number(prefix: &str, n: u64, suffix: &str) => String {
 /// `Host` carries the port only when it is not the default for the scheme, as
 /// `std/http`'s head builder does.
 fun build_head(scheme: &str, host: &str, port: u16, path: &str, key: &str) => String {
-    var out = String.with_capacity(256)
-    out.push_str("GET ")
-    out.push_str(path)
-    out.push_str(" HTTP/1.1\r\nHost: ")
-    out.push_str(host)
+    var out = "GET ${path} HTTP/1.1\r\nHost: ${host}"
     if port != default_port_for(scheme) {
         out.push_str(":")
         // A formatted number is an owned temporary, so its `&str` view has to
@@ -401,9 +396,8 @@ fun build_head(scheme: &str, host: &str, port: u16, path: &str, key: &str) => St
         val port_text = port.to_u64().toText()
         out.push_str(port_text)
     }
-    out.push_str("\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ")
-    out.push_str(key)
-    out.push_str("\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    val tail = "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    out.push_str(tail)
     return out
 }
 

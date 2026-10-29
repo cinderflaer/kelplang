@@ -1056,8 +1056,7 @@ fun dir_ok(dir: &str) => bool {
 /// them.
 fun join_path(dir: &str, name: &str) => String {
     val sep = if str.byte(dir, str.len(dir) - 1) == 47 { "" } else { "/" }
-    val head = str.concat(dir, sep)
-    return str.concat(head, name)
+    return "${dir}${sep}${name}"
 }
 
 /// Loads the zone `name` from the database in `dir`.

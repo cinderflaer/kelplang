@@ -33,13 +33,7 @@ fun readPem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> {
     return when fs.read(path) {
         Ok(b) -> result.Result.Ok(value = b)
         Err(e) -> {
-            var text = String.with_capacity(96)
-            text.push_str("tls: cannot read the ")
-            text.push_str(what)
-            text.push_str(" file ")
-            text.push_str(path)
-            text.push_str(": ")
-            text.push_str(e.message)
+            val text = "tls: cannot read the ${what} file ${path}: ${e.message}"
             result.Result.Err(error = tls.TlsError.Io(reason = text))
         }
     }
@@ -73,10 +67,7 @@ fun caPem(path: &str) => result.Result<Bytes, tls.TlsError> = readPem(path, "CA 
 
 /// The error for a CA directory that cannot be listed, or that holds no CA certificate.
 fun ca_dir_error(dir: &str, reason: &str) => tls.TlsError {
-    var text = String.with_capacity(96)
-    text.push_str("tls: the directory ")
-    text.push_str(dir)
-    text.push_str(reason)
+    val text = "tls: the directory ${dir}${reason}"
     return tls.TlsError.Io(reason = text)
 }
 
@@ -85,7 +76,7 @@ fun ca_dir_names(dir: &str) => result.Result<List<String>, tls.TlsError> {
     return when fs.list(dir) {
         Ok(names) -> result.Result.Ok(value = names)
         Err(e) -> {
-            val why = str.concat(" cannot be listed: ", e.message.as_str())
+            val why = " cannot be listed: ${e.message}"
             result.Result.Err(error = ca_dir_error(dir, why.as_str()))
         }
     }
@@ -109,8 +100,7 @@ fun ca_dir_pem(dir: &str) => result.Result<Bytes, tls.TlsError> {
     var found = false
     for name in names {
         if str.endsWith(name.as_str(), ".pem") || str.endsWith(name.as_str(), ".crt") {
-            val slash = str.concat(dir, "/")
-            val path = str.concat(slash.as_str(), name.as_str())
+            val path = "${dir}/${name}"
             val pem = readPem(path.as_str(), "CA certificate")?
             out.append(pem)
             found = true
@@ -128,15 +118,10 @@ fun mode_text(mode: u32) => String = modeText(mode)
 /// The octal digits of the low nine permission bits, as `0644` prints them.
 fun modeText(mode: u32) => String {
     val bits = mode & 511
-    var out = String.with_capacity(4)
-    out.push_str("0")
     val a = (bits >> 6).to_u64().toText()
     val b = ((bits >> 3) & 7).to_u64().toText()
     val c = (bits & 7).to_u64().toText()
-    out.push_str(a)
-    out.push_str(b)
-    out.push_str(c)
-    return out
+    return "0${a}${b}${c}"
 }
 
 /// Retired (#375): the camelCase `readKey` is the name. Kept for one cycle.
@@ -153,13 +138,8 @@ fun readKey(path: &str) => result.Result<Bytes, tls.TlsError> {
     if fs.exists(path) {
         val m = fs.metadata(path)
         if (m.mode & 63) != 0 {
-            var text = String.with_capacity(128)
-            text.push_str("tls: the private key file ")
-            text.push_str(path)
-            text.push_str(" has mode ")
             val shown = modeText(m.mode)
-            text.push_str(shown)
-            text.push_str(": group and others must have no access (chmod 600)")
+            val text = "tls: the private key file ${path} has mode ${shown}: group and others must have no access (chmod 600)"
             return result.Result.Err(error = tls.TlsError.Io(reason = text))
         }
     }
