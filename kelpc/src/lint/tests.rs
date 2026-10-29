@@ -229,6 +229,60 @@ fn a_comparison_inside_a_string_is_not_reported() {
     assert!(findings(src, None).expect("lexes").is_empty());
 }
 
+#[test]
+fn a_bool_annotation_that_restates_a_literal_is_reported_at_the_type() {
+    let src = "fun f() {\n    val ok: bool = true\n}\n";
+    let found = findings(src, None).expect("lexes");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].span.start, at(src, "bool = true"));
+    assert_eq!(
+        found[0].message,
+        "the annotation ': bool' restates the value: write the binding without it"
+    );
+}
+
+#[test]
+fn a_var_with_a_restated_false_is_reported_too() {
+    let src = "fun f() {\n    var done: bool = false\n}\n";
+    assert_eq!(findings(src, None).expect("lexes").len(), 1);
+}
+
+#[test]
+fn a_constructor_annotation_that_restates_the_callee_is_reported() {
+    let src = "datac Point(val x: i32)\nfun f() {\n    val p: Point = Point(x = 1)\n}\n";
+    let found = findings(src, None).expect("lexes");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].span.start, at(src, "Point = Point"));
+    assert_eq!(
+        found[0].message,
+        "the annotation ': Point' restates the value: write the binding without it"
+    );
+}
+
+#[test]
+fn a_generic_annotation_is_never_reported() {
+    let src = "datac Pair<A, B>(val first: A, val second: B)\nfun f() {\n    val p: Pair<i32, i32> = Pair(first = 1, second = 2)\n}\n";
+    assert!(findings(src, None).expect("lexes").is_empty());
+}
+
+#[test]
+fn a_call_to_another_name_is_not_a_restated_constructor() {
+    let src = "datac Point(val x: i32)\nfun make() => Point {\n    return Point(x = 1)\n}\nfun f() {\n    val p: Point = make()\n}\n";
+    assert!(findings(src, None).expect("lexes").is_empty());
+}
+
+#[test]
+fn a_binding_without_an_annotation_or_with_a_needed_one_is_not_reported() {
+    let src = "fun f() {\n    val ok = true\n    val n: int = 0\n    val s: str = \"x\"\n}\n";
+    assert!(findings(src, None).expect("lexes").is_empty());
+}
+
+#[test]
+fn a_module_level_pd_value_is_not_reported() {
+    let src = "datac State(val a: i32)\npd val state: State = State(a = 7)\n";
+    assert!(findings(src, None).expect("lexes").is_empty());
+}
+
 /// The names as owned strings, so an expected list reads as names.
 fn strings(names: &[&str]) -> Vec<String> {
     names.iter().map(|n| n.to_string()).collect()

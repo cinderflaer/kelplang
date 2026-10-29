@@ -142,7 +142,7 @@ pub fun stroke_rect(
 // outside the corner.
 fun corner_inset(row: i32, r: i32, h: i32) => i32 {
     if r <= 0 { return 0 }
-    var in_corner: bool = false
+    var in_corner = false
     var a: i32 = 0
     if row < r {
         a = r - 1 - row
@@ -156,7 +156,7 @@ fun corner_inset(row: i32, r: i32, h: i32) => i32 {
     val lim: i64 = 4 * r.to_i64() * r.to_i64() - dy * dy
     if lim < 0 { return r }
     var i: i32 = 0
-    var found: bool = false
+    var found = false
     while i < r && !found {
         val dx: i64 = (2 * (r - 1 - i) + 1).to_i64()
         if dx * dx <= lim {
@@ -243,7 +243,7 @@ pub fun stroke_round_rect(
         val inset: i32 = corner_inset(j, r, h)
         val o0: i64 = x.to_i64() + inset.to_i64()
         val o1: i64 = x.to_i64() + w.to_i64() - inset.to_i64()
-        var has_inner: bool = false
+        var has_inner = false
         var i0: i64 = 0
         var i1: i64 = 0
         if iw > 0 && ih > 0 && j >= t && j < h - t {
@@ -361,7 +361,7 @@ pub fun line(
     val ye: i64 = y1.to_i64()
     var err: i64 = dx - dy
     var count: int = 0
-    var done: bool = false
+    var done = false
     while !done {
         if fb.contains_point(cl, x.to_i32(), y.to_i32()) {
             unsafe { f.put(x.to_i32(), y.to_i32(), color) }

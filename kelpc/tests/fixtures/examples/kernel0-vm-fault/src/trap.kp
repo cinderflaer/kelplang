@@ -30,7 +30,7 @@ fun current_phase() => usize {
 // run script can pin.
 pub fun put_hex(value: usize) {
     uart.puts("0x")
-    var started: bool = false
+    var started = false
     var i: usize = 0
     while i < 16 {
         val nib: usize = (value >> ((15 - i) * 4)) & 15

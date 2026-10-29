@@ -223,7 +223,7 @@ fun ref_stroke_round(
         var i: i32 = 0
         while i < w {
             val outer: bool = in_round(i, j, w, h, r)
-            var inner: bool = false
+            var inner = false
             if iw > 0 && ih > 0 {
                 inner = in_round(i - t, j - t, iw, ih, ir)
             }
@@ -768,7 +768,7 @@ fun check_damage(rng: mut Rng, adds: i32) => (i32, i32, i32) {
                 var x: i32 = 0
                 while x < CW.to_i32() {
                     if grid.get(idx(x, y)) == 1 {
-                        var cov: bool = false
+                        var cov = false
                         var m: int = 0
                         while m < d.count() {
                             val dr: fb.Rect = d.at(m)
@@ -808,13 +808,13 @@ fun check_damage_cap() => (i32, bool) {
     d.add(r17)
     mark(grid, r17)
     val count: i32 = d.count().to_i32()
-    var covered: bool = true
+    var covered = true
     var y: i32 = 0
     while y < CH.to_i32() {
         var x: i32 = 0
         while x < CW.to_i32() {
             if grid.b.get(idx(x, y)) == 1 {
-                var cov: bool = false
+                var cov = false
                 var m: int = 0
                 while m < d.count() {
                     if fb.contains_point(d.at(m), x, y) {

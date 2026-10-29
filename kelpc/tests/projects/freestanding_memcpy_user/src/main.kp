@@ -8,7 +8,7 @@
 datac Big(val bytes: [u8; 4096])
 
 section(".text.boot") fun kmain() {
-    var page: Big = Big(bytes = [0; 4096])
+    var page = Big(bytes = [0; 4096])
     var copy: Big = page
     var arr: [u8; 4096] = [7; 4096]
     var arr2: [u8; 4096] = arr

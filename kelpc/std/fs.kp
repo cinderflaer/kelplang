@@ -559,8 +559,8 @@ fun metadata(path: &str) => Metadata {
     var size: u64 = 0
     var mtime: i64 = 0
     var mode: u32 = 0
-    var is_dir: bool = false
-    var is_file: bool = false
+    var is_dir = false
+    var is_file = false
     metadata_raw(path, &mut size, &mut mtime, &mut mode, &mut is_dir, &mut is_file)
     return Metadata(size = size, mtime = mtime, mode = mode, is_dir = is_dir, is_file = is_file)
 }

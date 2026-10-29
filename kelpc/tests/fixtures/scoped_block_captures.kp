@@ -27,7 +27,7 @@ fun bump(c: mut Counter, f: scoped fun(mut i32)) {
 }
 
 fun owned_capture() {
-    val s: State = State(a = 7)
+    val s = State(a = 7)
     val k: i32 = 100
     each { n -> print(n + s.a + k) }
     // The shared borrow of `s` was released with the call.

@@ -14,7 +14,7 @@ fun main() {
     val half: f64 = 2.5
     val quarter: f32 = 0.25
     val n: i32 = 7
-    val ok: bool = false
+    val ok = false
 
     print(half)
     print(quarter)

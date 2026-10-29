@@ -10,7 +10,7 @@
 //! reason: `lint` lexes a file and reads nothing else, so a file that does not
 //! parse, or that names an alias only its project can resolve, is still linted.
 //!
-//! There are five rules:
+//! There are six rules:
 //!
 //! - the **comment run** (roadmap item G-5): two or more consecutive `//`
 //!   lines with no blank line between them.
@@ -24,6 +24,9 @@
 //!   `.is_empty()` says it): a warning, never a failure.
 //! - the **unused pattern binding** (`Err(e) -> 0`, where `e` is never read in
 //!   its arm): a warning that names the fix, `_`. See [`unused_bindings_in`].
+//! - the **restated annotation** (`val ok: bool = true`, `val p: Point =
+//!   Point(...)`): a warning that the binding can drop its type. See
+//!   [`restated_annotations_in`].
 //!
 //! ## The comment run
 //!
@@ -161,6 +164,7 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
         })
         .collect();
     all.extend(redundant_comparisons_in(&tokens));
+    all.extend(restated_annotations_in(&tokens));
     all.extend(redundant_borrow_params_in(&tokens));
     all.extend(unused_bindings_in(&tokens));
     all.extend(crate::doc::orphan_findings(src, &tokens));
@@ -297,6 +301,59 @@ fn redundant_comparisons_in(tokens: &[Token]) -> Vec<Finding> {
             out.push(Finding {
                 span: Span::new(tokens[i - 5].span.start, tokens[i + 1].span.end),
                 message: "'.len() == 0' reads better as '.is_empty()'".to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// A `val` or `var` annotation that restates its value: a `bool` literal under
+/// a `bool` annotation (`val ok: bool = true`), or a non-generic constructor of
+/// the annotated type (`val p: Point = Point(...)`). The initializer fixes the
+/// type, so the reader already sees it. Only a local binding is checked: a `pd`
+/// or `pub` module value keeps its annotation, and a generic type (its
+/// annotation has `<`) is never reported, because its arguments are not in the
+/// value. A call to another name is not a constructor and is not reported.
+/// Integer literals and calls are not checked here (see the issue on restated
+/// annotations). Warning only.
+fn restated_annotations_in(tokens: &[Token]) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for i in 0..tokens.len() {
+        if !matches!(tokens[i].kind, TokenKind::Val | TokenKind::Var) {
+            continue;
+        }
+        if i > 0 && matches!(tokens[i - 1].kind, TokenKind::Pd | TokenKind::Pub) {
+            continue;
+        }
+        // `val NAME : TYPE = VALUE`. A generic annotation has `<` where the `=`
+        // would be, so it never matches the `=` here.
+        let is_name = matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::Ident(_)));
+        let is_colon = matches!(tokens.get(i + 2).map(|t| &t.kind), Some(TokenKind::Colon));
+        let Some(Token {
+            kind: TokenKind::Ident(ty),
+            span: ty_span,
+        }) = tokens.get(i + 3)
+        else {
+            continue;
+        };
+        let is_eq = matches!(tokens.get(i + 4).map(|t| &t.kind), Some(TokenKind::Eq));
+        if !(is_name && is_colon && is_eq) {
+            continue;
+        }
+        let restates = match tokens.get(i + 5).map(|t| &t.kind) {
+            Some(TokenKind::True | TokenKind::False) => ty == "bool",
+            Some(TokenKind::Ident(callee)) => {
+                callee == ty
+                    && matches!(tokens.get(i + 6).map(|t| &t.kind), Some(TokenKind::LParen))
+            }
+            _ => false,
+        };
+        if restates {
+            out.push(Finding {
+                span: *ty_span,
+                message: format!(
+                    "the annotation ': {ty}' restates the value: write the binding without it"
+                ),
             });
         }
     }

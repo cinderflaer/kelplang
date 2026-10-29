@@ -79,7 +79,7 @@ fun mut Damage.merge_least_waste() {
     var best_i: int = 0
     var best_j: int = 1
     var best_waste: i64 = 0
-    var first: bool = true
+    var first = true
     var i: int = 0
     while i < n {
         var j: int = i + 1
@@ -118,7 +118,7 @@ fun mut Damage.merge_least_waste() {
 // Merge touching pairs one at a time until none remain. One merge per pass is deliberate: the
 // pass's `n` is stale the moment a pair is removed, so the pass restarts from the new list.
 fun mut Damage.coalesce() {
-    var changed: bool = true
+    var changed = true
     while changed {
         changed = false
         val n: int = len

@@ -109,7 +109,7 @@ fun smain() {
     if space.unmap(HIGH_VA) {
         vm.flush_tlb()
     }
-    var still: bool = false
+    var still = false
     when space.translate(HIGH_VA) {
         Some(_) -> {
             still = true

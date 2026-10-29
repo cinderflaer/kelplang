@@ -5,7 +5,7 @@ impl "std/result"
 datac Node(val value: i32)
 
 fun make() => result.Result<i32, BlockError> {
-    var keep: Node = Node(value = 0)
+    var keep = Node(value = 0)
     val n = block request: Node {
         val cell = request.box()?
         keep = cell

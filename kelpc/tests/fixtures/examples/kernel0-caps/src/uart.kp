@@ -63,7 +63,7 @@ pub fun put_hex(v: int) {
     putc(48)
     putc(120)
     var i: int = 16
-    var started: bool = false
+    var started = false
     while i > 0 {
         i -= 1
         val nib: u8 = ((v >> (i * 4)) & 15).to_u8()

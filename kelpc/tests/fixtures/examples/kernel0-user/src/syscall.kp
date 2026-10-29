@@ -167,7 +167,7 @@ fun user_range_readable(root: usize, ptr: usize, len: usize) => bool {
     var done: usize = 0
     while done < len {
         val uva: usize = ptr + done
-        var mapped: bool = false
+        var mapped = false
         when vm.user_page_pa(root, uva) {
             Some(_) -> {
                 mapped = true

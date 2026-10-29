@@ -74,7 +74,7 @@ fun mut Noisy.drop() {
 
 fun cleanup_then_panic() {
     defer uart.puts("defer ran\n")
-    val held: Noisy = Noisy(tag = 1)
+    val held = Noisy(tag = 1)
     if held.tag == 1 {
         panic("cleanup skipped") // panic-line: cleanup
     }
