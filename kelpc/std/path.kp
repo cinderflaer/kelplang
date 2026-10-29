@@ -147,7 +147,7 @@ fun joinAll(parts: List<String>) => String {
         if isAbsolute(part) {
             out = String.from_str(part)
             first = false
-        } elif first {
+        } else if first {
             out.push_str(part)
             first = false
         } else {

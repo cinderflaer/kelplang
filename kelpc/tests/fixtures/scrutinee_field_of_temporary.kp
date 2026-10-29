@@ -35,7 +35,7 @@ fun main() {
     // A chain of links, each one staging a temporary of its own.
     if let Word(w) = mk().t {
         print(w.len())
-    } elif let Word(v) = mk().t {
+    } else if let Word(v) = mk().t {
         print(v.len())
     } else {
         print(0)

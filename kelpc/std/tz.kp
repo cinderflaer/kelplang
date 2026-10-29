@@ -543,7 +543,7 @@ fun mut TzParser.hms() => i32 {
     if self.peek() == 45 {
         sign = -1
         self.at += 1
-    } elif self.peek() == 43 {
+    } else if self.peek() == 43 {
         self.at += 1
     }
     val h = self.number()
@@ -599,7 +599,7 @@ fun parse_rule(p: mut TzParser) => RuleDay {
         if month < 1 || month > 12 || week < 1 || week > 5 || day < 0 || day > 6 {
             p.fail()
         }
-    } elif c == 74 {
+    } else if c == 74 {
         kind = 1
         p.at += 1
         n = p.number().to_i32()
@@ -1383,19 +1383,19 @@ fun format_spec(out: mut String, spec: u8, lt: LocalTime) {
         } else {
             push_pad(out = out, value = lt.year.to_i64(), width = 4)
         }
-    } elif spec == 109 {
+    } else if spec == 109 {
         push_pad(out = out, value = lt.month.to_i64(), width = 2)
-    } elif spec == 100 {
+    } else if spec == 100 {
         push_pad(out = out, value = lt.day.to_i64(), width = 2)
-    } elif spec == 72 {
+    } else if spec == 72 {
         push_pad(out = out, value = lt.hour.to_i64(), width = 2)
-    } elif spec == 77 {
+    } else if spec == 77 {
         push_pad(out = out, value = lt.minute.to_i64(), width = 2)
-    } elif spec == 83 {
+    } else if spec == 83 {
         push_pad(out = out, value = lt.second.to_i64(), width = 2)
-    } elif spec == 106 {
+    } else if spec == 106 {
         push_pad(out = out, value = lt.yday.to_i64(), width = 3)
-    } elif spec == 122 {
+    } else if spec == 122 {
         var secs = lt.offset.seconds.to_i64()
         if secs < 0 {
             out.push('-')
@@ -1405,13 +1405,13 @@ fun format_spec(out: mut String, spec: u8, lt: LocalTime) {
         }
         push_pad(out = out, value = secs / SECS_HOUR, width = 2)
         push_pad(out = out, value = (secs % SECS_HOUR) / SECS_MINUTE, width = 2)
-    } elif spec == 90 {
+    } else if spec == 90 {
         out.push_str(lt.offset.abbrev)
-    } elif spec == 97 {
+    } else if spec == 97 {
         push_three(out = out, table = WDAY_NAMES, index = lt.weekday)
-    } elif spec == 98 {
+    } else if spec == 98 {
         push_three(out = out, table = MONTH_NAMES, index = lt.month - 1)
-    } elif spec == 37 {
+    } else if spec == 37 {
         out.push('%')
     } else {
         out.push('%')

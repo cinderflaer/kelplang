@@ -2931,7 +2931,7 @@ fun mut ServerConn.read_request(limits: &Limits) => result.Result<ServerRequest,
     var http11 = false
     if str.eq(version, "HTTP/1.1") {
         http11 = true
-    } elif str.eq(version, "HTTP/1.0") {
+    } else if str.eq(version, "HTTP/1.0") {
         http11 = false
     } else {
         // `HTTP/d.d` is a version this server does not speak; anything else
@@ -3118,7 +3118,7 @@ fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<int, H
             if str.contains(low, "close") {
                 close_after = true
             }
-        } elif !name_eq(h.name, "content-length") && !name_eq(h.name, "transfer-encoding") {
+        } else if !name_eq(h.name, "content-length") && !name_eq(h.name, "transfer-encoding") {
             if srv_clean_header(Header(name = String.from_str(h.name.as_str()), value = String.from_str(h.value.as_str()))) {
                 val line = "${h.name}: ${h.value}\r\n"
                 out.push_str(line)
@@ -3135,7 +3135,7 @@ fun mut ServerConn.write_response(resp: &ServerResponse) => result.Result<int, H
     }
     if close_after {
         out.push_str("Connection: close\r\n")
-    } elif keep_alive_header {
+    } else if keep_alive_header {
         out.push_str("Connection: keep-alive\r\n")
     }
     out.push_str("\r\n")
@@ -3185,7 +3185,7 @@ fun ServerConn.close() {
             val now = net.monoMs()
             if now >= until || drained > 1048576 {
                 going = false
-            } elif !sock.waitReadable((until - now).to_u64()) {
+            } else if !sock.waitReadable((until - now).to_u64()) {
                 going = false
             } else {
                 when net.recv(sock, 4096) {
@@ -3227,7 +3227,7 @@ fun mut ServerConn.serve(handler: fun(&ServerRequest) => ServerResponse, limits:
                 val w = self.write_response(&resp)
                 if result.isErr(r = &w) {
                     going = false
-                } elif self.wants_close() {
+                } else if self.wants_close() {
                     going = false
                 }
             }

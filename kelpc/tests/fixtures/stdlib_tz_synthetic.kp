@@ -40,7 +40,7 @@ fun label(r: &tz.Resolved) => String {
         out.push_str("one ")
         val d = digits(u)
         out.push_str(d)
-    } elif let Ambiguous(a, b) = r {
+    } else if let Ambiguous(a, b) = r {
         out.push_str("ambiguous ")
         val da = digits(a)
         val db = digits(b)

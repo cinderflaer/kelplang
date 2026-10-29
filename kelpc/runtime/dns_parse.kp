@@ -158,9 +158,9 @@ fun read_name(data: &Bytes, start: usize) => result.Result<DnsName, DnsErr> {
                 return result.Result.Err(error = DnsErr.PointerNotBackward)
             }
             pos = target
-        } elif (b & 192) != 0 {
+        } else if (b & 192) != 0 {
             return result.Result.Err(error = DnsErr.BadLabel)
-        } elif b == 0 {
+        } else if b == 0 {
             if !jumped {
                 next = pos + 1
             }

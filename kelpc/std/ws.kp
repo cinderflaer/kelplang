@@ -768,7 +768,7 @@ fun Conn.send_frame(opcode: u8, data: &Bytes) {
     val n = data.len()
     if n <= 125 {
         out.push(n.to_byte() | 128)
-    } elif n <= 65535 {
+    } else if n <= 65535 {
         out.push(126 | 128)
         out.push(((n >> 8) & 255).to_byte())
         out.push((n & 255).to_byte())
@@ -958,7 +958,7 @@ fun mut Conn.readFrame() => Frame {
     if len == 126 {
         val ext = self.read_exact(2)
         len = (ext.get(0).to_u64() << 8) | ext.get(1).to_u64()
-    } elif len == 127 {
+    } else if len == 127 {
         val ext = self.read_exact(8)
         var i: int = 0
         len = 0
@@ -974,7 +974,7 @@ fun mut Conn.readFrame() => Frame {
         if len > 125 {
             panic("ws.recv: a control frame carries more than 125 bytes, and RFC 6455 5.5 forbids that")
         }
-    } elif opcode != OP_CONTINUATION && opcode != OP_TEXT && opcode != OP_BINARY {
+    } else if opcode != OP_CONTINUATION && opcode != OP_TEXT && opcode != OP_BINARY {
         val reserved = with_number(
             prefix = "ws.recv: frame opcode 0x",
             n = opcode.to_u64(),

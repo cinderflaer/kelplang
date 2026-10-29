@@ -302,11 +302,11 @@ fun utf8_width(sv: View, i: int) => int {
     var w: int = 0
     if b0 < 128 {
         return 1
-    } elif b0 >= 194 && b0 <= 223 {
+    } else if b0 >= 194 && b0 <= 223 {
         w = 2
-    } elif b0 >= 224 && b0 <= 239 {
+    } else if b0 >= 224 && b0 <= 239 {
         w = 3
-    } elif b0 >= 240 && b0 <= 244 {
+    } else if b0 >= 240 && b0 <= 244 {
         w = 4
     } else {
         return 0
@@ -353,7 +353,7 @@ fun utf8_decode(sv: View, i: int, w: int) => u32 {
     var cp: u32 = 0
     if w == 2 {
         cp = b0 - 192
-    } elif w == 3 {
+    } else if w == 3 {
         cp = b0 - 224
     } else {
         cp = b0 - 240
@@ -370,9 +370,9 @@ fun utf8_decode(sv: View, i: int, w: int) => u32 {
 fun utf8_len(cp: u32) => int {
     if cp < 128 {
         return 1
-    } elif cp < 2048 {
+    } else if cp < 2048 {
         return 2
-    } elif cp < 65536 {
+    } else if cp < 65536 {
         return 3
     }
     return 4
@@ -384,10 +384,10 @@ fun utf8_put(dst: mut Bytes, at: int, cp: u32) => int {
     val w = utf8_len(cp)
     if w == 1 {
         dst.set(at, cp.to_byte())
-    } elif w == 2 {
+    } else if w == 2 {
         dst.set(at, (192 + cp / 64).to_byte())
         dst.set(at + 1, (128 + cp % 64).to_byte())
-    } elif w == 3 {
+    } else if w == 3 {
         dst.set(at, (224 + cp / 4096).to_byte())
         dst.set(at + 1, (128 + (cp / 64) % 64).to_byte())
         dst.set(at + 2, (128 + cp % 64).to_byte())
@@ -882,7 +882,7 @@ fun decodeAt(s: &str, at: int) => u32 {
     if b0 < 224 {
         cp = b0 - 192
         extra = 1
-    } elif b0 < 240 {
+    } else if b0 < 240 {
         cp = b0 - 224
         extra = 2
     } else {

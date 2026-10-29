@@ -110,7 +110,7 @@ fun base64Encode(data: &Bytes) => String {
         out.push(b64_char((b0 & 3) << 4))
         out.push('=')
         out.push('=')
-    } elif rem == 2 {
+    } else if rem == 2 {
         val b0 = data.get(i)
         val b1 = data.get(i + 1)
         out.push(b64_char(b0 >> 2))
@@ -711,10 +711,10 @@ fun sha1(data: &Bytes) => Bytes {
             if j < 20 {
                 f = (b & c) | (~b & d)
                 k = 0x5A827999
-            } elif j < 40 {
+            } else if j < 40 {
                 f = b ^ c ^ d
                 k = 0x6ED9EBA1
-            } elif j < 60 {
+            } else if j < 60 {
                 f = (b & c) | (b & d) | (c & d)
                 k = 0x8F1BBCDC
             } else {
@@ -771,7 +771,7 @@ fun formEncode(text: &str) => String {
         val c = tv.get(i)
         if c == ' ' {
             out.push('+')
-        } elif is_unreserved(c) {
+        } else if is_unreserved(c) {
             out.push(c)
         } else {
             out.push('%')
@@ -799,7 +799,7 @@ fun formDecode(text: &str) => result.Result<String, DecodeErr> {
         if c == '+' {
             out.push(' ')
             i += 1
-        } elif c == '%' {
+        } else if c == '%' {
             if i + 2 >= n {
                 return result.Result.Err(error = DecodeErr.Invalid)
             }

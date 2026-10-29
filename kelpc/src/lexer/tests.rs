@@ -879,3 +879,42 @@ fn a_nul_escape_inside_a_block_is_refused() {
     let err = block_error("\"\"\"\n    \\x00\n    \"\"\"");
     assert!(err.message.contains("NUL-terminated"), "message was: {}", err.message);
 }
+
+/// Every `.kp` file under `dir`, found by walking the tree.
+fn kp_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("reading a kp source directory") {
+        let path = entry.expect("reading a directory entry").path();
+        if path.is_dir() {
+            kp_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "kp") {
+            out.push(path);
+        }
+    }
+}
+
+#[test]
+fn std_fixtures_and_runtime_spell_else_if_not_elif() {
+    // Decision 110: `else if` is the one spelling in the kelp source. `elif`
+    // stays a keyword, but no kp file in std, the fixtures or the runtime uses it.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    for dir in ["std", "tests/fixtures", "runtime"] {
+        kp_files(&root.join(dir), &mut files);
+    }
+    assert!(!files.is_empty(), "no kp files found under kelpc/");
+    let mut hits = Vec::new();
+    for path in &files {
+        let src = std::fs::read_to_string(path).expect("reading a kp file");
+        // A file that does not lex is a lexer fixture, not a spelling check.
+        let Ok(tokens) = Lexer::new(&src).tokenize() else {
+            continue;
+        };
+        for token in tokens {
+            if token.kind == TokenKind::Elif {
+                let line = src[..token.span.start].matches('\n').count() + 1;
+                hits.push(format!("{}:{}", path.display(), line));
+            }
+        }
+    }
+    assert!(hits.is_empty(), "`elif` is still used, write `else if`:\n{}", hits.join("\n"));
+}

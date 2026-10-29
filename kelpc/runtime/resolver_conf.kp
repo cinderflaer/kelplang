@@ -324,7 +324,7 @@ fun write_ipv4(data: &Bytes, start: usize, len: usize, out: mut String) => bool 
             val d = i - s
             if d == 0 || d > 3 {
                 ok = false
-            } elif d > 1 && data.get(s) == 48 {
+            } else if d > 1 && data.get(s) == 48 {
                 ok = false
             } else {
                 var v: u32 = 0
@@ -399,7 +399,7 @@ fun write_ipv6(data: &Bytes, start: usize, len: usize, out: mut String) => bool 
                     groups.push(v.to_u16())
                     state = 1
                 }
-            } elif state == 0 && i + 1 < end && data.get(i) == 58 && data.get(i + 1) == 58 && !seen_gap {
+            } else if state == 0 && i + 1 < end && data.get(i) == 58 && data.get(i + 1) == 58 && !seen_gap {
                 seen_gap = true
                 gap_at = groups.len()
                 i = i + 2
@@ -422,7 +422,7 @@ fun write_ipv6(data: &Bytes, start: usize, len: usize, out: mut String) => bool 
             } else {
                 gap_len = 8 - groups.len()
             }
-        } elif groups.len() != 8 {
+        } else if groups.len() != 8 {
             ok = false
         }
     }
@@ -434,7 +434,7 @@ fun write_ipv6(data: &Bytes, start: usize, len: usize, out: mut String) => bool 
     while j < 8 {
         if j < gap_at {
             full.push(groups.get(j))
-        } elif j < gap_at + gap_len {
+        } else if j < gap_at + gap_len {
             full.push(0)
         } else {
             full.push(groups.get(j - gap_len))
@@ -540,7 +540,7 @@ fun write_hostname(data: &Bytes, start: usize, len: usize, out: mut String) => b
                 out.push(46)
                 label = 0
             }
-        } elif is_alnum(b) || (b == 45 && label > 0) {
+        } else if is_alnum(b) || (b == 45 && label > 0) {
             out.push(lower(b))
             label = label + 1
             if label > 63 {
@@ -685,7 +685,7 @@ fun parse_resolv(data: Bytes) => result.Result<ResolvConf, ResolvErr> {
                 } else {
                     ns_dropped = ns_dropped + 1
                 }
-            } elif token_is(data, kw, klen, "domain") {
+            } else if token_is(data, kw, klen, "domain") {
                 val t = scan(data, t0.at, end)
                 if !t.found {
                     return result.Result.Err(error = ResolvErr.MissingArgument)
@@ -701,7 +701,7 @@ fun parse_resolv(data: Bytes) => result.Result<ResolvConf, ResolvErr> {
                 search = List.empty()
                 search.push(name)
                 search_dropped = 0
-            } elif token_is(data, kw, klen, "search") {
+            } else if token_is(data, kw, klen, "search") {
                 var rest = scan(data, t0.at, end)
                 if !rest.found {
                     return result.Result.Err(error = ResolvErr.MissingArgument)
@@ -720,25 +720,25 @@ fun parse_resolv(data: Bytes) => result.Result<ResolvConf, ResolvErr> {
                     }
                     rest = scan(data, rest.at, end)
                 }
-            } elif token_is(data, kw, klen, "options") {
+            } else if token_is(data, kw, klen, "options") {
                 var rest = scan(data, t0.at, end)
                 while rest.found {
                     val what = write_option(data, rest.span.start, rest.span.len)
                     if what == 1 {
                         rotate = true
-                    } elif what == 2 {
+                    } else if what == 2 {
                         val num = token_number(data, rest.span.start, rest.span.len, 6)
                         if !num.ok || num.value > 15 {
                             return result.Result.Err(error = ResolvErr.BadOption)
                         }
                         ndots = num.value.to_u8()
-                    } elif what == 3 {
+                    } else if what == 3 {
                         val num = token_number(data, rest.span.start, rest.span.len, 8)
                         if !num.ok || num.value < 1 || num.value > 30 {
                             return result.Result.Err(error = ResolvErr.BadOption)
                         }
                         timeout = num.value.to_u8()
-                    } elif what == 4 {
+                    } else if what == 4 {
                         val num = token_number(data, rest.span.start, rest.span.len, 9)
                         if !num.ok || num.value < 1 || num.value > 5 {
                             return result.Result.Err(error = ResolvErr.BadOption)

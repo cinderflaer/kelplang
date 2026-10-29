@@ -64,27 +64,27 @@ fun Ref.ends(n: i32, pos: int, text: View) => List<int> {
         if pos < len && text.get(pos).to_i32() == a.get(i) {
             out.push(pos + 1)
         }
-    } elif kind == K_SET {
+    } else if kind == K_SET {
         if pos < len && text.get(pos).to_i32() >= a.get(i) && text.get(pos).to_i32() <= b.get(i) {
             out.push(pos + 1)
         }
-    } elif kind == K_NSET {
+    } else if kind == K_NSET {
         if pos < len && (text.get(pos).to_i32() < a.get(i) || text.get(pos).to_i32() > b.get(i)) {
             out.push(pos + 1)
         }
-    } elif kind == K_DOT {
+    } else if kind == K_DOT {
         if pos < len && text.get(pos) != 10 {
             out.push(pos + 1)
         }
-    } elif kind == K_BOL {
+    } else if kind == K_BOL {
         if pos == 0 {
             out.push(pos)
         }
-    } elif kind == K_EOL {
+    } else if kind == K_EOL {
         if pos == len {
             out.push(pos)
         }
-    } elif kind == K_WORDB {
+    } else if kind == K_WORDB {
         var before = false
         var after = false
         if pos > 0 {
@@ -96,7 +96,7 @@ fun Ref.ends(n: i32, pos: int, text: View) => List<int> {
         if before != after {
             out.push(pos)
         }
-    } elif kind == K_CAT {
+    } else if kind == K_CAT {
         val first = self.ends(a.get(i), pos, text)
         var x: int = 0
         while x < first.len() {
@@ -108,7 +108,7 @@ fun Ref.ends(n: i32, pos: int, text: View) => List<int> {
             }
             x += 1
         }
-    } elif kind == K_ALT {
+    } else if kind == K_ALT {
         val left = self.ends(a.get(i), pos, text)
         val right = self.ends(b.get(i), pos, text)
         var x: int = 0
@@ -209,11 +209,11 @@ fun mut Lcg.input(len: int) => String {
         val r = self.next() % 8
         if r < 3 {
             s.push('a')
-        } elif r < 5 {
+        } else if r < 5 {
             s.push('b')
-        } elif r == 5 {
+        } else if r == 5 {
             s.push('c')
-        } elif r == 6 {
+        } else if r == 6 {
             s.push('d')
         } else {
             s.push(10)

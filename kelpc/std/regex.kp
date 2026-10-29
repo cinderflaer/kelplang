@@ -309,7 +309,7 @@ fun mut Parser.add_pred(base: int, kind: u8, negate: bool) {
         var p = false
         if kind == 'd' {
             p = c >= '0' && c <= '9'
-        } elif kind == 'w' {
+        } else if kind == 'w' {
             p = is_word_byte(c)
         } else {
             p = is_space_byte(c)
@@ -455,7 +455,7 @@ fun mut Parser.parse_class() => i32 {
     while !done && !failed {
         if pos >= n {
             self.fail("unclosed character class", open)
-        } elif pat.get(pos) == ']' && !first {
+        } else if pat.get(pos) == ']' && !first {
             pos += 1
             done = true
         } else {
@@ -542,7 +542,7 @@ fun mut Parser.byte_node(b: u8) => i32 {
         if b >= 'A' && b <= 'Z' {
             v = b + 32
             f = 1
-        } elif b >= 'a' && b <= 'z' {
+        } else if b >= 'a' && b <= 'z' {
             f = 1
         }
     }
@@ -568,17 +568,17 @@ fun mut Parser.parse_group() => i32 {
         val c = pat.get(pos + 1)
         if c == ':' {
             pos += 2
-        } elif c == '=' || c == '!' {
+        } else if c == '=' || c == '!' {
             self.fail("lookaround is not supported", open)
             return -1
-        } elif c == '<' {
+        } else if c == '<' {
             if pos + 2 < n && (pat.get(pos + 2) == '=' || pat.get(pos + 2) == '!') {
                 self.fail("lookaround is not supported", open)
             } else {
                 self.fail("named groups are not supported", open)
             }
             return -1
-        } elif c == 'P' {
+        } else if c == 'P' {
             self.fail("named groups are not supported", open)
             return -1
         } else {
@@ -595,13 +595,13 @@ fun mut Parser.parse_group() => i32 {
                     if l == 'i' {
                         f = f | F_I
                         pos += 1
-                    } elif l == 's' {
+                    } else if l == 's' {
                         f = f | F_S
                         pos += 1
-                    } elif l == 'm' {
+                    } else if l == 'm' {
                         f = f | F_M
                         pos += 1
-                    } elif l == ')' || l == ':' {
+                    } else if l == ')' || l == ':' {
                         more = false
                     } else {
                         var msg = String.from_str("unknown group flag '")
@@ -680,13 +680,13 @@ fun mut Parser.parse_quant(atom: i32) => i32 {
     var mx: i32 = -1
     if c == '*' {
         pos += 1
-    } elif c == '+' {
+    } else if c == '+' {
         mn = 1
         pos += 1
-    } elif c == '?' {
+    } else if c == '?' {
         mx = 1
         pos += 1
-    } elif c == '{' {
+    } else if c == '{' {
         pos += 1
         if pos >= n || pat.get(pos) < '0' || pat.get(pos) > '9' {
             self.fail("invalid repeat: expected {n}, {n,} or {n,m}", at)
@@ -931,7 +931,7 @@ fun mut Parser.emit_node(n: i32) {
             self.emit_node(c)
             c = nnext.get(c.to_int())
         }
-    } elif k == N_ALT {
+    } else if k == N_ALT {
         var js: List<int> = List.empty()
         var alt = na.get(i)
         while alt >= 0 && !failed {
@@ -953,24 +953,24 @@ fun mut Parser.emit_node(n: i32) {
             ax.set(js.get(q), end)
             q += 1
         }
-    } elif k == N_REP {
+    } else if k == N_REP {
         self.emit_rep(i)
-    } elif k == N_GROUP {
+    } else if k == N_GROUP {
         val slot = nb.get(i) * 2
         self.put(OP_SAVE, slot, 0)
         self.emit_node(na.get(i))
         self.put(OP_SAVE, slot + 1, 0)
-    } elif k == N_BYTE {
+    } else if k == N_BYTE {
         if nb.get(i) == 1 {
             self.put(OP_CHARF, na.get(i), 0)
         } else {
             self.put(OP_CHAR, na.get(i), 0)
         }
-    } elif k == N_ANY {
+    } else if k == N_ANY {
         self.put(OP_ANY, 0, 0)
-    } elif k == N_ANYALL {
+    } else if k == N_ANYALL {
         self.put(OP_ANYALL, 0, 0)
-    } elif k == N_CLASS {
+    } else if k == N_CLASS {
         self.put(OP_CLASS, na.get(i), 0)
     } else {
         self.put(OP_ASSERT, na.get(i), 0)
@@ -1152,12 +1152,12 @@ fun mut Regex.add_thread(side: int, pc0: i32, pos: int, text: View, nsl: int) {
                 if o == OP_JMP {
                     stk_a.set(sp, ax.get(pc))
                     sp += 1
-                } elif o == OP_SPLIT {
+                } else if o == OP_SPLIT {
                     stk_a.set(sp, ay.get(pc))
                     sp += 1
                     stk_a.set(sp, ax.get(pc))
                     sp += 1
-                } elif o == OP_SAVE {
+                } else if o == OP_SAVE {
                     val slot = ax.get(pc).to_int()
                     if slot < nsl {
                         stk_a.set(sp, -1 - slot.to_i32())
@@ -1167,7 +1167,7 @@ fun mut Regex.add_thread(side: int, pc0: i32, pos: int, text: View, nsl: int) {
                     }
                     stk_a.set(sp, pc.to_i32() + 1)
                     sp += 1
-                } elif o == OP_ASSERT {
+                } else if o == OP_ASSERT {
                     if self.assert_ok(ax.get(pc), text, pos) {
                         stk_a.set(sp, pc.to_i32() + 1)
                         sp += 1
@@ -1243,11 +1243,11 @@ fun mut Regex.run(text: View, start: int, nsl: int, early: bool) => bool {
                     if c >= 0 {
                         if o == OP_CHAR {
                             ok = c == ax.get(pc)
-                        } elif o == OP_CHARF {
+                        } else if o == OP_CHARF {
                             ok = (c | 32) == ax.get(pc)
-                        } elif o == OP_ANY {
+                        } else if o == OP_ANY {
                             ok = c != 10
-                        } elif o == OP_ANYALL {
+                        } else if o == OP_ANYALL {
                             ok = true
                         } else {
                             val bit: u8 = 1 << (c & 7).to_byte()
@@ -1268,7 +1268,7 @@ fun mut Regex.run(text: View, start: int, nsl: int, early: bool) => bool {
             side = nside
             if early && matched {
                 running = false
-            } elif pos >= n {
+            } else if pos >= n {
                 running = false
             } else {
                 pos += 1
@@ -1395,7 +1395,7 @@ fun Regex.expand(out: mut String, tv: View, rep: View, nsl: int) {
             if d == '$' {
                 out.push('$')
                 i += 2
-            } elif d >= '0' && d <= '9' {
+            } else if d >= '0' && d <= '9' {
                 val g = (d - '0').to_int()
                 if g * 2 + 1 < nsl {
                     val s = res.get(g * 2)
